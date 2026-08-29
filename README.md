@@ -1,13 +1,13 @@
 <div align="center">
 
-```
+<pre align="center">
     ██╗   ██╗ █████╗      ██╗██████╗  █████╗
     ██║   ██║██╔══██╗     ██║██╔══██╗██╔══██╗
     ██║   ██║███████║ ██  ██║██████╔╝███████║
     ╚██╗ ██╔╝██╔══██║ ╚██╗██╔╝██╔══██╗██╔══██║
      ╚████╔╝ ██║  ██║  ╚███╔╝ ██║  ██║██║  ██║
       ╚═══╝  ╚═╝  ╚═╝   ╚══╝  ╚═╝  ╚═╝╚═╝  ╚═╝
-```
+</pre>
 
 # ⚡ V A J R A
 
@@ -17,10 +17,10 @@
 
 `recon` · `network` · `web` · `exploitation` · `post-exploitation`
 
-![python](https://img.shields.io/badge/python-3.9%2B-informational)
-![deps](https://img.shields.io/badge/core%20deps-zero-success)
-![ports](https://img.shields.io/badge/sweep-65535%20ports-critical)
-![payloads](https://img.shields.io/badge/payloads-3.8k-orange)
+![Python](https://img.shields.io/badge/Python-3.9%2B-2b7fbf)
+![Core deps](https://img.shields.io/badge/Core%20deps-zero-success)
+![License](https://img.shields.io/badge/License-All%20rights%20reserved-orange)
+![Architecture](https://img.shields.io/badge/Architecture-modular-blue)
 
 </div>
 
@@ -36,16 +36,59 @@
 
 ---
 
+## Contents
+
+- [About](#about)
+- [Highlights](#highlights)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Profiles](#profiles)
+- [Modules](#modules)
+- [Adaptive evasion](#adaptive-evasion)
+- [Intelligence](#intelligence)
+- [Workspaces, retests & collaboration](#workspaces-retests--collaboration)
+- [Pivoting & egress](#pivoting--egress)
+- [Command & control](#command--control)
+- [Output](#output)
+- [Toolkit & knowledge base](#toolkit--knowledge-base)
+- [Wordlists](#wordlists)
+- [CLI reference](#cli-reference)
+- [AI-select mission mode](#ai-select-mission-mode)
+- [Authenticated web scans](#authenticated-web-scans)
+- [FAQ](#faq)
+- [License & author](#license--author)
+
+---
+
+## About
+
+VAJRA is a self-contained penetration-testing framework that moves from
+discovery to exploitation and remediation advice in a single run. It executes
+cleanly on stock Python — no mandatory third-party dependencies — and pairs
+classic technique catalogs with modern capabilities: adaptive WAF evasion, an
+opt-in AI agent that plans and executes follow-up actions, and persistent
+workspaces that turn every re-run into a measurable retest.
+
+| Capability | Delivered by |
+|---|---|
+| **Discovery** | async / SYN port sweep · service & version fingerprinting · UDP probes · OS detection |
+| **Web applications** | adaptive injection engine · WAF-aware mutation · authenticated crawling |
+| **Exploitation** | SQLi extraction · RCE channels · JWT forgery · credential attacks · CVE exposure probes |
+| **Active Directory** | Kerberos / LDAP mining · DACL analysis · DC-Sync · lateral movement |
+| **Post-exploitation** | privilege-escalation path analysis · read-only loot survey over established channels |
+| **Operations** | SOCKS5 / HTTP-CONNECT pivoting · staged & TLS C2 · workspaces with retest deltas |
+
+---
+
 ## Highlights
 
-- **Full-spectrum network testing** — asynchronous sweep of all 65,535 TCP
-  ports with raw-SYN mode, deep binary handshakes (MySQL, MSSQL, SMB2, RDP,
+- **Full-spectrum network testing** — asynchronous sweep of the full TCP port
+  range with raw-SYN mode, deep binary handshakes (MySQL, MSSQL, SMB2, RDP,
   VNC, PostgreSQL, MongoDB, Redis, memcached, LDAP, SMTP), TLS certificate
   auditing and optional UDP probes.
-- **Adaptive web attack engine** — 3,800+ payloads across 16 injection
-  classes; when a WAF blocks the standard arsenal, fingerprint-specific
-  mutation chains (and optionally a local LLM) generate evasions until the
-  objective is met.
+- **Adaptive web attack engine** — 16 injection classes; when a WAF blocks
+  the standard arsenal, fingerprint-specific mutation chains (and optionally
+  a local LLM) generate evasions until the objective is met.
 - **Real exploitation, not just detection** — UNION-based SQL injection data
   extraction, live command-execution channels with reverse-session support,
   JWT forgery, SQLi auth bypass, credential spraying, default-credential
@@ -90,7 +133,7 @@
 ## Installation
 
 ```bash
-git clone https://github.com/<you>/vajra.git && cd vajra
+git clone https://github.com/pintukumar-sutradhar/vajra && cd vajra
 ./setup.sh                     # deps + wordlists + QA suite
 python3 vajra.py --selftest    # 37-point verification
 ```
@@ -471,8 +514,20 @@ else works without it.
 
 ---
 
+## License & author
+
+**VAJRA — Automated Penetration Testing Framework**
+
+Copyright © 2026 **Pintu Kumar Sutradhar** — all rights reserved.
+See [`LICENSE`](LICENSE).
+
+Intended solely for **authorized** security testing. Unauthorized use is
+prohibited.
+
 <div align="center">
 
 **Validate every finding before acting. Own everything you test.** ⚡
+
+*VAJRA · Pintu Kumar Sutradhar*
 
 </div>
