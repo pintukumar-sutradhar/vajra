@@ -29,6 +29,10 @@
 > tool. Running it against systems you do not own or lack written permission
 > to test is illegal. An authorization gate is enforced on every run.
 
+> 🚫 **Maintainer-only, no contributions.** This repository is published for
+> reference and the maintainer's own use. Issues are disabled and external
+> pull requests will **not** be accepted.
+
 ---
 
 ## Highlights
