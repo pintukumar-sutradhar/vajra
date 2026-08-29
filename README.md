@@ -313,7 +313,7 @@ direct ──blocked?──► fingerprint guard (Cloudflare · Akamai · Imperv
 - **MITRE ATT&CK** — every finding auto-tagged with technique IDs.
 - **Campaign planner** — mid-run next-best-action list combining rule-based
   logic with findings context.
-- **Optional AI brain** — add `--ai` to involve a local Ollama + **Qwen3 8B**
+- **Optional AI** — add `--ai` to involve a local Ollama + **Qwen3 8B**
   (auto-installs; fully offline once pulled). Use `--ai-select` to hand the
   mission to the operator-agent: Qwen3 inspects each target's live state
   (ports, services, web targets, findings) and picks and executes the best
