@@ -13,8 +13,6 @@
 
 ### Automated Penetration Testing Framework
 
-**by `Pintu Kumar Sutradhar`**
-
 `recon` · `network` · `web` · `exploitation` · `post-exploitation`
 
 ![Python](https://img.shields.io/badge/Python-3.9%2B-2b7fbf)
@@ -29,10 +27,6 @@
 > ⚠️ **Authorized use only.** VAJRA is a professional security assessment
 > tool. Running it against systems you do not own or lack written permission
 > to test is illegal. An authorization gate is enforced on every run.
-
-> 🚫 **Maintainer-only, no contributions.** This repository is published for
-> reference and the maintainer's own use. Issues are disabled and external
-> pull requests will **not** be accepted.
 
 ---
 
