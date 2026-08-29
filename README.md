@@ -513,7 +513,7 @@ else works without it.
 **VAJRA — Automated Penetration Testing Framework**
 
 Copyright © 2026 **Pintu Kumar Sutradhar** — all rights reserved.
-See [`LICENSE`](LICENSE).
+
 
 Intended solely for **authorized** security testing. Unauthorized use is
 prohibited.
@@ -521,7 +521,5 @@ prohibited.
 <div align="center">
 
 **Validate every finding before acting. Own everything you test.** ⚡
-
-*VAJRA · Pintu Kumar Sutradhar*
 
 </div>
