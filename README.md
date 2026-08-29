@@ -518,8 +518,5 @@ Copyright © 2026 **Pintu Kumar Sutradhar** — all rights reserved.
 Intended solely for **authorized** security testing. Unauthorized use is
 prohibited.
 
-<div align="center">
-
 **Validate every finding before acting. Own everything you test.** ⚡
 
-</div>
