@@ -1,0 +1,8 @@
+{
+  "default": ["public", "private"],
+  "wordlist": [
+    "public", "private", "community", "admin", "cisco", "cisco123",
+    "snmp", "snmpd", "management", "monitor", "read", "write",
+    "secret", "public01", "access", "huawei", "telecom", "c0nfig"
+  ]
+}

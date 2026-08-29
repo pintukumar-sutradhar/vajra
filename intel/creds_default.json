@@ -1,0 +1,155 @@
+{
+  "about": "Default-credential catalog for common appliances and services (sourced from public vendor documentation).",
+  "targets": {
+    "tomcat": {
+      "name": "Apache Tomcat",
+      "service": "http-basic",
+      "paths": ["/manager/html", "/host-manager/html"],
+      "auth": "basic",
+      "creds": [["tomcat", "tomcat"], ["admin", "admin"], ["manager", "manager"], ["role1", "role1"], ["tomcat", "s3cret"], ["admin", "password"], ["tomcat", "changethis"], ["system", "manager"]]
+    },
+    "jboss": {
+      "name": "JBoss Application Server",
+      "service": "http-basic",
+      "paths": ["/", "/jmx-console", "/web-console", "/admin-console"],
+      "auth": "basic",
+      "creds": [["admin", "admin"], ["admin", ""], ["jboss", "admin"], ["jboss", "jboss"], ["admin", "admin123"]]
+    },
+    "weblogic": {
+      "name": "Oracle WebLogic Server",
+      "service": "http-basic",
+      "paths": ["/console", "/console/login/"],
+      "auth": "basic",
+      "creds": [["weblogic", "weblogic"], ["weblogic", "weblogic1"], ["system", "system"], ["admin", "admin"], ["weblogic", "password"], ["weblogic1", "weblogic1"]]
+    },
+    "wildfly": {
+      "name": "WildFly (JBoss AS)",
+      "service": "http-basic",
+      "paths": ["/management", "/console"],
+      "auth": "basic",
+      "creds": [["admin", "admin"], ["admin", ""]]
+    },
+    "jenkins": {
+      "name": "Jenkins",
+      "service": "http-form",
+      "paths": ["/login"],
+      "auth": "post",
+      "form": {"user": "j_username", "pass": "j_password"},
+      "creds": [["admin", "admin"], ["admin", ""], ["jenkins", "jenkins"]]
+    },
+    "grafana": {
+      "name": "Grafana",
+      "service": "http-form",
+      "paths": ["/login"],
+      "auth": "post",
+      "form": {"user": "user", "pass": "pass"},
+      "creds": [["admin", "admin"]]
+    },
+    "phpmyadmin": {
+      "name": "phpMyAdmin",
+      "service": "http-form",
+      "paths": ["/index.php"],
+      "auth": "post",
+      "form": {"user": "pma_username", "pass": "pma_password"},
+      "creds": [["root", ""], ["root", "root"], ["root", "toor"], ["root", "password"], ["test", "test"]]
+    },
+    "mysql": {
+      "name": "MySQL / MariaDB",
+      "service": "mysql",
+      "paths": [],
+      "auth": "plain",
+      "creds": [["root", ""], ["root", "root"], ["root", "toor"], ["root", "pass"], ["admin", "admin"], ["mysql", "mysql"]]
+    },
+    "postgres": {
+      "name": "PostgreSQL",
+      "service": "postgres",
+      "paths": [],
+      "auth": "plain",
+      "creds": [["postgres", "postgres"], ["postgres", ""], ["admin", "admin"], ["admin", ""]]
+    },
+    "mssql": {
+      "name": "Microsoft SQL Server",
+      "service": "postgres",
+      "paths": [],
+      "auth": "plain",
+      "creds": [["sa", ""], ["sa", "password"], ["sa", "sa"], ["sa", "123456"], ["sa", "msft123"]]
+    },
+    "redis": {
+      "name": "Redis",
+      "service": "redis",
+      "paths": [],
+      "auth": "plain",
+      "creds": []
+    },
+    "mongo": {
+      "name": "MongoDB",
+      "service": "postgres",
+      "paths": [],
+      "auth": "plain",
+      "creds": [["admin", ""], ["admin", "admin"], ["root", "root"], ["admin", "password"]]
+    },
+    "ftp-common": {
+      "name": "FTP (common defaults)",
+      "service": "ftp",
+      "paths": [],
+      "auth": "plain",
+      "creds": [["anonymous", "anonymous"], ["anonymous", "a@b.com"], ["ftp", "ftp"], ["admin", "admin"], ["test", "test"]]
+    },
+    "ssh-common": {
+      "name": "SSH (observational defaults)",
+      "service": "ssh",
+      "paths": [],
+      "auth": "plain",
+      "creds": [["root", "toor"], ["root", "system"], ["admin", "admin"], ["test", "test"]]
+    },
+    "routers-cisco": {
+      "name": "Cisco Routers",
+      "service": "http-basic",
+      "paths": ["/"],
+      "auth": "basic",
+      "creds": [["cisco", "cisco"], ["admin", "cisco"], ["cisco", ""], ["cisco", "system"], ["admin", ""]]
+    },
+    "routers-mikrotik": {
+      "name": "MikroTik Router",
+      "service": "http-basic",
+      "paths": ["/"],
+      "auth": "basic",
+      "creds": [["admin", ""], ["admin", "admin"]]
+    },
+    "routers-linksys": {
+      "name": "Linksys Routers",
+      "service": "http-basic",
+      "paths": ["/"],
+      "auth": "basic",
+      "creds": [["admin", "admin"], ["admin", "password"], ["root", ""]]
+    },
+    "netgear": {
+      "name": "Netgear Routers",
+      "service": "http-basic",
+      "paths": ["/"],
+      "auth": "basic",
+      "creds": [["admin", "password"], ["admin", "1234"], ["admin", ""]]
+    },
+    "vmware-vsphere": {
+      "name": "VMware vSphere",
+      "service": "http-basic",
+      "paths": ["/ui"],
+      "auth": "basic",
+      "creds": [["admin", "admin"], ["root", "vmware"]]
+    },
+    "camera-hikvision": {
+      "name": "Hikvision Camera",
+      "service": "http-basic",
+      "paths": ["/"],
+      "auth": "basic",
+      "creds": [["admin", "12345"], ["admin", "admin"], ["admin", ""]]
+    },
+    "camera-dahua": {
+      "name": "Dahua Camera",
+      "service": "http-basic",
+      "paths": ["/"],
+      "auth": "basic",
+      "creds": [["admin", "admin"], ["admin", "12345"]]
+    }
+  }
+}

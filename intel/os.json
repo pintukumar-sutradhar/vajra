@@ -1,0 +1,14 @@
+{
+  "about": "TTL and TCP stack fingerprint hints for quick remote OS identification during VAJRA scans.",
+  "ttl_ranges": [
+    {"low": 32, "high": 32, "verdict": "Windows (TTL 32)", "confidence": "medium"},
+    {"low": 60, "high": 64, "verdict": "Unix/Linux (TTL 64)", "confidence": "high"},
+    {"low": 126, "high": 128, "verdict": "Windows (TTL 128)", "confidence": "high"},
+    {"low": 200, "high": 255, "verdict": "Cisco/network gear (TTL 255)", "confidence": "medium"}
+  ],
+  "tcp_os_hints": [
+    {"marker": "S3W", "verdict": "Windows XP/2003"},
+    {"marker": "Linux", "verdict": "Linux TCP stack"},
+    {"marker": "Solaris", "verdict": "Solaris"}
+  ]
+}

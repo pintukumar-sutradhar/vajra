@@ -1,0 +1,53 @@
+{
+  "about": "Sensitive-file / leak-path checklist probed during web scans (read-only GETs).",
+  "groups": [
+    {
+      "name": "vcs",
+      "label": "Version-control leakage",
+      "severity": "high",
+      "paths": [".git/HEAD", ".git/config", ".gitignore", ".svn/entries", ".hg/store", ".bzr/README", "CVS/Entries"]
+    },
+    {
+      "name": "env",
+      "label": "Environment / config leak",
+      "severity": "high",
+      "paths": [".env", ".env.local", ".env.production", ".env.backup", ".env.example~", "config.php.bak", "web.config.bak", "app/config/config.yml~", "wp-config.php.bak"]
+    },
+    {
+      "name": "backup",
+      "label": "Backup archives",
+      "severity": "high",
+      "paths": ["backup.zip", "backup.tar.gz", "backup.sql", "db.sql", "dump.sql", "database.sql", "site.tar.gz", "www.zip", "web.zip", "app.zip", "archive.zip", "sql.zip"]
+    },
+    {
+      "name": "debug",
+      "label": "Debug / info pages",
+      "severity": "medium",
+      "paths": ["phpinfo.php", "info.php", "debug", "actuator/env", "actuator/heapdump", "actuator/mappings", "actuator", "/metrics", "/server-status", "/server-info", "trace"]
+    },
+    {
+      "name": "docs",
+      "label": "Documentation / API leaks",
+      "severity": "medium",
+      "paths": ["swagger.json", "swagger-ui.html", "api-docs", "/v2/api-docs", "openapi.json", "graphql", "redoc.html", "documentation", "docs"]
+    },
+    {
+      "name": "users",
+      "label": "User / data files",
+      "severity": "high",
+      "paths": [".htpasswd", "htpasswd", "passwd", "users.sql", "user.sql", "customers.csv", "dump.rdb"]
+    },
+    {
+      "name": "admin",
+      "label": "Admin / dev surfaces",
+      "severity": "medium",
+      "paths": ["admin", "administrator", "panel", "cpanel", "phpmyadmin", "pma"]
+    },
+    {
+      "name": "temp",
+      "label": "Temp / editor drop",
+      "severity": "low",
+      "paths": [".index.html.swp", "index.html~", "test.php.bak", "probe.php.old", "config.php.swp", "demo.php.swo"]
+    }
+  ]
+}

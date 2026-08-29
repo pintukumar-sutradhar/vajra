@@ -1,0 +1,1661 @@
+{
+  "products": {
+    "openssh": {
+      "product": "OpenSSH",
+      "aliases": [
+        "openssh"
+      ],
+      "ranges": {
+        "<=7.7": [
+          "CVE-2018-15473|Username enumeration via malformed packets|5.3"
+        ],
+        "<8.2": [
+          "CVE-2019-6111|scp client path validation file overwrite|5.9"
+        ],
+        "<8.9": [
+          "CVE-2021-28041|ssh-agent double-free leading to code exec|7.0"
+        ],
+        "<9.2": [
+          "CVE-2023-38408|ssh-agent PKCS#11 forwarded-socket RCE|9.8"
+        ],
+        "<9.6": [
+          "CVE-2023-48795|Terrapin prefix truncation downgrade|5.9"
+        ]
+      }
+    },
+    "dropbear": {
+      "product": "Dropbear SSH",
+      "aliases": [
+        "dropbear"
+      ],
+      "ranges": {
+        "<2022.83": [
+          "CVE-2021-36369|Trailing-dot username spoofing across double-auth hop|6.5"
+        ]
+      }
+    },
+    "apache": {
+      "product": "Apache httpd",
+      "aliases": [
+        "apache",
+        "httpd"
+      ],
+      "ranges": {
+        "==2.4.49": [
+          "CVE-2021-41773|Path traversal + mod_cgi RCE|9.8"
+        ],
+        "<2.4.51": [
+          "CVE-2021-42013|Traversal bypass leading to RCE|9.8"
+        ],
+        "<2.4.50": [
+          "CVE-2021-44790|mod_lua buffer overflow RCE|9.8"
+        ],
+        "<2.4.39": [
+          "CVE-2019-0211|Privilege escalation via scoreboard|7.2"
+        ],
+        "<2.4.38": [
+          "CVE-2018-17199|mod_session cookie parsing bypass|7.5"
+        ]
+      }
+    },
+    "nginx": {
+      "product": "nginx",
+      "aliases": [
+        "nginx"
+      ],
+      "ranges": {
+        "<1.21.0": [
+          "CVE-2021-23017|DNS resolver off-by-one heap corruption RCE|9.4"
+        ],
+        "<1.17.7": [
+          "CVE-2019-20372|HTTP request smuggling with error_page|7.5"
+        ],
+        "<1.23.4": [
+          "CVE-2023-44487|HTTP/2 Rapid Reset DoS|7.5"
+        ]
+      }
+    },
+    "microsoft-iis": {
+      "product": "Microsoft IIS",
+      "aliases": [
+        "microsoft-iis",
+        "iis/"
+      ],
+      "ranges": {
+        "==6.0": [
+          "CVE-2017-7269|WebDAV ScStoragePathFromUrl overflow RCE|10.0"
+        ],
+        "<=8.5": [
+          "CVE-2015-1635|HTTP.sys RCE (MS15-034)|10.0"
+        ],
+        "==10.0": [
+          "CVE-2021-31166|HTTP Protocol Stack (http.sys) DoS|7.5"
+        ]
+      }
+    },
+    "tomcat": {
+      "product": "Apache Tomcat",
+      "aliases": [
+        "tomcat",
+        "coyote"
+      ],
+      "ranges": {
+        "<9.0.1": [
+          "CVE-2017-12617|JSP upload RCE via PUT readonly=false|8.1"
+        ],
+        "<8.5.51": [
+          "CVE-2020-1938|Ghostcat AJP file read/inclusion|9.8"
+        ],
+        "<10.1.14": [
+          "CVE-2023-42794|Tomcat mapper denial of service|7.5"
+        ]
+      }
+    },
+    "jetty": {
+      "product": "Eclipse Jetty",
+      "aliases": [
+        "jetty"
+      ],
+      "ranges": {
+        "<9.4.41": [
+          "CVE-2021-28165|SSL leakage via select channel DoS|7.5"
+        ],
+        "<9.4.46": [
+          "CVE-2021-34429|URI parsing path disclosure|5.3"
+        ]
+      }
+    },
+    "weblogic": {
+      "product": "Oracle WebLogic",
+      "aliases": [
+        "weblogic"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2020-14882|Unauthenticated console RCE|9.8"
+        ],
+        "<14.1.2": [
+          "CVE-2023-21839|T3/IIOP naming remote binding|7.5"
+        ]
+      }
+    },
+    "wildfly": {
+      "product": "WildFly/JBoss",
+      "aliases": [
+        "wildfly",
+        "jboss"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2017-12149|HttpInvoker deserialization RCE|9.8"
+        ],
+        "<26.1": [
+          "CVE-2022-1274? |See vendor advisory for management API exposure|8.0"
+        ]
+      }
+    },
+    "websphere": {
+      "product": "IBM WebSphere",
+      "aliases": [
+        "websphere"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2015-7450|Java commons-collections deserialization RCE|9.8"
+        ]
+      }
+    },
+    "glassfish": {
+      "product": "GlassFish/Payara",
+      "aliases": [
+        "glassfish",
+        "payara"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2017-1000028|Directory traversal in deployed apps handling|7.5"
+        ]
+      }
+    },
+    "vsftpd": {
+      "product": "vsftpd",
+      "aliases": [
+        "vsftpd"
+      ],
+      "ranges": {
+        "==2.3.4": [
+          "CVE-2011-2523|Backdoor shell on port 6200|10.0"
+        ],
+        "<3.0.3": [
+          "CVE-2015-1419|Config-driven DoS|7.5"
+        ]
+      }
+    },
+    "proftpd": {
+      "product": "ProFTPD",
+      "aliases": [
+        "proftpd"
+      ],
+      "ranges": {
+        "<=1.3.5": [
+          "CVE-2015-3306|mod_copy SITE CPFR/CPTO file copy RCE|10.0"
+        ],
+        "<=1.3.6b": [
+          "CVE-2019-12815|mod_copy auth-bypass copy|9.8"
+        ]
+      }
+    },
+    "pure-ftpd": {
+      "product": "Pure-FTPd",
+      "aliases": [
+        "pure-ftpd",
+        "pureftp"
+      ],
+      "ranges": {
+        "<1.0.49": [
+          "CVE-2020-9274|Use-after-free in FTP globbing|7.5"
+        ]
+      }
+    },
+    "filezilla": {
+      "product": "FileZilla Server",
+      "aliases": [
+        "filezilla"
+      ],
+      "ranges": {
+        "<1.8": [
+          "CVE-2023-48795|Terrapin downgrade exposure|5.9"
+        ]
+      }
+    },
+    "samba": {
+      "product": "Samba",
+      "aliases": [
+        "samba"
+      ],
+      "ranges": {
+        "<4.6": [
+          "CVE-2017-7494|SambaCry loadable-module RCE|10.0"
+        ],
+        "<4.13.17": [
+          "CVE-2022-32742|SMB1 write memory disclosure|7.5"
+        ]
+      }
+    },
+    "windows-smb": {
+      "product": "Windows SMB",
+      "aliases": [
+        "microsoft-ds",
+        "lanmanserver"
+      ],
+      "ranges": {
+        "any": [
+          "MS17-010/CVE-2017-0144|EternalBlue SMBv1 RCE (check patch level)|10.0"
+        ]
+      }
+    },
+    "openvpn": {
+      "product": "OpenVPN",
+      "aliases": [
+        "openvpn"
+      ],
+      "ranges": {
+        "<2.4.9": [
+          "CVE-2020-11868|Rehandshake downgrade (VORACLE-related)|5.9"
+        ]
+      }
+    },
+    "strongswan": {
+      "product": "strongSwan",
+      "aliases": [
+        "strongswan"
+      ],
+      "ranges": {
+        "<5.9.6": [
+          "CVE-2021-45079|EAP identity buffer overflow RCE|9.8"
+        ]
+      }
+    },
+    "postfix": {
+      "product": "Postfix",
+      "aliases": [
+        "postfix",
+        "esmtp"
+      ],
+      "ranges": {
+        "<3.6.4": [
+          "CVE-2021-33910? |Review vendor advisories for smtputf8 handling|5.3"
+        ]
+      }
+    },
+    "exim": {
+      "product": "Exim",
+      "aliases": [
+        "exim"
+      ],
+      "ranges": {
+        "<=4.92.2": [
+          "CVE-2019-10149|The Return of the WIZard \u2014 $run{} RCE|9.8"
+        ],
+        "<4.94.2": [
+          "CVE-2020-28018|smtp_uncommon_use_after_free RCE|9.8"
+        ]
+      }
+    },
+    "sendmail": {
+      "product": "Sendmail",
+      "aliases": [
+        "sendmail"
+      ],
+      "ranges": {
+        "<=8.17": [
+          "CVE-2014-3956|Information disclosure via debug tracing|5.0"
+        ]
+      }
+    },
+    "dovecot": {
+      "product": "Dovecot",
+      "aliases": [
+        "dovecot"
+      ],
+      "ranges": {
+        "<2.3.16": [
+          "CVE-2020-24386|imap METADATA integer overflow|7.5"
+        ]
+      }
+    },
+    "courier-imap": {
+      "product": "Courier IMAP",
+      "aliases": [
+        "courier"
+      ],
+      "ranges": {
+        "<5.1.3": [
+          "CVE-2020-13776|authdaemon race condition|6.5"
+        ]
+      }
+    },
+    "exchange": {
+      "product": "MS Exchange",
+      "aliases": [
+        "outlook web access",
+        "/owa/",
+        "exchange"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2022-41040|ProxyNotWalk SSRF if unpatched|9.1"
+        ]
+      }
+    },
+    "zimbra": {
+      "product": "Zimbra Collaboration",
+      "aliases": [
+        "zimbra"
+      ],
+      "ranges": {
+        "<9.0.0.p25": [
+          "CVE-2022-30333|RarLab path traversal \u2192 webshell|9.8"
+        ],
+        "<8.8.15.p30": [
+          "CVE-2020-7746|XSS to mailbox data theft|6.1"
+        ]
+      }
+    },
+    "mysql": {
+      "product": "MySQL",
+      "aliases": [
+        "mysql",
+        "mariadb"
+      ],
+      "ranges": {
+        "<5.6": [
+          "CVE-2012-2122|Authentication bypass crafted challenge|9.8"
+        ],
+        "<8.0.31": [
+          "CVE-2022-31510? |Review vendor advisories for server components|6.5"
+        ]
+      }
+    },
+    "postgresql": {
+      "product": "PostgreSQL",
+      "aliases": [
+        "postgresql",
+        "postgres"
+      ],
+      "ranges": {
+        "<13.10": [
+          "CVE-2023-2454|CREATE ROLE search_path injection|8.8"
+        ],
+        "<14.9": [
+          "CVE-2023-39417|Extension script injection|9.8"
+        ]
+      }
+    },
+    "mongodb": {
+      "product": "MongoDB",
+      "aliases": [
+        "mongodb",
+        "mongod"
+      ],
+      "ranges": {
+        "<4.4.23": [
+          "CVE-2023-32025? |Unauthorized access via crafted requests on exposed clusters|8.8"
+        ]
+      }
+    },
+    "redis": {
+      "product": "Redis",
+      "aliases": [
+        "redis"
+      ],
+      "ranges": {
+        "<6.2.7": [
+          "CVE-2022-24834|Lua cjson sandbox escape RCE|9.8"
+        ],
+        "<7.0.12": [
+          "CVE-2023-28425|MSETNX ACL key-space bypass|8.8"
+        ],
+        "<7.0.15": [
+          "CVE-2023-28856|ACL bypass on restricted commands|8.8"
+        ]
+      }
+    },
+    "memcached": {
+      "product": "Memcached",
+      "aliases": [
+        "memcached"
+      ],
+      "ranges": {
+        "<1.6.18": [
+          "CVE-2023-31084? |Denial of service via crafted requests|7.5"
+        ]
+      }
+    },
+    "elasticsearch": {
+      "product": "Elasticsearch",
+      "aliases": [
+        "elasticsearch"
+      ],
+      "ranges": {
+        "<7.14": [
+          "CVE-2021-22144|Cluster-state disclosure/DoS on exposed clusters|7.5"
+        ],
+        "<8.5.0": [
+          "CVE-2022-23457? |Ingest pipeline scripting restrictions bypass|8.0"
+        ]
+      }
+    },
+    "solr": {
+      "product": "Apache Solr",
+      "aliases": [
+        "solr"
+      ],
+      "ranges": {
+        "<8.11.2": [
+          "CVE-2021-44832? |DataImportHandler expression RCE family (Log4J era)|9.8"
+        ],
+        "<9.2": [
+          "CVE-2023-30860? |Config API exposure leads to RCE chains|9.8"
+        ]
+      }
+    },
+    "cassandra": {
+      "product": "Apache Cassandra",
+      "aliases": [
+        "cassandra"
+      ],
+      "ranges": {
+        "<3.11.14": [
+          "CVE-2021-43521|UDF execution bypass guardrails|9.8"
+        ]
+      }
+    },
+    "couchdb": {
+      "product": "CouchDB",
+      "aliases": [
+        "couchdb"
+      ],
+      "ranges": {
+        "<3.2.2": [
+          "CVE-2022-24706|Erlang distribution protocol unauth access|9.8"
+        ]
+      }
+    },
+    "rabbitmq": {
+      "product": "RabbitMQ",
+      "aliases": [
+        "rabbitmq",
+        "amqp"
+      ],
+      "ranges": {
+        "<3.11.10": [
+          "CVE-2023-1729? |Management plugin privilege checks bypass|8.8"
+        ]
+      }
+    },
+    "kafka": {
+      "product": "Apache Kafka",
+      "aliases": [
+        "kafka"
+      ],
+      "ranges": {
+        "<3.4.0": [
+          "CVE-2022-34917|Broker-side camel-case header bypass auth|8.8"
+        ]
+      }
+    },
+    "activemq": {
+      "product": "Apache ActiveMQ",
+      "aliases": [
+        "activemq"
+      ],
+      "ranges": {
+        "<5.16.7": [
+          "CVE-2023-46604|OpenWire ClassCastException \u2192 RCE|10.0"
+        ],
+        "<5.15.14": [
+          "CVE-2019-0222|Camel-CAMEL case JMX auth bypass|9.8"
+        ]
+      }
+    },
+    "php": {
+      "product": "PHP",
+      "aliases": [
+        "php/"
+      ],
+      "ranges": {
+        "<5.4.2": [
+          "CVE-2012-1823|php-cgi argument injection RCE|7.5"
+        ],
+        "<8.1.27": [
+          "CVE-2023-3824|phar stream buffer overflow|9.8"
+        ]
+      }
+    },
+    "python": {
+      "product": "CPython",
+      "aliases": [
+        "python/"
+      ],
+      "ranges": {
+        "<3.11.4": [
+          "CVE-2023-24329|urllib URL parsing blocklist bypass|7.5"
+        ]
+      }
+    },
+    "werkzeug": {
+      "product": "Werkzeug (Flask)",
+      "aliases": [
+        "werkzeug"
+      ],
+      "ranges": {
+        "<0.15.3": [
+          "CVE-2019-14806|Debugger PIN deterministic when debugger enabled|7.5"
+        ],
+        "any": [
+          "NOTE|Werkzeug debugger console (/console) = unauthenticated RCE if visible|9.8"
+        ]
+      }
+    },
+    "openssl": {
+      "product": "OpenSSL",
+      "aliases": [
+        "openssl"
+      ],
+      "ranges": {
+        "==1.0.1": [
+          "CVE-2014-0160|Heartbleed heartbeat memory disclosure|7.5"
+        ],
+        "==1.0.1a": [
+          "CVE-2014-0160|Heartbleed heartbeat memory disclosure|7.5"
+        ],
+        "==1.0.1b": [
+          "CVE-2014-0160|Heartbleed heartbeat memory disclosure|7.5"
+        ],
+        "==1.0.1c": [
+          "CVE-2014-0160|Heartbleed heartbeat memory disclosure|7.5"
+        ],
+        "==1.0.1d": [
+          "CVE-2014-0160|Heartbleed heartbeat memory disclosure|7.5"
+        ],
+        "==1.0.1e": [
+          "CVE-2014-0160|Heartbleed heartbeat memory disclosure|7.5"
+        ],
+        "==1.0.1f": [
+          "CVE-2014-0160|Heartbleed heartbeat memory disclosure|7.5"
+        ],
+        "<1.1.1n": [
+          "CVE-2022-0778|BN_mod_sqrt infinite loop DoS|7.5"
+        ]
+      }
+    },
+    "libssh": {
+      "product": "libssh",
+      "aliases": [
+        "libssh"
+      ],
+      "ranges": {
+        "<0.9.6": [
+          "CVE-2021-3634|SSH_PUBKEY_ACCEPTED memory corruption|7.0"
+        ]
+      }
+    },
+    "lighttpd": {
+      "product": "lighttpd",
+      "aliases": [
+        "lighttpd"
+      ],
+      "ranges": {
+        "<1.4.55": [
+          "CVE-2018-19052|url-normalize traversal bypass|7.5"
+        ]
+      }
+    },
+    "haproxy": {
+      "product": "HAProxy",
+      "aliases": [
+        "haproxy"
+      ],
+      "ranges": {
+        "<2.0.6": [
+          "CVE-2021-40346|h2/htx integer overflow request smuggling|8.1"
+        ]
+      }
+    },
+    "traefik": {
+      "product": "Traefik",
+      "aliases": [
+        "traefik"
+      ],
+      "ranges": {
+        "<2.9.9": [
+          "CVE-2023-26049? |Middleware auth bypass families \u2014 review advisory|8.0"
+        ]
+      }
+    },
+    "caddy": {
+      "product": "Caddy",
+      "aliases": [
+        "caddy"
+      ],
+      "ranges": {
+        "<2.6.4": [
+          "CVE-2022-44305? |Review advisory for admin endpoint binding|7.5"
+        ]
+      }
+    },
+    "varnish": {
+      "product": "Varnish Cache",
+      "aliases": [
+        "varnish"
+      ],
+      "ranges": {
+        "<6.0.11": [
+          "CVE-2021-37159? |HTTP/2 implementation DoS families|7.5"
+        ]
+      }
+    },
+    "squid": {
+      "product": "Squid",
+      "aliases": [
+        "squid"
+      ],
+      "ranges": {
+        "<5.7": [
+          "CVE-2023-06781? |Cache-manager exposure families|7.5"
+        ]
+      }
+    },
+    "docker": {
+      "product": "Docker Engine API",
+      "aliases": [
+        "docker"
+      ],
+      "ranges": {
+        "any": [
+          "EXPOSURE|Unauthenticated Docker API = host-root container escape|10.0"
+        ]
+      }
+    },
+    "kubernetes": {
+      "product": "Kubernetes",
+      "aliases": [
+        "kubernetes",
+        "kubelet"
+      ],
+      "ranges": {
+        "any": [
+          "EXPOSURE|Anonymous kubelet :10250/pods or exec = cluster takeover|9.8"
+        ]
+      }
+    },
+    "etcd": {
+      "product": "etcd",
+      "aliases": [
+        "etcd"
+      ],
+      "ranges": {
+        "<3.4.26": [
+          "CVE-2023-44487|HTTP/2 Rapid Reset DoS|7.5"
+        ]
+      }
+    },
+    "consul": {
+      "product": "HashiCorp Consul",
+      "aliases": [
+        "consul"
+      ],
+      "ranges": {
+        "<1.13.7": [
+          "CVE-2023-28953? |API auth-check families \u2014 review advisory|8.0"
+        ]
+      }
+    },
+    "vault": {
+      "product": "HashiCorp Vault",
+      "aliases": [
+        "vault"
+      ],
+      "ranges": {
+        "<1.12.5": [
+          "CVE-2023-24998? |Audit-log leak families \u2014 review advisory|7.0"
+        ]
+      }
+    },
+    "jenkins": {
+      "product": "Jenkins",
+      "aliases": [
+        "jenkins"
+      ],
+      "ranges": {
+        "<2.138": [
+          "CVE-2018-1000861|Pipeline DSL sandbox bypass RCE|9.8"
+        ],
+        "<2.442": [
+          "CVE-2024-23897|CLI arbitrary file read \u2192 RCE|9.8"
+        ]
+      }
+    },
+    "gitlab": {
+      "product": "GitLab",
+      "aliases": [
+        "gitlab"
+      ],
+      "ranges": {
+        "<13.10.3": [
+          "CVE-2021-22205|ExifTool DjVu unauth RCE|10.0"
+        ],
+        "<16.4.3": [
+          "CVE-2023-7028|Account takeover via password-reset email poisoning|9.8"
+        ]
+      }
+    },
+    "gitea": {
+      "product": "Gitea",
+      "aliases": [
+        "gitea"
+      ],
+      "ranges": {
+        "<1.13.2": [
+          "CVE-2020-14144|Authenticated git hooks \u2192 server RCE|8.8"
+        ]
+      }
+    },
+    "gogs": {
+      "product": "Gogs",
+      "aliases": [
+        "gogs"
+      ],
+      "ranges": {
+        "<0.12.2": [
+          "CVE-2018-18925|Session-file forgery \u2192 RCE|9.8"
+        ]
+      }
+    },
+    "sonarqube": {
+      "product": "SonarQube",
+      "aliases": [
+        "sonarqube"
+      ],
+      "ranges": {
+        "<9.9": [
+          "EXPOSURE|Public projects/API leaks source + tokens|8.0"
+        ]
+      }
+    },
+    "nexus": {
+      "product": "Sonatype Nexus",
+      "aliases": [
+        "nexus"
+      ],
+      "ranges": {
+        "<3.68": [
+          "CVE-2024-4956|Path traversal in repository endpoints|7.5"
+        ]
+      }
+    },
+    "artifactory": {
+      "product": "JFrog Artifactory",
+      "aliases": [
+        "artifactory"
+      ],
+      "ranges": {
+        "<7.63": [
+          "CVE-2023-40825? |Auth-bypass families review advisory|8.8"
+        ]
+      }
+    },
+    "grafana": {
+      "product": "Grafana",
+      "aliases": [
+        "grafana"
+      ],
+      "ranges": {
+        "<8.3.1": [
+          "CVE-2021-43798|Plugin public-path traversal file read|7.5"
+        ],
+        "<9.5.6": [
+          "CVE-2023-3937? |Privilege escalation families review advisory|8.0"
+        ]
+      }
+    },
+    "kibana": {
+      "product": "Kibana",
+      "aliases": [
+        "kibana"
+      ],
+      "ranges": {
+        "<7.17.9": [
+          "CVE-2022-36131? |Prototype-pollution/RCE plugin families|9.8"
+        ]
+      }
+    },
+    "prometheus": {
+      "product": "Prometheus",
+      "aliases": [
+        "prometheus"
+      ],
+      "ranges": {
+        "any": [
+          "EXPOSURE|Public /metrics & /api endpoints disclose infrastructure|6.0"
+        ]
+      }
+    },
+    "zabbix": {
+      "product": "Zabbix",
+      "aliases": [
+        "zabbix"
+      ],
+      "ranges": {
+        "<6.0.21": [
+          "CVE-2023-29497? |Frontend injection families review advisory|8.0"
+        ]
+      }
+    },
+    "nagios": {
+      "product": "Nagios XI/Core",
+      "aliases": [
+        "nagios"
+      ],
+      "ranges": {
+        "<5.11.1": [
+          "CVE-2023-40932? |SQLi families in dashboards review advisory|8.8"
+        ]
+      }
+    },
+    "cacti": {
+      "product": "Cacti",
+      "aliases": [
+        "cacti"
+      ],
+      "ranges": {
+        "<1.2.24": [
+          "CVE-2022-46169|unauth command injection via poller|9.8"
+        ]
+      }
+    },
+    "wordpress": {
+      "product": "WordPress",
+      "aliases": [
+        "wordpress"
+      ],
+      "ranges": {
+        "<5.1": [
+          "CVE-2019-8943|Image path traversal + meta RCE chain|8.8"
+        ],
+        "<6.3.2": [
+          "CVE-2023-39999? |Plugin/theme ecosystem exposure review advisories|8.0"
+        ]
+      }
+    },
+    "drupal": {
+      "product": "Drupal",
+      "aliases": [
+        "drupal"
+      ],
+      "ranges": {
+        "<7.58": [
+          "CVE-2018-7600|Drupalgeddon2 render-array RCE|9.8"
+        ],
+        "<8.5.11": [
+          "CVE-2018-7602|Drupalgeddon3 RCE|8.8"
+        ],
+        "<9.5.11": [
+          "CVE-2023-2008|File-upload access bypass families|8.8"
+        ]
+      }
+    },
+    "joomla": {
+      "product": "Joomla!",
+      "aliases": [
+        "joomla"
+      ],
+      "ranges": {
+        "<3.9.8": [
+          "CVE-2019-10905? |com_users privilege families|8.8"
+        ],
+        "<4.2.8": [
+          "CVE-2023-23752|Webservice endpoints leak credentials|7.5"
+        ]
+      }
+    },
+    "magento": {
+      "product": "Magento",
+      "aliases": [
+        "magento"
+      ],
+      "ranges": {
+        "<2.4.5-p2": [
+          "CVE-2022-35696? |Checkout/cart template families|9.1"
+        ]
+      }
+    },
+    "mediawiki": {
+      "product": "MediaWiki",
+      "aliases": [
+        "mediawiki"
+      ],
+      "ranges": {
+        "<1.39.3": [
+          "CVE-2023-35516? |Parser-function injection families|8.0"
+        ]
+      }
+    },
+    "nextcloud": {
+      "product": "Nextcloud",
+      "aliases": [
+        "nextcloud"
+      ],
+      "ranges": {
+        "<27.0.2": [
+          "CVE-2023-38319? |Share-link enumeration families|7.5"
+        ]
+      }
+    },
+    "owncloud": {
+      "product": "ownCloud",
+      "aliases": [
+        "owncloud"
+      ],
+      "ranges": {
+        "<10.13": [
+          "CVE-2023-37371? |Graph API disclosure families review advisory|8.8"
+        ]
+      }
+    },
+    "roundcube": {
+      "product": "Roundcube",
+      "aliases": [
+        "roundcube"
+      ],
+      "ranges": {
+        "<1.6.3": [
+          "CVE-2023-44026|Persistent XSS via HTML messages|6.1"
+        ]
+      }
+    },
+    "phpmyadmin": {
+      "product": "phpMyAdmin",
+      "aliases": [
+        "phpmyadmin"
+      ],
+      "ranges": {
+        "<5.2.1": [
+          "CVE-2022-23826? |Setup-page exposure families|7.5"
+        ]
+      }
+    },
+    "adminer": {
+      "product": "Adminer",
+      "aliases": [
+        "adminer"
+      ],
+      "ranges": {
+        "<4.8.1": [
+          "CVE-2021-21311|SSRF against internal services|7.5"
+        ]
+      }
+    },
+    "moodle": {
+      "product": "Moodle",
+      "aliases": [
+        "moodle"
+      ],
+      "ranges": {
+        "<4.2.1": [
+          "CVE-2023-28330? |Role-capability check families|8.0"
+        ]
+      }
+    },
+    "f5-bigip": {
+      "product": "F5 BIG-IP",
+      "aliases": [
+        "bigip",
+        "f5 ",
+        "tmui"
+      ],
+      "ranges": {
+        "<=16.1.0": [
+          "CVE-2020-5902|TMUI RCE via path traversal semicolon|10.0"
+        ],
+        "<17.0.1": [
+          "CVE-2022-1388|iControl REST auth bypass RCE|9.8"
+        ]
+      }
+    },
+    "citrix-netscaler": {
+      "product": "Citrix ADC/NetScaler",
+      "aliases": [
+        "netscaler",
+        "citrix adc"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2019-19781|Directory traversal RCE if unpatched|9.8"
+        ]
+      }
+    },
+    "pulse-secure": {
+      "product": "Pulse Secure/Ivanti Connect",
+      "aliases": [
+        "pulse secure",
+        "ivanti connect"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2023-35078|Appliance unauth API access|10.0"
+        ]
+      }
+    },
+    "fortigate": {
+      "product": "Fortinet FortiOS",
+      "aliases": [
+        "fortigate",
+        "fortios",
+        "fortinet"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2022-40684|Admin-interface auth bypass|9.8"
+        ]
+      }
+    },
+    "paloalto": {
+      "product": "Palo Alto PAN-OS",
+      "aliases": [
+        "pan-os",
+        "panorama",
+        "globalprotect"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2024-3400|GlobalProtect command injection|10.0"
+        ]
+      }
+    },
+    "sonicwall": {
+      "product": "SonicWall SMA/GMS",
+      "aliases": [
+        "sonicwall"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2021-20016|SQL injection in SMA management|8.8"
+        ]
+      }
+    },
+    "vmware-vcenter": {
+      "product": "VMware vCenter",
+      "aliases": [
+        "vcenter",
+        "vsphere"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2022-22954|Server-side template injection RCE|9.8"
+        ]
+      }
+    },
+    "vmware-esxi": {
+      "product": "VMware ESXi",
+      "aliases": [
+        "esxi"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2023-20867|Authentication bypass guest operations|5.3"
+        ]
+      }
+    },
+    "confluence": {
+      "product": "Atlassian Confluence",
+      "aliases": [
+        "confluence"
+      ],
+      "ranges": {
+        "<7.4.14": [
+          "CVE-2021-26084|OGNL injection \u2192 RCE (Object-Graph Nav)|9.8"
+        ],
+        "<7.4.18": [
+          "CVE-2022-26134|Unauthenticated OGNL injection RCE|9.8"
+        ]
+      }
+    },
+    "crowd": {
+      "product": "Atlassian Crowd",
+      "aliases": [
+        "atlassian crowd",
+        "crowd"
+      ],
+      "ranges": {
+        "<3.6.2": [
+          "CVE-2019-11580|pdkinstall plugin unauth RCE|9.8"
+        ]
+      }
+    },
+    "spring": {
+      "product": "Spring Framework",
+      "aliases": [
+        "spring"
+      ],
+      "ranges": {
+        "<5.3.18": [
+          "CVE-2022-22965|Spring4Shell data-binding RCE on JDK9+|9.8"
+        ],
+        "<5.2.20": [
+          "CVE-2018-1270? |Messaging data-binding RCE families|9.8"
+        ]
+      }
+    },
+    "log4j": {
+      "product": "Apache Log4j",
+      "aliases": [
+        "log4j"
+      ],
+      "ranges": {
+        "<2.17.1": [
+          "CVE-2021-44228|Log4Shell JNDI lookup RCE|10.0"
+        ]
+      }
+    },
+    "struts": {
+      "product": "Apache Struts",
+      "aliases": [
+        "struts"
+      ],
+      "ranges": {
+        "<2.3.32": [
+          "CVE-2017-5638|Content-Type OGNL RCE (Equifax)|10.0"
+        ]
+      }
+    },
+    "shiro": {
+      "product": "Apache Shiro",
+      "aliases": [
+        "shiro"
+      ],
+      "ranges": {
+        "<1.2.5": [
+          "CVE-2016-4437|RememberMe AES key deserialization RCE|9.8"
+        ]
+      }
+    },
+    "thinkphp": {
+      "product": "ThinkPHP",
+      "aliases": [
+        "thinkphp"
+      ],
+      "ranges": {
+        "<=5.0.23": [
+          "CVE-2018-20062|invokeFunction RCE|9.8"
+        ]
+      }
+    },
+    "laravel": {
+      "product": "Laravel",
+      "aliases": [
+        "laravel"
+      ],
+      "ranges": {
+        "<8.4.2": [
+          "CVE-2021-3129|Ignition debug-mode file-write RCE|9.8"
+        ]
+      }
+    },
+    "phpunit": {
+      "product": "PHPUnit",
+      "aliases": [
+        "phpunit"
+      ],
+      "ranges": {
+        "<4.8.28": [
+          "CVE-2017-9841|eval-stdin.php POST-body eval RCE|9.8"
+        ]
+      }
+    },
+    "django": {
+      "product": "Django",
+      "aliases": [
+        "django"
+      ],
+      "ranges": {
+        "<3.2.20": [
+          "CVE-2023-31047|FileUpload multipart bypass validation|7.5"
+        ]
+      }
+    },
+    "rails": {
+      "product": "Ruby on Rails",
+      "aliases": [
+        "rails"
+      ],
+      "ranges": {
+        "<6.1.7.1": [
+          "CVE-2023-22796? |SafeBuffer bypass families|7.5"
+        ]
+      }
+    },
+    "express": {
+      "product": "Express.js",
+      "aliases": [
+        "express"
+      ],
+      "ranges": {
+        "<4.18.0": [
+          "CVE-2020-7788? |qs library DoS families|7.5"
+        ]
+      }
+    },
+    "xrdp": {
+      "product": "xrdp",
+      "aliases": [
+        "xrdp"
+      ],
+      "ranges": {
+        "<0.9.14": [
+          "CVE-2019-11833|syslog format string info leak|5.3"
+        ]
+      }
+    },
+    "rdp-windows": {
+      "product": "Microsoft RDP",
+      "aliases": [
+        "ms-wbt-server",
+        "terminal services"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2019-0708|BlueKeep pre-auth RCE (legacy Win7/2008)|9.8"
+        ]
+      }
+    },
+    "tigervnc": {
+      "product": "TigerVNC",
+      "aliases": [
+        "tigervnc"
+      ],
+      "ranges": {
+        "<1.10.1": [
+          "CVE-2019-15681|Lazy PixelFn decoder heap overflow|9.8"
+        ]
+      }
+    },
+    "realvnc": {
+      "product": "RealVNC",
+      "aliases": [
+        "realvnc"
+      ],
+      "ranges": {
+        "==4.1.1": [
+          "CVE-2006-2369|Authentication-type bypass|7.5"
+        ]
+      }
+    },
+    "mqtt": {
+      "product": "MQTT broker",
+      "aliases": [
+        "mqtt",
+        "mosquitto"
+      ],
+      "ranges": {
+        "any": [
+          "EXPOSURE|Anonymous publish/subscribe if allow_anonymous=true|8.0"
+        ]
+      }
+    },
+    "openldap": {
+      "product": "OpenLDAP",
+      "aliases": [
+        "openldap",
+        "slapd"
+      ],
+      "ranges": {
+        "<2.4.50": [
+          "CVE-2020-12243|Certificate-list matching DoS|7.5"
+        ]
+      }
+    },
+    "webmin": {
+      "product": "Webmin/Usermin",
+      "aliases": [
+        "webmin",
+        "usermin"
+      ],
+      "ranges": {
+        "<=1.920": [
+          "CVE-2019-15107|password_reset.cgi unauth RCE|10.0"
+        ],
+        "<1.997": [
+          "CVE-2022-0824|background_remote_cmd.cgi post-auth RCE|8.8"
+        ]
+      }
+    },
+    "vestacp": {
+      "product": "VestaCP",
+      "aliases": [
+        "vestacp"
+      ],
+      "ranges": {
+        "<0.9.8-25": [
+          "CVE-2019-17421|CSRF-to-RCE panel families|8.8"
+        ]
+      }
+    },
+    "proxmox": {
+      "product": "Proxmox VE",
+      "aliases": [
+        "proxmox"
+      ],
+      "ranges": {
+        "<6.4": [
+          "CVE-2019-1000032? |Ticket-validation families review advisory|8.0"
+        ]
+      }
+    },
+    "freeipa": {
+      "product": "FreeIPA",
+      "aliases": [
+        "freeipa"
+      ],
+      "ranges": {
+        "<4.9.10": [
+          "CVE-2022-1134? |Token-forgery families review advisory|8.8"
+        ]
+      }
+    },
+    "asterisk": {
+      "product": "Asterisk",
+      "aliases": [
+        "asterisk"
+      ],
+      "ranges": {
+        "<18.10.1": [
+          "CVE-2022-26498|AMI/SIP digest auth nonce reuse|7.5"
+        ]
+      }
+    },
+    "freeswitch": {
+      "product": "FreeSWITCH",
+      "aliases": [
+        "freeswitch"
+      ],
+      "ranges": {
+        "<1.10.6": [
+          "CVE-2019-11408|event_socket_contact_acl bypass RCE|9.8"
+        ]
+      }
+    },
+    "freepbx": {
+      "product": "FreePBX",
+      "aliases": [
+        "freepbx"
+      ],
+      "ranges": {
+        "<15.0.17": [
+          "CVE-2019-13101|Backup module unauth file upload RCE|9.8"
+        ]
+      }
+    },
+    "zoneminder": {
+      "product": "ZoneMinder",
+      "aliases": [
+        "zoneminder"
+      ],
+      "ranges": {
+        "<1.36.14": [
+          "CVE-2022-39280|SNMP Triggers SQLi \u2192 RCE|9.8"
+        ]
+      }
+    },
+    "hikvision": {
+      "product": "Hikvision cameras",
+      "aliases": [
+        "hikvision",
+        "webserv"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2017-7729|Hidden command shell ssrf/backdoor families|10.0"
+        ]
+      }
+    },
+    "dahua": {
+      "product": "Dahua devices",
+      "aliases": [
+        "dahua"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2017-17157|Hardcoded backdoor credentials|10.0"
+        ]
+      }
+    },
+    "axis-camera": {
+      "product": "Axis cameras",
+      "aliases": [
+        "axis"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2018-10659|RTSP authentication bypass families|9.8"
+        ]
+      }
+    },
+    "mikrotik": {
+      "product": "MikroTik RouterOS",
+      "aliases": [
+        "mikrotik",
+        "routeros",
+        "winbox"
+      ],
+      "ranges": {
+        "<6.42.1": [
+          "CVE-2018-14847|Winbox directory traversal file read|8.8"
+        ],
+        "<6.44.6": [
+          "CVE-2019-3943? |DNS-cache poisoning chains|8.0"
+        ]
+      }
+    },
+    "ubiquiti-unifi": {
+      "product": "UniFi Network",
+      "aliases": [
+        "unifi",
+        "ubiquiti"
+      ],
+      "ranges": {
+        "<6.5.54": [
+          "CVE-2021-33045|Local account login bypass|9.8"
+        ]
+      }
+    },
+    "netgear": {
+      "product": "NETGEAR routers",
+      "aliases": [
+        "netgear"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2020-27866|Centralized mgmt unauth RCE|9.8"
+        ]
+      }
+    },
+    "dlink": {
+      "product": "D-Link devices",
+      "aliases": [
+        "d-link",
+        "dlink",
+        "dir-"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2020-25075? |Credential-disclosure families across DIR series|9.8"
+        ]
+      }
+    },
+    "tp-link": {
+      "product": "TP-Link devices",
+      "aliases": [
+        "tp-link",
+        "tplink"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2020-26962? |Command-injection families across firmware|8.8"
+        ]
+      }
+    },
+    "asus": {
+      "product": "ASUS routers",
+      "aliases": [
+        "asus"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2021-32030|Unauthorized settings modification|8.8"
+        ]
+      }
+    },
+    "cisco-asa": {
+      "product": "Cisco ASA/FTD",
+      "aliases": [
+        "cisco asa",
+        "asa/",
+        "ftd"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2020-3452|WebVPN read-only file disclosure|7.5"
+        ]
+      }
+    },
+    "juniper": {
+      "product": "Juniper Junos",
+      "aliases": [
+        "juniper",
+        "junos"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2023-36845|J-Web missing-auth RCE chain|9.8"
+        ]
+      }
+    },
+    "huawei": {
+      "product": "Huawei HG532/devices",
+      "aliases": [
+        "huawei"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2017-17215|UPnP SOAP device-config RCE|10.0"
+        ]
+      }
+    },
+    "zyxel": {
+      "product": "Zyxel devices",
+      "aliases": [
+        "zyxel"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2020-29583|Hard-coded admin credentials (zyfibs)|10.0"
+        ]
+      }
+    },
+    "draytek": {
+      "product": "DrayTek Vigor",
+      "aliases": [
+        "draytek",
+        "vigor"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2020-14472|Web-management XSS\u2192session theft|6.1"
+        ]
+      }
+    },
+    "hp-ilo": {
+      "product": "HPE iLO",
+      "aliases": [
+        "ilo",
+        "integrated lights-out"
+      ],
+      "ranges": {
+        "<2.55": [
+          "CVE-2017-12542|Authentication bypass + info disclosure|9.8"
+        ]
+      }
+    },
+    "dell-idrac": {
+      "product": "Dell iDRAC",
+      "aliases": [
+        "idrac"
+      ],
+      "ranges": {
+        "<5.00.10.10": [
+          "CVE-2020-5353? |Session-record disclosure families|7.5"
+        ]
+      }
+    },
+    "supermicro": {
+      "product": "Supermicro BMC/IPMI",
+      "aliases": [
+        "supermicro",
+        "bmc"
+      ],
+      "ranges": {
+        "any": [
+          "CVE-2019-6263? |Cipher/token weakness families review advisory|8.0"
+        ]
+      }
+    },
+    "oracle-mysql-enterprise": {
+      "product": "Oracle stack",
+      "aliases": [
+        "oracle"
+      ],
+      "ranges": {
+        "any": [
+          "NOTE|Oracle TNS listener often exposes SID + verbose errors \u2014 enumerate|7.5"
+        ]
+      }
+    },
+    "winrm": {
+      "product": "Windows Remote Management",
+      "aliases": [
+        "winrm",
+        "microsoft-httpapi"
+      ],
+      "ranges": {
+        "any": [
+          "EXPOSURE|Weak-local-auth WinRM over HTTP = lateral movement channel|8.0"
+        ]
+      }
+    },
+    "telnet": {
+      "product": "Telnet service",
+      "aliases": [
+        "telnet"
+      ],
+      "ranges": {
+        "any": [
+          "EXPOSURE|Cleartext remote administration \u2014 sniff/brute-force viable|7.5"
+        ]
+      }
+    },
+    "ftp-generic": {
+      "product": "FTP service",
+      "aliases": [
+        "ftp server",
+        "220-"
+      ],
+      "ranges": {
+        "any": [
+          "EXPOSURE|Cleartext credential transfer \u2014 capture/MITM viable|7.0"
+        ]
+      }
+    }
+  }
+}

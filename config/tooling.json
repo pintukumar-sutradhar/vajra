@@ -1,0 +1,42 @@
+{
+  "_meta": {
+    "file": "external tooling manifest — what the operator expects under $PATH and which framework features consume it.",
+    "note": "tools/envcheck.py resolves these; modules using impacket MUST respect the impacket-* prefix Kali ships."
+  },
+  "categories": {
+    "impacket": {
+      "label": "Impacket (credential AD chains)",
+      "tools": ["impacket-secretsdump", "impacket-GetUserSPNs", "impacket-ntlmrelayx",
+                "impacket-psexec", "impacket-wmiexec", "impacket-smbexec",
+                "impacket-atexec", "impacket-Get-GPPPassword", "secretsdump.py"]
+    },
+    "brute": {
+      "label": "Credential attacking engines",
+      "tools": ["hydra", "ncrack", "crowbar", "patator", "medusa", "hashcat", "john"]
+    },
+    "recon": {
+      "label": "Reconnaissance",
+      "tools": ["nmap", "masscan", "amass", "subfinder", "httpx", "gobuster", "ffuf",
+                "dirb", "dnsrecon", "dnsenum", "fierce", "whois", "dig", "host",
+                "sublist3r", "dnsx", "shuffledns", "assetfinder"]
+    },
+    "web": {
+      "label": "Web tooling",
+      "tools": ["curl", "wget", "sqlmap", "nikto", "whatweb", "wpscan", "joomscan",
+                "feroxbuster", "rustscan", "nuclei", "dalfox", "xsstrike", "wafw00f"]
+    },
+    "exploit": {
+      "label": "Exploit scaffolding",
+      "tools": ["msfconsole", "searchsploit", "metasploit", "routersploit", "crackmapexec",
+                "evil-winrm", "smbmap", "nmap"]
+    },
+    "auth": {
+      "label": "Auth / sessions",
+      "tools": ["curl", "ffuf"]
+    },
+    "misc": {
+      "label": "Utility",
+      "tools": ["nc", "ncat", "socat", "openssl", "python3", "go", "tshark", "tcpdump", "7z", "git"]
+    }
+  }
+}

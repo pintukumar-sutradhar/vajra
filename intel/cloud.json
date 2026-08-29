@@ -1,0 +1,18 @@
+{
+  "about": "Cloud provider metadata endpoints, S3-style bucket URL templates, and Kubernetes discovery hints for VAJRA cloud/container assessments.",
+  "providers": [
+    {"name": "aws", "metadata_uri": "http://169.254.169.254/latest/meta-data/", "imdsv2_token_uri": "http://169.254.169.254/latest/api/token", "token_header": "X-aws-ec2-metadata-token", "secret_paths": ["iam/security-credentials/", "iam/security-credentials/aws-iam-role"], "meta_paths": ["ami-id", "hostname", "local-ipv4", "public-ipv4", "instance-id"]},
+    {"name": "gcp", "metadata_uri": "http://metadata.google.internal/computeMetadata/v1/", "token_header": "Metadata-Flavor", "token_header_value": "Google", "secret_paths": ["instance/service-accounts/default/token"], "meta_paths": ["instance/name", "instance/hostname", "project/project-id"]},
+    {"name": "azure", "metadata_uri": "http://169.254.169.254/metadata/instance?api-version=2021-02-01", "token_header_required": "Metadata:true", "secret_paths": ["/metadata/identity/oauth2/token"], "meta_paths": ["compute/name", "compute/location"]},
+    {"name": "isc-ovh", "metadata_uri": "http://169.254.169.254/openstack/latest/meta_data.json", "note": "openstack-style"}
+  ],
+  "s3": {
+    "url_templates": ["https://%s.s3.amazonaws.com/", "https://s3.%s.amazonaws.com/%s", "https://%s.s3.%s.amazonaws.com/", "https://%s.storage.googleapis.com/", "https://%s.blob.core.windows.net/"],
+    "regions": ["us-east-1", "us-east-2", "us-west-1", "us-west-2", "eu-west-1", "eu-west-2", "eu-central-1", "ap-south-1", "ap-northeast-1", "ap-northeast-2", "ap-southeast-1", "ap-southeast-2", "sa-east-1", "ca-central-1"]
+  },
+  "kubernetes": {
+    "env_vars": ["KUBERNETES_SERVICE_HOST", "KUBERNETES_SERVICE_PORT"],
+    "api_ports": [6443, 8443, 10250, 10255, 2379, 2379, 8001],
+    "ro_paths": ["/version", "/api", "/apis", "/healthz", "/api/v1/namespaces", "/api/v1/secrets", "/api/v1/services"]
+  }
+}

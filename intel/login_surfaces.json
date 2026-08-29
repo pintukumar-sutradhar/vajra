@@ -1,0 +1,15 @@
+{
+  "about": "Login-surface detection hints: candidate paths, form-field heuristics and success signals.",
+  "paths": ["/login", "/signin", "/auth", "/auth/login", "/token", "/api/v1/login", "/api/login", "/account/login", "/admin/login", "/user/login", "/index.php?mode=login", "/wp-login.php", "/admin", "/webadmin", "/login.jsp", "/login.php", "/login.html", "/signup", "/register"],
+  "form_heuristics": {
+    "user_fields": ["username", "user", "email", "login", "userid", "login_name", "j_username", "j_password_username", "tbLoginId", "user_id"],
+    "pass_fields": ["password", "pass", "pwd", "passwd", "password1", "j_password", "tbLoginPwd", "user_pass"],
+    "otp_fields": ["otp", "code", "2fa", "one_time", "totp", "mfa", "pin", "verification_code"],
+    "csrf_fields": ["csrf", "csrf_token", "_token", "authenticity_token", "_csrf", "xsrf"]
+  },
+  "success_signals": {
+    "redirect_targets": ["/dashboard", "/home", "/account", "/index"],
+    "body_markers": ["welcome", "logout", "sign out", "profile", "dashboard"],
+    "location_clue": "2xx with Set-Cookie and/or non-login Location suggests success"
+  }
+}

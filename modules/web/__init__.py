@@ -1,0 +1,1 @@
+"""Vajra web assessment package."""

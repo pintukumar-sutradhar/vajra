@@ -1,0 +1,69 @@
+{
+  "_meta": {
+    "file": "scan engagement profiles. Keys here override config.json for the selected profile.",
+    "profiles": "quick | full | vast | stealth | webonly | recon",
+    "override": "-p/--profile selects; --modules selects modules explicitly"
+  },
+  "profiles": {
+    "quick": {
+      "ports": "top100",
+      "crawl_max_pages": 25,
+      "crawl_max_depth": 3,
+      "dir_threads": 20,
+      "max_injection_points": 40,
+      "max_payloads_direct": 60,
+      "max_mutants": 10,
+      "time_based_sqli": false,
+      "description": "fast recon-grade sweep for triage"
+    },
+    "full": {
+      "ports": "all",
+      "crawl_max_pages": 150,
+      "crawl_max_depth": 5,
+      "dir_threads": 40,
+      "max_injection_points": 120,
+      "time_based_sqli": true,
+      "max_payloads_direct": 160,
+      "max_mutants": 28,
+      "oob_enabled": true,
+      "description": "full-stack engagement: wide ports, deep crawling, OOB detections"
+    },
+    "vast": {
+      "ports": "all",
+      "crawl_max_pages": 400,
+      "crawl_max_depth": 6,
+      "dir_threads": 64,
+      "max_injection_points": 300,
+      "time_based_sqli": true,
+      "max_payloads_direct": 320,
+      "max_mutants": 48,
+      "scan_concurrency": 900,
+      "oob_enabled": true,
+      "description": "exhaustive: enterprise-scale crawl + payload depth"
+    },
+    "stealth": {
+      "ports": "top100",
+      "scan_concurrency": 50,
+      "dir_threads": 6,
+      "crawl_max_pages": 30,
+      "max_injection_points": 30,
+      "delay": 0.4,
+      "brute_delay": 0.6,
+      "rotate_ua": true,
+      "description": "low-noise: throttled, rotating UA, shallow payloads"
+    },
+    "webonly": {
+      "ports": null,
+      "crawl_max_pages": 200,
+      "crawl_max_depth": 5,
+      "dir_threads": 25,
+      "max_injection_points": 80,
+      "description": "web-only: pull the app, skip network phase"
+    },
+    "recon": {
+      "ports": "top100",
+      "crawl_max_pages": 10,
+      "description": "passive/active recon only (no exploitation phases)"
+    }
+  }
+}

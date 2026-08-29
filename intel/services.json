@@ -1,0 +1,687 @@
+{
+  "about": "Service exposure probe catalog - unauthenticated exposure checks for common network services.",
+  "services": {
+    "redis": {
+      "name": "Redis",
+      "fam": "cache",
+      "ports": [6379, 6380],
+      "hint": "",
+      "probes": [
+        {
+          "id": "noauth",
+          "label": "Redis no-authentication (PING/PONG)",
+          "send": "PING\r\n",
+          "expect": ["+PONG"],
+          "severity": "high",
+          "category": "exposure",
+          "remediation": "Enable requirepass and restrict bind to trusted networks.",
+          "note": "A bare +PONG reply shows the instance accepts commands without a password."
+        },
+        {
+          "id": "info",
+          "label": "Redis INFO disclosure",
+          "send": "INFO\r\n",
+          "expect": ["redis_version:"],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Bind Redis to internal interfaces and require authentication.",
+          "note": "INFO leaks version, memory, clients and keyspace stats when unauthenticated."
+        }
+      ]
+    },
+    "mongodb": {
+      "name": "MongoDB",
+      "fam": "database",
+      "ports": [27017, 27018, 27019],
+      "hint": "MongoDB",
+      "probes": [
+        {
+          "id": "info",
+          "label": "MongoDB instance banner exposed",
+          "send": "",
+          "expect": [""],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Bind MongoDB to internal interfaces and enable authentication.",
+          "note": "Modern MongoDB is silent on a bare connect (binary wire); an empty expect flags any non-empty response. Binary hello/ismaster probes are handled by the wire-protocol module."
+        }
+      ]
+    },
+    "memcached": {
+      "name": "Memcached",
+      "fam": "cache",
+      "ports": [11211],
+      "hint": "",
+      "probes": [
+        {
+          "id": "anon",
+          "label": "Memcached unauthenticated stats (cache disclosure)",
+          "send": "stats\r\n",
+          "expect": ["STAT "],
+          "severity": "medium",
+          "category": "disclosure",
+          "remediation": "Bind memcached to localhost or trusted networks; it has no authentication by design.",
+          "note": "stats returns STAT lines with item counts, bytes and hit ratio; values can be read unauthenticated via the get command."
+        },
+        {
+          "id": "info",
+          "label": "Memcached version disclosure",
+          "send": "version\r\n",
+          "expect": ["VERSION"],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Block UDP/TCP 11211 from untrusted networks.",
+          "note": "version returns e.g. VERSION 1.6.9 and confirms the instance."
+        }
+      ]
+    },
+    "elasticsearch": {
+      "name": "Elasticsearch",
+      "fam": "observability",
+      "ports": [9200, 9300],
+      "hint": "",
+      "probes": [
+        {
+          "id": "info",
+          "label": "Elasticsearch instance banner (tagline/version)",
+          "send": "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+          "expect": ["You Know, for Search", "\"cluster_name\""],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Restrict 9200 and enable authentication (e.g. X-Pack) if exposure is unintended.",
+          "note": "The root JSON carries the tagline 'You Know, for Search' plus cluster and version fields."
+        },
+        {
+          "id": "noauth",
+          "label": "Elasticsearch cluster unauthenticated",
+          "send": "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+          "expect": ["cluster_name"],
+          "severity": "high",
+          "category": "exposure",
+          "remediation": "Enable authentication/authorization and firewall 9200; never expose Elasticsearch publicly.",
+          "note": "Cluster metadata is readable without auth; _search/_cat APIs allow bulk data access from the network."
+        }
+      ]
+    },
+    "docker_api": {
+      "name": "Docker Engine API",
+      "fam": "container",
+      "ports": [2375, 2376],
+      "hint": "",
+      "probes": [
+        {
+          "id": "noauth",
+          "label": "Docker Engine API unauthenticated",
+          "send": "GET /version HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+          "expect": ["\"ApiVersion\""],
+          "severity": "critical",
+          "category": "exposure",
+          "remediation": "Disable or firewall-off the TCP socket; use TLS with client certificates when remote.",
+          "note": "Full API control over containers, images and the host via privileged mounts - typically leads to host RCE."
+        }
+      ]
+    },
+    "kubernetes": {
+      "name": "Kubernetes",
+      "fam": "container",
+      "ports": [6443, 10250, 10255, 8001],
+      "hint": "",
+      "probes": [
+        {
+          "id": "noauth",
+          "label": "Kubernetes API server unauthenticated (version leak)",
+          "send": "GET /version HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+          "expect": ["gitVersion"],
+          "severity": "high",
+          "category": "exposure",
+          "remediation": "Restrict 6443 to trusted networks and enforce RBAC plus authenticated service accounts.",
+          "note": "gitVersion exposes cluster/version; anonymous or misconfigured kubelets can leak secrets and pods."
+        },
+        {
+          "id": "anon",
+          "label": "Kubelet read-only port exposed",
+          "send": "",
+          "expect": ["kubelet"],
+          "severity": "medium",
+          "category": "exposure",
+          "remediation": "Disable the --read-only-port (10255) listener and kubelet anonymous auth on 10250.",
+          "note": "10255 served unauthenticated health and pod data; modern kubelets dropped it, so a hit implies an old or misconfigured node."
+        }
+      ]
+    },
+    "etcd": {
+      "name": "etcd",
+      "fam": "config",
+      "ports": [2379],
+      "hint": "",
+      "probes": [
+        {
+          "id": "noauth",
+          "label": "etcd API unauthenticated",
+          "send": "GET /version HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+          "expect": ["etcdserver"],
+          "severity": "high",
+          "category": "exposure",
+          "remediation": "Enable client TLS and cert auth; restrict 2379 to control-plane hosts.",
+          "note": "etcdserver in /version confirms the API; unauthenticated you can read/write the whole key space (e.g. Kubernetes secrets)."
+        }
+      ]
+    },
+    "consul": {
+      "name": "Consul",
+      "fam": "config",
+      "ports": [8500, 8501],
+      "hint": "",
+      "probes": [
+        {
+          "id": "noauth",
+          "label": "Consul agent API unauthenticated",
+          "send": "GET /v1/agent/self HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+          "expect": ["\"Revision\""],
+          "severity": "high",
+          "category": "exposure",
+          "remediation": "Enable Consul ACLs, require TLS, and restrict the agent HTTP port to localhost.",
+          "note": "agent/self leaks node/config; /v1/kv reads and writes are open and script checks can lead to RCE."
+        },
+        {
+          "id": "info",
+          "label": "Consul status endpoint reachable",
+          "send": "GET /v1/status/leader HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+          "expect": [":"],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Apply Consul ACLs and restrict HTTP to trusted clients.",
+          "note": "The leader endpoint returns a JSON 'ip:port' string and helps enumerate the cluster; combine with /v1/agent/self for a definitive check."
+        }
+      ]
+    },
+    "cockroachdb": {
+      "name": "CockroachDB",
+      "fam": "database",
+      "ports": [26257],
+      "hint": "CockroachDB",
+      "probes": [
+        {
+          "id": "info",
+          "label": "CockroachDB banner exposed",
+          "send": "",
+          "expect": ["nodeId"],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Restrict 26257 to internal DB clients and enable TLS/cluster certs.",
+          "note": "CockroachDB speaks the Postgres wire protocol; nodeId may appear in the handshake/banner context - confirm with a PG startup message."
+        }
+      ]
+    },
+    "influxdb": {
+      "name": "InfluxDB",
+      "fam": "observability",
+      "ports": [8086, 8088],
+      "hint": "",
+      "probes": [
+        {
+          "id": "info",
+          "label": "InfluxDB exposed (version header)",
+          "send": "GET /ping HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+          "expect": ["X-Influxdb-Version"],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Require auth and firewall 8086/8088; avoid public exposure.",
+          "note": "/ping sets the X-Influxdb-Version header; the query API (/query) may also return data when auth is off."
+        }
+      ]
+    },
+    "couchdb": {
+      "name": "CouchDB",
+      "fam": "database",
+      "ports": [5984, 6984],
+      "hint": "",
+      "probes": [
+        {
+          "id": "noauth",
+          "label": "CouchDB unauthenticated (admin party)",
+          "send": "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+          "expect": ["couchdb"],
+          "severity": "high",
+          "category": "exposure",
+          "remediation": "Enable require_valid_user and restrict 5984/6984 to trusted hosts.",
+          "note": "A bare GET / returns {\"couchdb\":\"Welcome\"}; with 'admin party' any request is admitted, exposing _all_dbs and sessions."
+        }
+      ]
+    },
+    "rabbitmq": {
+      "name": "RabbitMQ",
+      "fam": "message",
+      "ports": [5672, 15672],
+      "hint": "",
+      "probes": [
+        {
+          "id": "info",
+          "label": "RabbitMQ AMQP banner",
+          "send": "",
+          "expect": ["AMQP"],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Restrict 5672 to internal producers/consumers and enable TLS.",
+          "note": "The connection.start frame begins with 'AMQP' plus a protocol version; confirms the broker."
+        },
+        {
+          "id": "info",
+          "label": "RabbitMQ Management UI exposed",
+          "send": "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+          "expect": ["RabbitMQ Management"],
+          "severity": "medium",
+          "category": "exposure",
+          "remediation": "Restrict 15672 to the ops network and enforce strong credentials.",
+          "note": "Management login page; guest/guest default credentials remain enabled in some setups."
+        }
+      ]
+    },
+    "activemq": {
+      "name": "ActiveMQ",
+      "fam": "message",
+      "ports": [61616, 8161],
+      "hint": "",
+      "probes": [
+        {
+          "id": "info",
+          "label": "ActiveMQ web console reachable",
+          "send": "GET / HTTP/1.1\r\nHost: x\r\n\r\n",
+          "expect": ["ActiveMQ"],
+          "severity": "medium",
+          "category": "exposure",
+          "remediation": "Restrict 8161 to admins, change the default admin/admin credentials, and keep ActiveMQ patched.",
+          "note": "Console login page; old unauthenticated RCE paths exist via the console and the fileserver."
+        }
+      ]
+    },
+    "zookeeper": {
+      "name": "Apache ZooKeeper",
+      "fam": "config",
+      "ports": [2181, 2888, 3888],
+      "hint": "",
+      "probes": [
+        {
+          "id": "noauth",
+          "label": "ZooKeeper four-letter command accepted (no auth)",
+          "send": "ruok\r\n",
+          "expect": ["imok"],
+          "severity": "medium",
+          "category": "exposure",
+          "remediation": "Restrict 2181 and set 4lw.commands.whitelist or enable authentication.",
+          "note": "imok confirms a live server accepting 4lw commands without auth; srvr/stat/dump leak session, node and env data."
+        },
+        {
+          "id": "info",
+          "label": "ZooKeeper environment disclosure",
+          "send": "envi\r\n",
+          "expect": ["zookeeper.version"],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Whitelist 4lw commands or firewall the client port.",
+          "note": "envi returns zookeeper.version, classpaths and JVM flags."
+        }
+      ]
+    },
+    "zabbix": {
+      "name": "Zabbix agent",
+      "fam": "observability",
+      "ports": [10050],
+      "hint": "",
+      "probes": [
+        {
+          "id": "info",
+          "label": "Zabbix agent reachable (ZBXD handshake)",
+          "send": "",
+          "expect": ["ZBXD"],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Enable TLS encryption and firewall 10050 to monitored hosts only.",
+          "note": "Agent replies carry the ZBXD binary header; a passive item request is needed for a full handshake."
+        }
+      ]
+    },
+    "kafka": {
+      "name": "Apache Kafka",
+      "fam": "message",
+      "ports": [9092, 9093],
+      "hint": "",
+      "probes": [
+        {
+          "id": "info",
+          "label": "Kafka broker framing detected (null leading byte)",
+          "send": "",
+          "expect": ["\u0000"],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Restrict 9092/9093 and require SASL/TLS for clients.",
+          "note": "Kafka is client-initiated; when the broker answers it opens with a 0x00 byte (length/correlation framing) at offset 0. 9093 usually means TLS."
+        }
+      ]
+    },
+    "mysql": {
+      "name": "MySQL",
+      "fam": "database",
+      "ports": [3306, 3307],
+      "hint": "",
+      "probes": [
+        {
+          "id": "info",
+          "label": "MySQL server banner",
+          "send": "",
+          "expect": ["Welcome to"],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Restrict 3306 to application hosts and use strong accounts.",
+          "note": "Greeting banner only; credentials are still required to reach data."
+        }
+      ]
+    },
+    "postgresql": {
+      "name": "PostgreSQL",
+      "fam": "database",
+      "ports": [5432, 5433],
+      "hint": "",
+      "probes": [
+        {
+          "id": "info",
+          "label": "PostgreSQL server banner",
+          "send": "",
+          "expect": ["PostgreSQL"],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Restrict 5432 to internal clients and enforce strong pg_hba authentication.",
+          "note": "Banner-only; a startup packet is needed for a full handshake and authentication."
+        }
+      ]
+    },
+    "mssql": {
+      "name": "Microsoft SQL Server",
+      "fam": "database",
+      "ports": [1433, 1434],
+      "hint": "",
+      "probes": [
+        {
+          "id": "info",
+          "label": "Microsoft SQL Server detected",
+          "send": "",
+          "expect": ["SQL Server"],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Restrict 1433/1434 to application hosts and enforce strong SQL authentication.",
+          "note": "PreLogin response; banner only - credentials are needed for data access."
+        }
+      ]
+    },
+    "smtp": {
+      "name": "SMTP",
+      "fam": "mail",
+      "ports": [25, 465, 587, 2525],
+      "hint": "",
+      "probes": [
+        {
+          "id": "info",
+          "label": "SMTP server EHLO response",
+          "send": "EHLO vajra\r\n",
+          "expect": ["250-"],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Restrict the port and ensure the relay is not open to arbitrary senders.",
+          "note": "250- capability list; an open relay must be verified externally by RCPT TO to an external domain."
+        }
+      ]
+    },
+    "ldap": {
+      "name": "LDAP",
+      "fam": "config",
+      "ports": [389, 636, 3268, 3269],
+      "hint": "",
+      "probes": [
+        {
+          "id": "info",
+          "label": "LDAP directory reachable",
+          "send": "",
+          "expect": ["\u0000"],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Restrict directory ports to corporate segments and enforce auth/TLS.",
+          "note": "LDAP is BER-encoded; a null lead byte marks a bind response. Anonymous bind is often enabled by default - check it separately. 636/3269 are TLS."
+        }
+      ]
+    },
+    "ftp": {
+      "name": "FTP",
+      "fam": "file",
+      "ports": [21],
+      "hint": "^220",
+      "probes": [
+        {
+          "id": "info",
+          "label": "FTP service banner",
+          "send": "",
+          "expect": ["220"],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Restrict 21 and require FTPS/TLS; review anonymous accounts.",
+          "note": "220 = service ready; the banner often reveals server and version. Test anonymous login separately."
+        }
+      ]
+    },
+    "ssh": {
+      "name": "SSH",
+      "fam": "remote",
+      "ports": [22, 2222],
+      "hint": "SSH-",
+      "probes": [
+        {
+          "id": "info",
+          "label": "SSH banner / OpenSSH version",
+          "send": "",
+          "expect": ["SSH-"],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Keep the SSH daemon patched and restrict source IPs.",
+          "note": "The SSH-2.0-... banner exposes server software and version."
+        }
+      ]
+    },
+    "vnc": {
+      "name": "VNC",
+      "fam": "remote",
+      "ports": [5900, 5901],
+      "hint": "RFB ",
+      "probes": [
+        {
+          "id": "info",
+          "label": "VNC server RFB banner",
+          "send": "",
+          "expect": ["RFB "],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Enforce VNC passwords and restrict 5900; prefer SSH tunneling.",
+          "note": "RFB 003.xxx confirms the server; if the security handshake offers 'None', no-authentication access exists."
+        }
+      ]
+    },
+    "rdp": {
+      "name": "RDP",
+      "fam": "remote",
+      "ports": [3389, 3390],
+      "hint": "",
+      "probes": [
+        {
+          "id": "info",
+          "label": "RDP service detected",
+          "send": "",
+          "expect": ["\u0003\u0000\u0000"],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Enable NLA and restrict 3389 from untrusted networks.",
+          "note": "The X.224 Connection Confirm starts with 0x03 0x00; NLA should be enforced to prevent offline attacks."
+        }
+      ]
+    },
+    "ntp": {
+      "name": "NTP",
+      "fam": "remote",
+      "ports": [123],
+      "hint": "",
+      "probes": [
+        {
+          "id": "info",
+          "label": "NTP server responding",
+          "send": "",
+          "expect": ["\u001c"],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Firewall UDP 123 and use NTP authentication where feasible.",
+          "note": "The first reply byte is the leap/version/mode nibble (0x1c = NTPv3 server response); check for monlist abuse separately."
+        }
+      ]
+    },
+    "weblogic": {
+      "name": "Oracle WebLogic",
+      "fam": "web",
+      "ports": [7001, 7002, 7003],
+      "hint": "",
+      "probes": [
+        {
+          "id": "info",
+          "label": "Oracle WebLogic console exposed",
+          "send": "GET /console/login/LoginForm.jsp HTTP/1.1\r\nHost: x\r\n\r\n",
+          "expect": ["WebLogic"],
+          "severity": "medium",
+          "category": "exposure",
+          "remediation": "Restrict /console and patch WebLogic (CVE-2020-14882 class of flaws).",
+          "note": "Console login reachable; unpatched consoles have unauthenticated RCE history."
+        }
+      ]
+    },
+    "tomcat": {
+      "name": "Apache Tomcat",
+      "fam": "web",
+      "ports": [8080, 8081, 8443],
+      "hint": "",
+      "probes": [
+        {
+          "id": "info",
+          "label": "Apache Tomcat reachable",
+          "send": "GET / HTTP/1.1\r\nHost: x\r\n\r\n",
+          "expect": ["Apache Tomcat"],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Restrict 8080/8443 and secure manager/host-manager with roles and strong credentials.",
+          "note": "The default page discloses the version; /manager may be unauth or default-creds."
+        }
+      ]
+    },
+    "jboss": {
+      "name": "JBoss / WildFly",
+      "fam": "web",
+      "ports": [8080, 9990],
+      "hint": "",
+      "probes": [
+        {
+          "id": "info",
+          "label": "JBoss/WildFly web reachable",
+          "send": "GET / HTTP/1.1\r\nHost: x\r\n\r\n",
+          "expect": ["JBoss"],
+          "severity": "medium",
+          "category": "exposure",
+          "remediation": "Restrict the management console (9990) and patch; disable legacy invoker servlets.",
+          "note": "An exposed admin console or invoker endpoint historically yields deserialization RCE on unpatched versions."
+        }
+      ]
+    },
+    "solr": {
+      "name": "Apache Solr",
+      "fam": "observability",
+      "ports": [8983],
+      "hint": "",
+      "probes": [
+        {
+          "id": "noauth",
+          "label": "Apache Solr admin API exposed",
+          "send": "GET /solr/admin/info/system HTTP/1.1\r\nHost: x\r\n\r\n",
+          "expect": ["solr-spec"],
+          "severity": "high",
+          "category": "exposure",
+          "remediation": "Enable auth/ACLs on Solr, firewall 8983, and patch the Log4j (CVE-2021-44228) class.",
+          "note": "log4shell-era vector surface; the unauthenticated admin API allows core management and data access."
+        }
+      ]
+    },
+    "jenkins": {
+      "name": "Jenkins",
+      "fam": "web",
+      "ports": [8080, 8443],
+      "hint": "",
+      "probes": [
+        {
+          "id": "info",
+          "label": "Jenkins reachable",
+          "send": "GET / HTTP/1.1\r\nHost: x\r\n\r\n",
+          "expect": ["Jenkins"],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Restrict 8080, lock down the security realm and the Groovy script console.",
+          "note": "Version is shown in the footer; an open or weak-auth Jenkins allows code execution via build jobs."
+        }
+      ]
+    },
+    "gitlab": {
+      "name": "GitLab",
+      "fam": "web",
+      "ports": [80, 443, 8080],
+      "hint": "",
+      "probes": [
+        {
+          "id": "info",
+          "label": "GitLab reachable",
+          "send": "GET /users/sign_in HTTP/1.1\r\nHost: x\r\n\r\n",
+          "expect": ["GitLab"],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Keep GitLab patched and restrict instance visibility.",
+          "note": "The sign-in page confirms GitLab; unauthenticated API and token issues are covered by other modules."
+        }
+      ]
+    },
+    "grafana": {
+      "name": "Grafana",
+      "fam": "observability",
+      "ports": [3000, 3001],
+      "hint": "",
+      "probes": [
+        {
+          "id": "info",
+          "label": "Grafana reachable",
+          "send": "GET /login HTTP/1.1\r\nHost: x\r\n\r\n",
+          "expect": ["Grafana"],
+          "severity": "info",
+          "category": "disclosure",
+          "remediation": "Restrict 3000 to trusted users, configure auth, and patch known CVEs.",
+          "note": "Older builds print 'Anonymous access is enabled'; verify /api/health and dashboard permissions."
+        }
+      ]
+    },
+    "kafka_rest": {
+      "name": "Kafka Connect / Schema Registry REST",
+      "fam": "message",
+      "ports": [8083, 8081],
+      "hint": "",
+      "probes": [
+        {
+          "id": "info",
+          "label": "Kafka REST endpoint reachable",
+          "send": "GET / HTTP/1.1\r\nHost: x\r\n\r\n",
+          "expect": ["version"],
+          "severity": "medium",
+          "category": "exposure",
+          "remediation": "Require authentication on Connect/Schema Registry REST and firewall these ports.",
+          "note": "Kafka Connect (8083) and Schema Registry (8081) reply with JSON including version; unauthenticated connector creation is RCE-adjacent."
+        }
+      ]
+    }
+  }
+}
