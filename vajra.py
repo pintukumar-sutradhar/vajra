@@ -44,7 +44,8 @@ def show_banner(color=True):
         print("\033[95m\033[1m%s\033[0m" % art)
     else:
         print(art)
-    print("   ⚡ VAJRA — automated penetration testing framework\n")
+    print("   ⚡ VAJRA — automated penetration testing framework")
+    print("     by Pintu Kumar Sutradhar\n")
 
 
 def import_findings_and_report(findings_file, targets, output_root):
@@ -238,7 +239,7 @@ passwords / 16k dirs / 18k subs) activate on --profile full|vast or
                     help="-v info/debug, -vv trace")
     ap.add_argument("--selftest", action="store_true", help="run internal QA tests")
     ap.add_argument("--list-modules", dest="list_modules", action="store_true")
-    ap.add_argument("--version", action="version", version="VAJRA")
+    ap.add_argument("--version", action="version", version="VAJRA by Pintu Kumar Sutradhar")
     ap.add_argument("--export-findings", metavar="FILE", help="export findings to JSON file and exit")
     ap.add_argument("--import-findings", metavar="FILE", help="import findings from JSON file and generate report, then exit")
     return ap.parse_args()

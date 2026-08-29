@@ -13,9 +13,10 @@
 
 ### Automated Penetration Testing Framework
 
+**by `Pintu Kumar Sutradhar`**
+
 `recon` · `network` · `web` · `exploitation` · `post-exploitation`
 
-![platform](https://img.shields.io/badge/platform-Linux-blue)
 ![python](https://img.shields.io/badge/python-3.9%2B-informational)
 ![deps](https://img.shields.io/badge/core%20deps-zero-success)
 ![ports](https://img.shields.io/badge/sweep-65535%20ports-critical)
