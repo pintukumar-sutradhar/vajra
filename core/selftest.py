@@ -147,6 +147,19 @@ def t_vuln_records():
     return True, "vuln_scanner proof-class confidence mapping OK"
 
 
+def t_update():
+    import core.updater as up
+    from core.version import __version__
+    assert __version__ == "1.0-beta"
+    assert up.current_version() == __version__
+    assert isinstance(up.is_git(), bool)
+    repo, branch = up._remote()
+    assert "/" in repo and branch
+    assert up.SKIP_ARCHIVE.issuperset(
+        {"Outputs", ".git", ".venv", ".vajra_state.json"})
+    return True, "self-update wiring + version OK"
+
+
 def t_db():
     from core.database import Database, Finding
     path = tempfile.mktemp(suffix=".sqlite")
@@ -1347,6 +1360,7 @@ def run_all():
     check("html extraction (links/forms/emails)", t_extract)
     check("sqlite findings database", t_db)
     check("rce channel anti-reflection guard", t_rce_channel)
+    check("self-update wiring + version", t_update)
     check("vuln scanner proof-class mapping", t_vuln_records)
     check("confidence->severity anti-FP cap", t_fp_guard)
     check("report rendering (html/md/json)", t_report)

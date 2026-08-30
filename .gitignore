@@ -5,3 +5,4 @@ __pycache__/
 Outputs/
 .venv/
 .DS_Store
+.vajra_state.json

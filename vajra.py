@@ -20,6 +20,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core.utils import PROJECT_ROOT, load_json
+from core.version import __version__
 from modules import get_modules
 
 BANNER_COLORS = "\033[95m\033[1m", "\033[0m"
@@ -44,7 +45,7 @@ def show_banner(color=True):
         print("\033[95m\033[1m%s\033[0m" % art)
     else:
         print(art)
-    print("   ⚡ VAJRA — automated penetration testing framework")
+    print("   ⚡ VAJRA v%s — automated penetration testing framework" % __version__)
     print("     by Pintu Kumar Sutradhar\n")
 
 
@@ -146,6 +147,7 @@ def parse_args():
   python3 vajra.py -t 192.168.1.0/24 -p top1000 -o reports
   python3 vajra.py -t targets.txt --profile webonly --format html
   python3 vajra.py -t http://app.local --profile full --aggressive --yes
+  python3 vajra.py --update                       # self-update from GitHub
 outputs:  Outputs/vajra_<run>/<target>/  → report.html/json/md · sqlite ·
           vajra.log · evidence/
 profiles: quick | full | vast | stealth | webonly | recon
@@ -251,7 +253,13 @@ passwords / 16k dirs / 18k subs) activate on --profile full|vast or
                     help="-v info/debug, -vv trace")
     ap.add_argument("--selftest", action="store_true", help="run internal QA tests")
     ap.add_argument("--list-modules", dest="list_modules", action="store_true")
-    ap.add_argument("--version", action="version", version="VAJRA by Pintu Kumar Sutradhar")
+    ap.add_argument("--update", action="store_true",
+                    help="self-update from GitHub upstream and exit "
+                         "(git checkout: fast-forward pull; else in-place "
+                         "branch archive; keeps Outputs + config.json)")
+    ap.add_argument("--version", action="version",
+                    version="VAJRA v%s — automated penetration testing "
+                            "framework\nby Pintu Kumar Sutradhar" % __version__)
     ap.add_argument("--export-findings", metavar="FILE", help="export findings to JSON file and exit")
     ap.add_argument("--import-findings", metavar="FILE", help="import findings from JSON file and generate report, then exit")
     return ap.parse_args()
@@ -319,6 +327,10 @@ def run_listener_console(args):
 def main():
     args = parse_args()
     show_banner(color=not args.no_color)
+
+    if args.update:
+        from core.updater import update
+        return update(log=print)
 
     if args.selftest:
         from core import selftest

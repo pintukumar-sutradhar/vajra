@@ -131,7 +131,9 @@ workspaces that turn every re-run into a measurable retest.
 ```bash
 git clone https://github.com/pintukumar-sutradhar/vajra && cd vajra
 ./setup.sh                     # deps + wordlists + QA suite
-python3 vajra.py --selftest    # 37-point verification
+python3 vajra.py --selftest    # 41-point verification
+python3 vajra.py --version     # VAJRA v1.0-beta
+python3 vajra.py --update      # pull the latest build from GitHub
 ```
 
 Runs on stock Python ≥ 3.9. Optional extras (`requests`, `paramiko`,
@@ -450,6 +452,10 @@ socket, with TLS stagers (`--tls`) and `--obfuscate` (packed payloads) —
     --oob-port PORT   fixed local port for the OOB listener (default: ephemeral)
 -v/-vv                verbose / trace
     --selftest        internal QA suite
+    --version         show VAJRA v1.0-beta and exit
+    --update          self-update from GitHub upstream and exit (git checkout:
+                      fast-forward pull; archive install: in-place tarball
+                      replacement keeping Outputs/ + config/config.json)
 ```
 
 ## AI brain & model selection
