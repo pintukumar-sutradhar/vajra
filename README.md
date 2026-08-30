@@ -47,7 +47,8 @@
 - [Toolkit & knowledge base](#toolkit--knowledge-base)
 - [Wordlists](#wordlists)
 - [CLI reference](#cli-reference)
-- [AI-select mission mode](#ai-select-mission-mode)
+ - [AI brain & model selection](#ai-brain--model-selection)
+ - [AI-select mission mode](#ai-select-mission-mode)
 - [Authenticated web scans](#authenticated-web-scans)
 - [FAQ](#faq)
 - [License & author](#license--author)
@@ -315,8 +316,9 @@ direct ──blocked?──► fingerprint guard (Cloudflare · Akamai · Imperv
 - **Campaign planner** — mid-run next-best-action list combining rule-based
   logic with findings context.
 - **Optional AI** — add `--ai` to involve a local Ollama + **Qwen3 8B**
-  (auto-installs; fully offline once pulled). Use `--ai-select` to hand the
-  mission to the operator-agent: Qwen3 inspects each target's live state
+  (auto-installs; fully offline once pulled; swap models via
+  [`config/config.json`](#ai-brain--model-selection)). Use `--ai-select` to hand
+  the mission to the operator-agent: Qwen3 inspects each target's live state
   (ports, services, web targets, findings) and picks and executes the best
   next action from a closed tool set — deeper port probes, re-running
   modules, path fuzzing, PoC crafting, brute force and exploit routing.
@@ -423,8 +425,8 @@ socket, with TLS stagers (`--tls`) and `--obfuscate` (packed payloads) —
     --aggressive      deep tiers + intrusive exploitation + reverse stages
     --lhost/--lport   pre-set callback endpoint for reverse stages
     --listener        standalone multi-session handler
-    --ai              enable local Ollama+Qwen3 8B brain (opt-in)
-    --ai-select       mission mode: Qwen3 picks next actions per target
+    --ai              enable local Ollama AI brain (model set in config/config.json)
+    --ai-select       mission mode: the model picks next actions per target
     --udp             UDP service probes (DNS/NTP/SNMP)
     --syn             raw SYN scanning (root)
     --no-brute        disable credential attacks
@@ -449,6 +451,103 @@ socket, with TLS stagers (`--tls`) and `--obfuscate` (packed payloads) —
 -v/-vv                verbose / trace
     --selftest        internal QA suite
 ```
+
+## AI brain & model selection
+
+The AI brain is a **local** Ollama server (default endpoint `127.0.0.1:11434`,
+Ollama's native `/api/generate` API) serving any model you choose. It is
+entirely optional (`--ai`), fully offline once the model is pulled, and every
+call is time-boxed — if the model is missing or unreachable, VAJRA reports
+`[ai] Qwen3 not reachable` and keeps scanning normally (nothing breaks, no
+false positives are produced).
+
+Which model is used, and how to change it, is controlled by `config/config.json`:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `ai_model` | `qwen3:8b` | exact Ollama model tag sent to `/api/generate` |
+| `ai_timeout` | `12` | per-request timeout (s); calls are never allowed to stall the scan |
+| `ai_max_tokens` | `512` | generated-token cap per reply |
+| `ai_autosetup` | `true` | install Ollama + pull the configured model on first `--ai` run (needs internet once) |
+| `ai_select` | `false` | behave as if `--ai-select` was passed |
+| `ai_enabled` | `false` | behave as if `--ai` was passed |
+
+### Scenario A — default model, nothing to change
+
+```
+ollama pull qwen3:8b   # ~4.9 GB, one-time, any internet-capable machine
+vajra -t https://your-authorized-target --ai
+```
+
+That is it. VAJRA asks Ollama for exactly `qwen3:8b` and, once pulled, logs
+`[ai] Qwen3 online via Ollama (qwen3:8b)`. If you prefer not to run
+`ollama pull` yourself, leave `ai_autosetup: true` and the first `--ai` run
+installs the server and pulls the model automatically while you wait.
+
+### Scenario B — use any other model (the exact steps)
+
+1. **Pull the exact tag you want** (any model on the Ollama library, or a custom
+   GGUF). `NAME` here is literal — the exact string you pull:
+
+   ```
+   ollama pull qwen3:4b      # lighter — good for 4–8 GB RAM laptops
+   ollama pull qwen3:14b     # heavier, needs ~16 GB RAM
+   ollama pull llama3.1:8b   # any other model works too
+   ```
+
+2. **Point VAJRA at that exact name.** Edit `config/config.json` and set:
+
+   ```json
+   "ai_model": "qwen3:4b"
+   ```
+
+   It is a case-and-colon sensitive match: the string must equal the `NAME`
+   column shown by `ollama list` (e.g. `qwen3:4b`, **not** just `qwen3`).
+
+3. **Run with `--ai` as usual:**
+
+   ```
+   vajra -t https://your-authorized-target --ai
+   ```
+
+   VAJRA will find the model name prefix (`qwen3*`) in `ollama list` during
+   warm-start and therefore **skip its own auto-pull**, then use your
+   configured name for every generation call.
+
+### Scenario C — what happens when the name does not match
+
+Ollama labels a bare `ollama pull qwen3` as **`qwen3:latest`**, and a typo like
+`ai_model: "qwen3:14B"` (wrong case) names a model that does not exist. VAJRA
+never errors or fabricates output: the call quietly returns empty, the payload
+suggestions are simply absent, and the scan completes normally. The symptom is
+silent — so always verify with:
+
+```
+ollama list                 # note the exact NAME column
+vajra -t <target> --ai 2>&1 | grep -i "\[ai\]"
+```
+
+You should see `[ai] Qwen3 online via Ollama (<your-model>)`. If you see only
+`[ai] disabled` or `not reachable`, check the model name and that Ollama is
+running (`curl -s http://127.0.0.1:11434/api/tags`).
+
+### What the brain is used for
+
+The configured model powers three things the moment `--ai` is active:
+
+- **WAF evasion**: when a WAF defeats the standard payload bank,
+  `suggest_payloads()` has the model craft 5 alternate payloads for that
+  injection class (XSS, SQLi, SSTI…) and VAJRA fires them under the `ai.*`
+  technique.
+- **SQL craftsmanship**: `alternate_sql()` composes dialect-correct UNION
+  SELECT expressions keyed to the detected column count.
+- **Mission planning** (with `--ai-select`): the operator-agent inspects each
+  target's live state and picks the next action — see the next section.
+
+All generated payloads are real payload text in real HTTP requests, never code
+executed on your machine. Findings produced via the brain still pass through
+the same proof + confidence pipeline (`Certain`/`Firm`/`Tentative`) as every
+other finding.
 
 ## AI-select mission mode
 
@@ -503,6 +602,10 @@ handshakes, relay checks, credential attacks across protocols.
 
 **Is the AI mandatory?** No — fully off unless you pass `--ai`. Everything
 else works without it.
+
+**How do I change the AI model?** See [AI brain & model selection](#ai-brain--model-selection):
+pull any Ollama tag, then set the *exact* tag name as `ai_model` in
+`config/config.json`. Default is `qwen3:8b` with nothing to change.
 
 **Slow with big wordlists?** Complete tiers only engage under
 `full`/`vast`/`--aggressive`, HTTP attacks are threaded with stop-on-success.
