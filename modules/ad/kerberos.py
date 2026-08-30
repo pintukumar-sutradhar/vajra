@@ -19,19 +19,49 @@ CODE_MEANING = {
 }
 
 
+USER_CAP = 600
+TIMEOUT_STRIKES = 10
+
+
+def _kdc_reachable(kdc, timeout=2.0):
+    """Fast preflight: bail on non-KDC targets instead of timing out per-user."""
+    import socket
+    try:
+        s = socket.create_connection((kdc, 88), timeout=timeout)
+        s.close()
+        return True
+    except Exception:
+        return False
+
+
 def run(engine):
     t = engine.target
     ad = engine.state.get("ad") or {}
     realm = ad.get("realm") or guess_realm(t)
     dcs = [d["host"] for d in ad.get("dcs", [])] or [t.scan_host()]
     kdc = dcs[0]
-    users = engine.users()[:int(engine.cfg("kerb_user_cap", 600))]
+    if not _kdc_reachable(kdc):
+        engine.log.info("[kerb] no KDC reachable at %s:88 — "
+                        "skipping user enumeration (not an AD target)"
+                        % kdc)
+        return
+    users = engine.users()[:int(engine.cfg("kerb_user_cap", USER_CAP))]
     candidates = sorted({"administrator", "krbtgt", "guest"} |
                         {u for u in users})
     valid, roastable = [], []
+    strikes = 0
     for user in candidates:
         req = build_as_req(realm, user)
         reply = send_kdc(kdc, req, timeout=4.0)
+        if not reply:
+            strikes += 1
+            if strikes >= TIMEOUT_STRIKES and not valid:
+                engine.log.warn("[kerb] KDC %s not answering AS-REQ "
+                                "(not Kerberos?) — stopping enumeration "
+                                "after %d timeouts" % (kdc, strikes))
+                break
+            continue
+        strikes = 0
         code = krb_error_code(reply) if reply else None
         if code == 25:
             valid.append(user)
