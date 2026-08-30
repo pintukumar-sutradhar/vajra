@@ -24,7 +24,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
  .card .num { font-size:32px; font-weight:700; }
  .card .lbl { color:var(--mut); font-size:12px; text-transform:uppercase; letter-spacing:1px; }
- .grade { font-size:46px; font-weight:800; }
+ .scorebig { font-size:40px; font-weight:800; }
  table { width:100%; border-collapse:collapse; background:var(--card); border-radius:12px; overflow:hidden; border:1px solid var(--line); margin-bottom:30px; }
  th { background:#1c2129; text-align:left; padding:10px 14px; font-size:12px; text-transform:uppercase; color:var(--mut); letter-spacing:1px; cursor:pointer; }
  td { padding:11px 14px; border-top:1px solid var(--line); vertical-align:top; }
@@ -63,7 +63,7 @@ pre { background:#0a0d12; border:1px solid var(--line); border-radius:8px; paddi
   <div class="card"><div class="num" style="color:var(--med)">$medium</div><div class="lbl">Medium</div></div>
   <div class="card"><div class="num" style="color:var(--low)">$low</div><div class="lbl">Low</div></div>
   <div class="card"><div class="num">$info</div><div class="lbl">Info</div></div>
-  <div class="card"><div class="grade" style="color:$gradecolor">Grade $grade</div><div class="lbl">Overall security posture</div></div>
+  <div class="card"><div class="scorebig" style="color:$scorecolor">$score</div><div class="lbl">Risk score /100</div></div>
  </div>
 
   <section>
@@ -80,7 +80,14 @@ pre { background:#0a0d12; border:1px solid var(--line); border-radius:8px; paddi
   - <span class="sev low">low</span> Minor — a small hardening gap; fix when convenient.
   - <span class="sev info">info</span> Information only — not a vulnerability by itself.
 
-The "Evidence / PoC" block under each finding shows exactly what the scanner saw (a returned page, a server reply, an access attempt). If the technical wording is unclear, send those evidence lines to your IT team — they reproduce the exact check. Work top-down: fix critical and high items first, re-test, then move on to medium and low.</div>
+The "Evidence / PoC" block under each finding shows exactly what the scanner saw (a returned page, a server reply, an access attempt). If the technical wording is unclear, send those evidence lines to your IT team — they reproduce the exact check. Work top-down: fix critical and high items first, re-test, then move on to medium and low.
+
+Each finding also carries a confidence level saying how sure the scanner is:
+  - <b>Certain</b> — the check was proven end-to-end (e.g. an exploit payload actually ran and its output was captured).
+  - <b>Firm</b> — strong evidence the weakness is real, but it was not conclusively proof-tested.
+  - <b>Tentative</b> — a signal that may be a real weakness or a false alarm; treat it as a lead to verify, not a confirmed problem.
+
+A finding whose confidence is below its claimed severity is automatically downgraded, so unproven leads are never reported as critical or high.</div>
   </section>
 
   <section>
@@ -158,7 +165,6 @@ def build_data(engine):
                  "output_dir": str(engine.outdir)},
         "stats": stats,
         "score": score,
-        "grade": engine.intel.grade(findings),
         "narrative": narrative,
         "services": services,
         "findings": findings,
@@ -198,7 +204,7 @@ def render_html(data):
                 ("<br><span class='muted'>ATT&amp;CK: %s</span>" % mitre)
                 if mitre else "",
                 _esc(f["evidence"][:2400]) if f["evidence"] else "<i>-</i>",
-                _esc(f.get("confidence") or "-")))
+                _esc((f.get("confidence") or "-").title())))
     finding_rows = ('<table class="fixed findings"><thead><tr>'
                      '<th class="col-sev">Severity</th>'
                      '<th class="col-title">Title</th>'
@@ -234,14 +240,14 @@ def render_html(data):
         erows.append('<tr class="erow"><td>%s</td><td>%s</td><td>%s</td></tr>' %
                          (_esc(created[11:19] if len(created) >= 19 else created),
                           _esc(ev_target[:40]), _esc(event)))
-    gradecolor = {"A": "#4caf50", "B": "#8bc34a", "C": "#ffc107",
-                  "D": "#ff9800", "E": "#ff5722", "F": "#f44336"}.get(
-                      data["grade"], "#888")
+    score = float(data["score"])
+    scorecolor = "#f44336" if score >= 25 else \
+        ("#ffb300" if score >= 10 else "#4caf50")
     tpl = Template(HTML_TEMPLATE)
     return tpl.substitute(
         date=data["meta"]["generated"], profile=_esc(data["meta"]["profile"]),
         targets=_esc(", ".join(data["meta"]["targets"])[:90]),
-        score=data["score"], grade=data["grade"], gradecolor=gradecolor,
+        score=data["score"], scorecolor=scorecolor,
         crit=stats.get("critical", 0), high=stats.get("high", 0),
         medium=stats.get("medium", 0), low=stats.get("low", 0),
         info=stats.get("info", 0), total=len(data["findings"]),
@@ -284,7 +290,7 @@ def render_markdown(data):
     lines.append("| Generated | %s |" % data["meta"]["generated"])
     lines.append("| Profile | %s |" % data["meta"]["profile"])
     lines.append("| Targets | %s |" % ", ".join(data["meta"]["targets"]))
-    lines.append("| Risk Score | %.1f/100 (Grade %s) |" % (data["score"], data["grade"]))
+    lines.append("| Risk Score | %.1f/100 |" % data["score"])
     ev = data.get("evasion") or []
     if ev:
         passed = sum(1 for e in ev if e.get("result") == "passed")
@@ -367,7 +373,7 @@ def render_markdown(data):
     lines.append("| Generated | %s |" % data["meta"]["generated"])
     lines.append("| Profile | %s |" % data["meta"]["profile"])
     lines.append("| Targets | %s |" % ", ".join(data["meta"]["targets"]))
-    lines.append("| Risk Score | %.1f/100 (Grade %s) |" % (data["score"], data["grade"]))
+    lines.append("| Risk Score | %.1f/100 |" % data["score"])
     ev = data.get("evasion") or []
     if ev:
         passed = sum(1 for e in ev if e.get("result") == "passed")
@@ -399,7 +405,8 @@ def render_markdown(data):
             lines.append("")
         lines.append("#### [%s] %s" % (f["severity"].upper(), f["title"]))
         lines.append("- **Module:** %s  **Category:** %s  **Confidence:** %s"
-                     % (f["module"], f["category"], f["confidence"]))
+                     % (f["module"], f["category"],
+                        (f["confidence"] or "-").title()))
         if f.get("mitre"):
             lines.append("- **ATT&CK:** %s" % f["mitre"])
         if f.get("detail"):
@@ -430,7 +437,7 @@ _SEV_RGB = {"critical": (1.0, 0.1, 0.1), "high": (0.95, 0.32, 0.24),
 
 def render_pdf(data, path="report.pdf"):
     """Minimal Valid-PDF writer (stdlib only): paginated text report with
-    per-severity colour, grade header and wrapped findings. Each line is
+    per-severity colour, risk-score header and wrapped findings. Each line is
     emitted as an absolute-positioned text object so offsets stay exact."""
     import math
 
@@ -463,8 +470,8 @@ def render_pdf(data, path="report.pdf"):
     stats = data["stats"]
     total = sum(stats.values())
     rows.append((0.1, 0.1, 0.1, True, 12,
-                 "Score %.1f  Grade %s  (%d findings)" % (
-                     data["score"], data["grade"], total)))
+                 "Risk score %.1f/100 (%d findings)" % (
+                     data["score"], total)))
     rows.append((0.4, 0.4, 0.45, False, 9,
                  "critical=%d  high=%d  medium=%d  low=%d  info=%d" % (
                      stats.get("critical", 0), stats.get("high", 0),
@@ -484,7 +491,8 @@ def render_pdf(data, path="report.pdf"):
         if f.get("mitre"):
             rows.append((0.4, 0.4, 0.45, False, 8.5,
                          "ATT&CK %s  module=%s  confidence=%s" % (
-                             f["mitre"], f["module"], f["confidence"])))
+                             f["mitre"], f["module"],
+                             (f.get("confidence") or "-").title())))
         if f.get("detail"):
             for ln in wrap(str(f["detail"]).replace("\n", " ")[:600]):
                 rows.append((0.25, 0.25, 0.3, False, 9, ln))

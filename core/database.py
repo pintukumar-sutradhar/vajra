@@ -14,17 +14,36 @@ SEV_COLORS = {"critical": "#ff1744", "high": "#ff5252", "medium": "#ffb300",
               "low": "#4fc3f7", "info": "#9e9e9e"}
 SEV_BY_RANK = {4: "critical", 3: "high", 2: "medium", 1: "low", 0: "info"}
 
+# Evidence confidence uses the Burp Suite-style scale: Certain / Firm /
+# Tentative. Internal aliases are canonicalized: verified/conclusive/
+# confirmed/reproduced -> certain; possible/suspected/likely -> tentative;
+# low/speculative/unverified/unknown -> tentative.
+CONFIDENCE_NORM = {
+    "certain": "certain", "verified": "certain", "conclusive": "certain",
+    "confirmed": "certain", "reproduced": "certain",
+    "firm": "firm", "high": "firm",
+    "tentative": "tentative", "possible": "tentative", "suspected": "tentative",
+    "likely": "tentative", "low": "tentative", "speculative": "tentative",
+    "unverified": "tentative", "unknown": "tentative",
+}
+CONFIDENCE_LABEL = {"certain": "Certain", "firm": "Firm",
+                    "tentative": "Tentative"}
+
 # Anti-false-positive policy: a finding may only claim a severity that its
-# evidence confidence supports. "firm"/"verified" evidence can claim any
-# level; heuristic/differential signals ("possible") are bounded to medium;
+# evidence confidence supports. Only proof-tested ("certain") evidence can be
+# critical; "firm" evidence can reach high but must stay below critical;
+# heuristic/differential signals ("tentative") are bounded to medium;
 # speculative signals are bounded to low. This guarantees no unverified
 # finding can ever be reported as critical/high.
 CONFIDENCE_CAP = {
-    "firm": 4, "verified": 4, "conclusive": 4, "confirmed": 4,
-    "reproduced": 4, "high": 3, "medium": 2,
-    "possible": 2, "suspected": 2, "likely": 2,
+    "certain": 4, "verified": 4, "conclusive": 4, "confirmed": 4,
+    "reproduced": 4,
+    "firm": 3, "high": 3,
+    "tentative": 2, "possible": 2, "suspected": 2, "likely": 2,
     "low": 1, "speculative": 1, "unverified": 1, "unknown": 1,
 }
+
+CONFIDENCE_ORDER = ["certain", "firm", "tentative"]
 
 
 class Finding:
@@ -37,17 +56,19 @@ class Finding:
         self.module = module
         self.category = category
         self.severity = severity.lower() if severity.lower() in SEV_RANK else "info"
-        self.confidence = (confidence or "firm").lower()
-        cap_rank = CONFIDENCE_CAP.get(self.confidence,
-                                      CONFIDENCE_CAP["possible"])
+        raw_conf = (confidence or "firm").lower()
+        self.confidence = CONFIDENCE_NORM.get(raw_conf, "tentative")
+        cap_rank = CONFIDENCE_CAP.get(raw_conf, CONFIDENCE_CAP["possible"])
         if SEV_RANK[self.severity] > cap_rank:
             bound_to = SEV_BY_RANK[cap_rank]
             if detail:
                 detail += "\n"
             detail += ("[Bounded] claimed severity %s lowered to %s: evidence "
-                       "confidence is '%s' and has not been proof-tested yet "
-                       "(anti-false-positive policy)."
-                       % (self.severity, bound_to, self.confidence))
+                       "confidence is '%s' and the check was not fully "
+                       "proof-tested (anti-false-positive policy)."
+                       % (self.severity, bound_to,
+                          CONFIDENCE_LABEL.get(self.confidence,
+                                               self.confidence)))
             self.severity = bound_to
         self.title = title
         self.detail = detail

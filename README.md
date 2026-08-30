@@ -92,7 +92,8 @@ workspaces that turn every re-run into a measurable retest.
 - **Intelligence built in** — offline banner→CVE correlation across 133
   products, an intel knowledge base (`intel/`: ports · services · default
   creds · login surfaces · leak paths · cloud · os), MITRE ATT&CK tagging on
-  every finding, risk scoring with letter grades, and an AI campaign planner
+  every finding, numeric risk scoring (0–100), MITRE ATT&CK tagging on
+  every finding, and an AI campaign planner
   (opt-in).
 - **Workspaces & retest deltas** — every run is snapshotted (auto per-target,
   or `--workspace NAME`). Re-running a target surfaces a **new / fixed /

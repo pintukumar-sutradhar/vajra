@@ -177,23 +177,13 @@ class Intelligence:
         return suggestions
 
     def score(self, findings):
-        total = sum(SEV_WEIGHT.get(f["severity"], 0) * (1.2 if f.get("confidence") == "firm" else 1.0)
+        # Risk score weights severity by evidence confidence: proof-tested
+        # ("certain") findings weigh most, pure signals ("tentative") least.
+        conf_w = {"certain": 1.4, "firm": 1.2, "tentative": 1.0}
+        total = sum(SEV_WEIGHT.get(f["severity"], 0)
+                    * conf_w.get(f.get("confidence"), 1.0)
                     for f in findings)
         return min(100.0, round(total, 1))
-
-    def grade(self, findings):
-        s = self.score(findings)
-        if s >= 60:
-            return "F"
-        if s >= 40:
-            return "E"
-        if s >= 25:
-            return "D"
-        if s >= 12:
-            return "C"
-        if s >= 5:
-            return "B"
-        return "A"
 
     def summarize(self, stats, findings, services, targets):
         """Plain-language executive summary for non-technical readers."""

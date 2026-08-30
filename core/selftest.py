@@ -131,16 +131,17 @@ def t_fp_guard():
     from core.database import Finding
     firm = Finding("t", "web.vulnscan", "web-vuln", "critical", "confirmed RCE",
                    confidence="firm")
-    assert firm.severity == "critical"
-    possible = Finding("t", "web.vulnscan", "web-vuln", "critical",
-                       "blind signal", confidence="possible")
-    assert possible.severity == "medium" and "[Bounded]" in possible.detail
+    assert firm.severity == "high"  # firm evidence stays below critical
+    tentative = Finding("t", "web.vulnscan", "web-vuln", "critical",
+                        "blind signal", confidence="possible")
+    assert tentative.severity == "medium" and "[Bounded]" in tentative.detail
+    assert tentative.confidence == "tentative"  # canonical Burp-style label
     speculative = Finding("t", "network.osfp", "recon", "high", "suspicion",
                           confidence="low")
     assert speculative.severity == "low"
-    legit = Finding("t", "exploit.exploit", "credentials", "critical",
-                    "exfil", confidence="verified")
-    assert legit.severity == "critical"
+    proven = Finding("t", "exploit.exploit", "credentials", "critical",
+                     "exfil", confidence="verified")
+    assert proven.severity == "critical" and proven.confidence == "certain"
     return True, "confidence->severity cap (anti-FP) OK"
 
 
@@ -149,7 +150,7 @@ def t_report():
     data = {"meta": {"tool": "VAJRA", "generated": "now",
                      "profile": "quick", "targets": ["127.0.0.1"],
                      "output_dir": "/tmp"},
-            "stats": {"critical": 1, "high": 2}, "score": 24.0, "grade": "D",
+            "stats": {"critical": 1, "high": 2}, "score": 24.0,
             "narrative": "n", "services": [{"target": "x", "port": 80,
                                             "service": "http", "product": "",
                                             "version": "", "tls": False}],
@@ -778,7 +779,7 @@ def t_next_caps():
     import core.report as rep
     data = {"meta": {"tool": "VAJRA", "generated": "now", "profile": "quick",
                      "targets": ["10.0.0.5"], "output_dir": "/tmp"},
-            "stats": {"critical": 1, "high": 2}, "score": 24.0, "grade": "D",
+            "stats": {"critical": 1, "high": 2}, "score": 24.0,
             "narrative": "Test narrative for PDF rendering. " * 12,
             "findings": [{"severity": "critical", "title": "RCE <x> broken",
                           "category": "web-vuln", "module": "m", "detail": "d",
@@ -1123,7 +1124,7 @@ def t_synthesis():
              "targets": 2, "open": 3, "findings": 2}
     nar = auto_narrative(stats, finds,
                          [{"port": 443, "service": "https"}],
-                         [{"display": "10.0.0.1"}], 8.1, "D")
+                         [{"display": "10.0.0.1"}], 8.1)
     assert "1 critical" in nar and "8.1/100" in nar
     assert correlate_across(finds) == []
     dup = finds + [dict(finds[1], target="10.0.0.3")]

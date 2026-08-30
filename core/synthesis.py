@@ -9,7 +9,7 @@ SEV_SHORT = {"critical": "crit", "high": "high", "medium": "med",
              "low": "low", "info": "info"}
 
 
-def auto_narrative(stats, findings, services, targets, score, grade):
+def auto_narrative(stats, findings, services, targets, score):
     """Deterministic plain-language executive narrative for non-IT readers."""
     total = sum(stats.values())
     critical = stats.get("critical", 0)
@@ -28,9 +28,9 @@ def auto_narrative(stats, findings, services, targets, score, grade):
         sev_words.append("%d high" % high)
     lines.append(
         "Scan of %s produced %d finding(s) (%s), for an overall risk score "
-        "of %.1f/100 (grade %s)."
+        "of %.1f/100."
         % (", ".join(t.get("display", "") for t in targets), total,
-           ", ".join(sev_words) or "no critical/high", score, grade))
+           ", ".join(sev_words) or "no critical/high", score))
     if critical or high:
         lines.append(
             "Risk level: high. At least one finding is urgent and could let "

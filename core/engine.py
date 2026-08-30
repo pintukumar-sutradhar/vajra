@@ -764,10 +764,9 @@ class Engine:
             self.log.error("report generation failed: %r" % e)
         stats = data["stats"]
         total = sum(stats.values())
-        grade = data["grade"]
         self.log.phase("-" * 62)
-        self.log.phase(" TARGET REPORT — %s | %d finding(s) | score %.1f | "
-                       "grade %s" % (t.display, total, data["score"], grade))
+        self.log.phase(" TARGET REPORT — %s | %d finding(s) | risk score %.1f/100"
+                       % (t.display, total, data["score"]))
         for sev in SEV_ORDER:
             if stats.get(sev):
                 bar = "█" * min(24, stats[sev])
@@ -802,7 +801,6 @@ class Engine:
             score = Intelligence().score(findings)
             entries.append({"target": disp, "folder": os.path.relpath(tdir,
                             self.outroot), "stats": st,
-                            "grade": Intelligence().grade(findings),
                             "risk_score": score})
         import json as _json
         summary = {"tool": "VAJRA",
@@ -819,8 +817,8 @@ class Engine:
         self.log.phase(" RUN COMPLETE — %d target(s) | %d finding(s) total | "
                         "%.0fs" % (len(entries), total, elapsed))
         for e in entries:
-            self.log.always("   %-34s grade %-2s  %d finding(s)"
-                            % (e["target"][:34], e["grade"],
+            self.log.always("   %-34s risk score %5.1f  %d finding(s)"
+                            % (e["target"][:34], e["risk_score"],
                                sum(e["stats"].values())))
         self.log.success("output root -> %s" % self.outroot)
         self.log.phase("=" * 62)
@@ -887,11 +885,9 @@ def build_data_for(db, target, engine):
                                                       engine.outroot)},
         "stats": stats,
         "score": score,
-        "grade": Intelligence().grade(findings),
         "narrative": narrative,
         "synthesis": synth_narrative(stats, findings, services,
-                                     [{"display": target.display}], score,
-                                     Intelligence().grade(findings)),
+                                     [{"display": target.display}], score),
         "remediation": compliance_remediate(findings),
         "delta": engine.state.get("delta") or {},
         "spread": spread,
