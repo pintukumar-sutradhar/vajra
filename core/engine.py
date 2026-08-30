@@ -215,6 +215,46 @@ class Engine:
         self.log.success("[evidence] saved -> %s" % rel)
         return rel
 
+    def _slugify(self, s):
+        import re as _re
+        s = _re.sub(r"[^A-Za-z0-9]+", "_", s).strip("_")[:48]
+        return s or "finding"
+
+    def _dump_evidence(self):
+        """Write one raw-proof file under evidence/ for every substantive
+        finding (medium+ or any finding carrying proof text). This makes the
+        evidence folder the on-disk mirror of the report's 'PoC / Evidence'
+        column — it is never left empty just because a run was web-only."""
+        evdir = self.state.get("evidence_dir")
+        if not evdir:
+            return
+        os.makedirs(evdir, exist_ok=True)
+        written = 0
+        for i, f in enumerate(self.db.findings(self.target.display)):
+            sever = f.get("severity", "")
+            poc = (f.get("evidence") or "").strip()
+            if not poc:
+                poc = (f.get("detail") or f.get("title") or "").strip()
+            if not poc or (sever == "info" and not (f.get("evidence") or "")):
+                continue
+            fn = "f%03d_%s.txt" % (i + 1, self._slugify(f["title"]))
+            header = ("# VAJRA finding evidence dump\n"
+                      "# [%s] %s\n# target: %s\n"
+                      "# module: %s | category: %s | confidence: %s\n\n" %
+                      (sever.upper(), f["title"], f["target"], f["module"],
+                       f["category"], f["confidence"]))
+            try:
+                with open(os.path.join(evdir, fn), "w",
+                          encoding="utf-8") as h:
+                    h.write(header + poc[:50000])
+                written += 1
+            except Exception:
+                continue
+        if written:
+            self.log.success("[evidence] %d finding-proof file(s) -> "
+                             "evidence/ (target %s)"
+                             % (written, self.target.display))
+
     def _collect_evasion(self, attacker):
         try:
             entries = attacker.evasion_log
@@ -399,6 +439,7 @@ class Engine:
                 self._exec(m)
         if self.ai_select:
             self.run_mission()
+        self._dump_evidence()
         self._workspace_target(t)
         self.db.add_event(t.display, "scan-end", "")
         self.dbs.append(self.db)

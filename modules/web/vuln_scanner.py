@@ -651,16 +651,23 @@ def _check_host_header(engine, targets):
                 if line.lower().startswith(b"location:"):
                     loc = line
             if hosty.encode() in body or hosty.encode() in loc:
+                if hosty.encode() in body:
+                    i = body.find(hosty.encode())
+                    snippet = body[max(0, i - 160):i + 220]
+                else:
+                    snippet = loc
+                detail_w = "the response body" if hosty.encode() in body \
+                    else "Location header"
                 engine.db.add_finding(Finding(
                     engine.target.display, "web.vulnscan",
                     "web-vuln", "medium",
                     "Host Header Injection / web-cache poisoning surface",
-                    detail="%s: %s reflected into %s%s" % (
-                        hdr, hosty,
-                        "the response body" if hosty.encode() in body
-                        else "Location header", " on %s" % base),
-                    evidence="raw socket GET %s with %s: %s\n%s" % (
-                        path, hdr, hosty, head[:500]),
+                    detail="%s: %s reflected into %s on %s" % (
+                        hdr, hosty, detail_w, base),
+                    evidence=("raw socket GET %s with %s: %s\n--- "
+                              "reflected occurrence ---\n%s"
+                              % (path, hdr, hosty,
+                                 snippet.decode("utf-8", "replace")[:600])),
                     remediation=REM["hostinject"],
                     confidence="firm"))
                 engine.log.finding("[HOST-INJECT] %s reflected via %s at %s"

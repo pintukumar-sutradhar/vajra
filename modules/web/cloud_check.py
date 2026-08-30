@@ -92,6 +92,7 @@ def run(engine):
         engine.db.add_event(t.display, "web.cloud",
                             "no domain-derived bucket candidates")
         return
+    strong = {h.lower().rstrip(".") for h in _hostnames(engine)}
     engine.log.info("[cloud] probing %d bucket-candidate name(s)" % len(cands))
     public, exists, missing = [], [], []
     checks_done = 0
@@ -115,13 +116,13 @@ def run(engine):
                     public.append((prov, name, url))
                     break
                 if r.status == 200:
-                    exists.append((prov, name, "public-200"))
+                    exists.append((prov, name, "public-200", url))
                     break
                 if r.status in (403, 401):
                     region = r.headers.get("x-amz-bucket-region", "").lower()
                     exists.append((prov, name,
                                    "denied%s" % (" region=" + region
-                                                 if region else "")))
+                                                 if region else ""), url))
                     break
                 if r.status in (404, 410):
                     missing.append((prov, name))
@@ -134,21 +135,28 @@ def run(engine):
             "PUBLIC CLOUD BUCKET — LISTING: %s (%s)" % (name, prov.upper()),
             detail="Anonymous HTTP read returned a full object listing at "
                    "%s. Any write-acl extent must be verified and closed." % url,
-            evidence="probe=%s listing-returned" % url,
+            evidence="probe=%s\nlisting-returned" % url,
             remediation="Block anonymous access, enable bucket policy "
                         "inspection, enforce encryption/versioning.",
-            confidence="firm"))
+            confidence="certain"))
         engine.log.finding("[cloud] PUBLIC LISTABLE bucket: %s [%s]"
                            % (name, prov.upper()))
-    for prov, name, status in exists:
+    locked = [(p, n, s, u) for p, n, s, u in exists
+              if n in strong and s.startswith("denied")]
+    if locked:
         engine.db.add_finding(Finding(
-            t.display, "web.cloud", "exposure", "medium",
-            "Cloud storage bucket exists but locked: %s (%s/%s)" %
-            (name, prov.upper(), status),
-            detail="The bucket resolves and denies anonymous reads — a "
-                   "legitimate naming surface for targeted tests.",
-            evidence="probe=%s" % prov,
-            confidence="firm"))
+            t.display, "web.cloud", "exposure", "info",
+            "Cloud storage bucket resolves but is locked — exact subdomain "
+            "candidate: %s (%s)" % (locked[0][1], locked[0][0].upper()),
+            detail="The bucket for a discovered in-scope subdomain resolves "
+                   "and denies anonymous reads. NOT an exposure by itself — "
+                   "the lock is the expected secure state.",
+            evidence="probe=%s\n-> %s" % (locked[0][0], locked[0][3]),
+            confidence="possible"))
+    for prov, name, _status, url in exists:
+        engine.db.add_event(t.display, "web.cloud",
+                            "bucket-name %s/%s resolves (%s)" %
+                            (prov, name, url))
     if missing:
         engine.db.add_event(t.display, "web.cloud",
                             "%d candidates nonexistent" % len(missing))

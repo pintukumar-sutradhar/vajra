@@ -24,6 +24,60 @@ VERS_HUNTERS = [
 
 _RANGE_OPS = re.compile(r"^(<=|>=|<|>|==|=)\s*(.*)$")
 
+# CMS findings must carry their own, accurate play-notes — never copy the
+# WordPress text onto Magento/Drupal/Joomla (that was an obvious false
+# positive in the report).
+CMS_ACTIONS = {
+    "wordpress": (
+        "WordPress CMS deployed - plugin/theme attack surface applies",
+        "WordPress marker seen in a first-party page. Playbook: enumerate "
+        "users (wp-json/wp/v2/users), list outdated plugins/themes, probe "
+        "xmlrpc.php (pingback/ping), and correlate the core + plugin versions "
+        "against known CVEs. Lock down the admin surface and XML-RPC if "
+        "unused.",
+        "Harden: disable XML-RPC, auto-update core+plugins, enforce app "
+        "passwords and 2FA on admins."),
+    "drupal": (
+        "Drupal CMS deployed - module/theme attack surface applies",
+        "Drupal marker seen in a first-party page. Playbook: enumerate users "
+        "(/user/register, /user/login), outdated modules/themes, and core "
+        "CVEs (e.g. Drupalgeddon)."),
+    "joomla": (
+        "Joomla CMS deployed - extension/theme attack surface applies",
+        "Joomla marker seen in a first-party page. Playbook: enumerate "
+        "super-users (/administrator), outdated extensions, and known Joomla "
+        "core CVEs."),
+    "magento": (
+        "Magento CMS deployed - extension/theme attack surface applies",
+        "Magento marker seen in a first-party page. Playbook: enumerate store "
+        "routes (/admin, /catalogsearch), outdated Magento versions and "
+        "known CVEs (RCE/XXE chains), exposed /static and setup endpoints."),
+    "shopify": (
+        "Shopify store detected - template/app attack surface",
+        "Shopify platform marker seen in a first-party page. Playbook: review "
+        "public app/theme surfaces; backend is SaaS-managed."),
+}
+
+
+def _bounded_in(pat, text):
+    """True when pat occurs in text and is NOT the suffix of a longer token —
+    'mage/' must NOT match inside 'image/' (a plain substring match would
+    report Magento on every page containing an <img> tag). Only the character
+    immediately BEFORE the pattern matters: markers may legitimately be
+    followed by more path ('mage/static/...')."""
+    plen = len(pat)
+    if plen == 0:
+        return False
+    start = 0
+    while True:
+        i = text.find(pat, start)
+        if i < 0:
+            return False
+        before = text[i - 1] if i > 0 else ""
+        if i == 0 or not (before.isalnum() or before == "_"):
+            return True
+        start = i + 1
+
 
 def _ver_tuple(v):
     return tuple(int(x) for x in re.findall(r"\d+", str(v)))
@@ -145,6 +199,7 @@ def run(engine):
     except Exception:
         sigs = []
     techs = set()
+    tech_proof = {}          # tech -> first observed  (url : where : sample)
     sightings = []
     for wt in targets:
         base = wt["url"].rstrip("/")
@@ -163,13 +218,21 @@ def run(engine):
         for s in sigs:
             where = s.get("where", "body")
             pat = s.get("pattern", "")
-            if where in hay and pat.lower() in hay[where]:
+            if where in hay and _bounded_in(pat, hay[where]):
                 techs.add(s["name"])
-        if "/wp-json" in r.body or "wp-content" in r.body:
+                tech_proof.setdefault(s["name"],
+                                      (base, where, pat))
+        if _bounded_in("/wp-json", hay["body"]) or \
+                _bounded_in("wp-content", hay["body"]):
             techs.add("WordPress")
+            tech_proof.setdefault("WordPress",
+                                  (base, "body",
+                                   "wp-content/wp-json marker"))
         low_headers = hay["header"]
-        if "x-drupal-cache" in low_headers:
+        if _bounded_in("x-drupal-cache", low_headers):
             techs.add("Drupal")
+            tech_proof.setdefault("Drupal", (base, "header",
+                                             "x-drupal-cache marker"))
         needle = "%s %s %s" % (r.headers.get("server", ""),
                                r.headers.get("x-powered-by", ""),
                                r.body[:3000])
@@ -182,17 +245,26 @@ def run(engine):
     engine.state.setdefault("tech", sorted(techs))
     for tech in sorted(techs):
         engine.log.info("[tech] " + tech)
+        proof = tech_proof.get(tech) or ("", "body", "")
+        _, _where, _pat = proof
         engine.db.add_finding(Finding(
             t.display, "web.tech", "recon", "info",
             "Technology fingerprint: %s" % tech,
+            evidence="%s" % (_pat or tech),
             confidence="firm"))
-    cms = {c for c in techs if c.lower() in ("wordpress", "drupal", "joomla",
-                                             "magento")}
-    for c in cms:
+    cms = {c for c in techs if c.lower() in CMS_ACTIONS}
+    for c in sorted(cms):
+        title, detail, remed = CMS_ACTIONS[c.lower()]
+        proof = tech_proof.get(c)
+        ev = "%s" % c
+        if proof:
+            base, where, pat = proof
+            ev = "marker '%s' in %s of GET %s/" % (pat, where, base)
         engine.db.add_finding(Finding(
             t.display, "web.tech", "attack-surface", "medium",
-            "%s CMS deployed - plugin/theme attack surface applies" % c,
-            detail="Enumerate users (/wp-json/wp/v2/users), outdated plugins, "
-                   "xmlrpc.php abuse and known CVEs for the CMS version.",
+            title,
+            detail="%s\nObserved: %s" % (detail, ev),
+            evidence="%s\nConfirmed marker: %s" % (c, ev),
+            remediation=remed,
             confidence="firm"))
     cve_correlation(engine, t, sightings)

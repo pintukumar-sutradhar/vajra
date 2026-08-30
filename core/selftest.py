@@ -147,10 +147,40 @@ def t_vuln_records():
     return True, "vuln_scanner proof-class confidence mapping OK"
 
 
+def t_cms_markers():
+    from modules.web.tech_fingerprint import _bounded_in, CMS_ACTIONS
+    assert _bounded_in("mage/", "image/x.png") is False   # img-tag false hit
+    assert _bounded_in("mage/", "<div class=x>mage/x</div>") is True
+    assert _bounded_in("mage/", "mage/static/version") is True  # real magento
+    assert _bounded_in("wp-content", "xwp-content-extra") is False
+    assert _bounded_in("wp-content", '"wp-content/uploads"') is True
+    assert _bounded_in("/wp-json", "href='/wp-json/wp/v2/users'") is True
+    assert _bounded_in("x-drupal-cache", "x-drupal-cache: HIT") is True
+    assert "mage/" not in CMS_ACTIONS["wordpress"][1].lower()
+    for c in ("wordpress", "drupal", "joomla", "magento"):
+        assert c in CMS_ACTIONS and \
+            CMS_ACTIONS[c][0].lower().startswith(c)
+    return True, "CMS markers boundary-guarded (mage!=image), per-CMS notes OK"
+
+
+def t_js_scope():
+    from modules.web.js_analysis import _in_scope
+    hosts = {"bracnet.net", "www.bracnet.net"}
+    assert _in_scope("https://bracnet.net/app.js", hosts)
+    assert _in_scope("https://www.bracnet.net/x.js", hosts)
+    assert _in_scope("https://api.bracnet.net/x.js", hosts)  # subdomain ok
+    assert not _in_scope("https://cdn.jsdelivr.net/npm/rasa.js", hosts)
+    assert not _in_scope("https://evil.com/x.js", hosts)
+    assert not _in_scope("http://127.0.0.1/x.js", hosts)  # IP must be in hosts
+    assert _in_scope("http://127.0.0.1/x.js", {"127.0.0.1"})
+    assert not _in_scope("https://notbracnet.net/x.js", hosts)
+    return True, "JS analysis is strictly same-origin/subdomain scoped"
+
+
 def t_update():
     import core.updater as up
     from core.version import __version__
-    assert __version__ == "1.0-beta"
+    assert __version__ == "1.1-beta"
     assert up.current_version() == __version__
     assert isinstance(up.is_git(), bool)
     repo, branch = up._remote()
@@ -205,7 +235,12 @@ def t_report():
                                             "version": "", "tls": False}],
             "findings": [{"severity": "critical", "title": "<b>t</b>",
                           "category": "c", "module": "m", "detail": "d",
-                          "evidence": "e", "confidence": "firm"}],
+                          "evidence": "e", "confidence": "firm"},
+                         {"severity": "medium",
+                          "title": "no-proof finding",
+                          "category": "c2", "module": "m2",
+                          "detail": "observed proof detail only",
+                          "evidence": "", "confidence": "firm"}],
             "events": [], "tech": [], "subdomains": [], "os_guess": "",
             "evasion": [{"waf": "Cloudflare", "ops": "case_swap",
                          "original": "<svg onload=alert(1)>",
@@ -214,9 +249,12 @@ def t_report():
     html_out = render_html(data)
     assert "VAJRA" in html_out and "&lt;b&gt;" in html_out
     assert "Evasion operations" in html_out and "case_swap" in html_out
+    assert "<i>-</i>" not in html_out  # PoC cell never blank
+    assert "observed proof detail only" in html_out  # detail fallback renders
     md = render_markdown(data)
     assert "# ⚡ Vajra" in md and "Evasion Ops" in md
-    return True, "all three report formats render (incl. evasion section)"
+    assert "Evidence / PoC:" in md and "observed proof detail only" in md
+    return True, "all three report formats render (incl. PoC fallback)"
 
 
 def t_payloads():
@@ -1361,6 +1399,8 @@ def run_all():
     check("sqlite findings database", t_db)
     check("rce channel anti-reflection guard", t_rce_channel)
     check("self-update wiring + version", t_update)
+    check("CMS markers boundary-guarded", t_cms_markers)
+    check("JS analysis same-origin scope", t_js_scope)
     check("vuln scanner proof-class mapping", t_vuln_records)
     check("confidence->severity anti-FP cap", t_fp_guard)
     check("report rendering (html/md/json)", t_report)

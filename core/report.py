@@ -6,6 +6,17 @@ from string import Template
 from core.database import SEV_ORDER, SEV_WEIGHT
 from core.utils import PROJECT_ROOT
 
+
+def _poc_text(f):
+    """PoC / Evidence text for a finding — the observed proof. Falls back to
+    the recorded detail so the PoC cell is never an unexplained blank: a
+    finding without either is not something we can honestly stand behind."""
+    for key in ("evidence", "detail", "title"):
+        val = (f.get(key) or "").strip()
+        if val:
+            return val
+    return ""
+
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -203,7 +214,7 @@ def render_html(data):
                 _esc(f["detail"]),
                 ("<br><span class='muted'>ATT&amp;CK: %s</span>" % mitre)
                 if mitre else "",
-                _esc(f["evidence"][:2400]) if f["evidence"] else "<i>-</i>",
+                _esc(_poc_text(f)[:2400]),
                 _esc((f.get("confidence") or "-").title())))
     finding_rows = ('<table class="fixed findings"><thead><tr>'
                      '<th class="col-sev">Severity</th>'
@@ -357,10 +368,11 @@ def render_markdown(data):
             lines.append("- **Detail:** %s" % f["detail"].replace("\n", " ")[:500])
         if f.get("remediation"):
             lines.append("- **Remediation:** %s" % f["remediation"])
-        if f.get("evidence"):
-            lines.append("- **Evidence:**")
+        poc = _poc_text(f)
+        if poc:
+            lines.append("- **Evidence / PoC:**")
             lines.append("  ```")
-            for ln in f["evidence"].splitlines()[:15]:
+            for ln in poc.splitlines()[:15]:
                 lines.append("  " + ln[:300])
             lines.append("  ```")
         lines.append("")
@@ -413,10 +425,11 @@ def render_markdown(data):
             lines.append("- **Detail:** %s" % f["detail"].replace("\n", " ")[:500])
         if f.get("remediation"):
             lines.append("- **Remediation:** %s" % f["remediation"])
-        if f.get("evidence"):
-            lines.append("- **Evidence:**")
+        poc = _poc_text(f)
+        if poc:
+            lines.append("- **Evidence / PoC:**")
             lines.append("  ```")
-            for ln in f["evidence"].splitlines()[:15]:
+            for ln in poc.splitlines()[:15]:
                 lines.append("  " + ln[:300])
             lines.append("  ```")
         lines.append("")
@@ -496,9 +509,10 @@ def render_pdf(data, path="report.pdf"):
         if f.get("detail"):
             for ln in wrap(str(f["detail"]).replace("\n", " ")[:600]):
                 rows.append((0.25, 0.25, 0.3, False, 9, ln))
-        if f.get("evidence"):
-            rows.append((0.3, 0.35, 0.5, False, 8, "Evidence:"))
-            for ln in str(f["evidence"]).splitlines()[:12]:
+        poc = _poc_text(f)
+        if poc:
+            rows.append((0.3, 0.35, 0.5, False, 8, "Evidence / PoC:"))
+            for ln in str(poc).splitlines()[:12]:
                 rows.append((0.3, 0.35, 0.5, False, 7.5, ln))
         if f.get("remediation"):
             rows.append((0.2, 0.5, 0.3, False, 8.5,
