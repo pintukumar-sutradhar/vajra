@@ -33,7 +33,10 @@ def _hostnames(engine):
         if h:
             names.add(h)
     for sub in engine.state.get("subdomains", []) or []:
-        h = sub.get("host") or sub.get("name") or sub.get("subdomain") or ""
+        if isinstance(sub, dict):
+            h = sub.get("host") or sub.get("name") or sub.get("subdomain") or ""
+        else:
+            h = sub
         if h:
             names.add(h)
     return {n.lower().rstrip(".") for n in names if n}

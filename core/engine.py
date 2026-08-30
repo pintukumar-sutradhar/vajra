@@ -567,19 +567,44 @@ class Engine:
 
     def _web_target_ok(self, w):
         """True if the web target's port is confirmed open by the port scan,
-        else a real 3s connect probe must succeed (skip & continue when it
-        does not, instead of grinding through full timeouts later)."""
+        else a real connect probe must succeed. A refused/RST port (truly
+        closed) skips immediately; a filtered/unreachable timeout gets a few
+        retries so a transient network blip does not silently drop the whole
+        web phase for a genuinely up host."""
         try:
             from urllib.parse import urlparse
+            import socket as _s
             pr = urlparse(w["url"])
             port = pr.port or (443 if pr.scheme == "https" else 80)
             host = pr.hostname
             if port in self.state.get("open_ports", {}):
                 return True
-            import socket as _s
-            s = _s.create_connection((host, port), timeout=3.0)
-            s.close()
-            return True
+            closed = False
+            for attempt in range(3):
+                s = _s.socket(_s.AF_INET, _s.SOCK_STREAM)
+                s.settimeout(3.0)
+                try:
+                    s.connect((host, port))
+                    s.close()
+                    return True
+                except OSError as e:
+                    if getattr(e, "errno", None) in (_s.errno.ECONNREFUSED,
+                                                     _s.errno.EHOSTUNREACH,
+                                                     _s.errno.ENETUNREACH):
+                        closed = True
+                        break
+                    if attempt < 2:
+                        time.sleep(0.8)
+                finally:
+                    s.close()
+            if closed:
+                self.log.debug("[web] %s port %d refused (closed port)"
+                               % (host, port))
+            else:
+                self.log.warn("[web] %s port %d filtered/unreachable after 3 "
+                              "probes — re-run to confirm if outage was "
+                              "transient" % (host, port))
+            return False
         except Exception:
             return False
 

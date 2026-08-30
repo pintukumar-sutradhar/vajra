@@ -110,7 +110,10 @@ def run(engine):
     checked = 0
     found = []
     for sub in subs[:40]:
-        host = (sub.get("host") or sub.get("cname") or "").lower()
+        if isinstance(sub, dict):
+            host = (sub.get("host") or sub.get("cname") or "").lower()
+        else:
+            host = str(sub).lower()
         if not host:
             continue
         if host in (t.display.lower(), t.hostname or ""):

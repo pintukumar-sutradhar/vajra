@@ -46,10 +46,10 @@ def run(engine):
         for host, ip in ex.map(_resolve, list(candidates)[:30000]):
             if ip:
                 found[host] = ip
-    live = sorted(found.keys())
+    live = [{"host": h, "ip": found[h]} for h in sorted(found.keys())]
     engine.state.setdefault("subdomains", live)
     if live:
-        listing = "\n".join("%-42s %s" % (h, found[h]) for h in live[:60])
+        listing = "\n".join("%-42s %s" % (e["host"], e["ip"]) for e in live[:60])
         extra = "" if len(live) <= 60 else "\n... (%d total)" % len(live)
         engine.db.add_finding(Finding(
             t.display, "recon.subdomains", "recon", "info",
