@@ -111,6 +111,42 @@ def t_rce_channel():
     return True, "RCE channel anti-reflection guard OK"
 
 
+def t_vuln_records():
+    from modules.web import vuln_scanner as vs
+
+    class Res:
+        def __init__(self, technique):
+            self.technique = technique
+
+    def mk_result(tech):
+        return Res(tech)
+
+    pt = vs.Point("http://127.0.0.1/echo?q=1", "GET", [("q", "1")],
+                  "http://127.0.0.1/echo?q=1", "form")
+
+    class Rec:
+        def __init__(self):
+            self.calls = []
+
+        def __call__(self, cls, pt, k, res, confidence="firm"):
+            self.calls.append((
+                cls, vs._confidence_for(cls, confidence), res.technique))
+
+    rec = Rec()
+    rec("rce", pt, "q", mk_result("uid"), "firm")
+    rec("lfi", pt, "file", mk_result("root:x:0:0"), "firm")
+    rec("sqli_time", pt, "q", mk_result("delay"), "firm")
+    rec("xss", pt, "q", mk_result("direct"), "firm")
+    m = {c[0]: c for c in rec.calls}
+    assert m["rce"][1] == "certain"
+    assert m["lfi"][1] == "certain"
+    assert m["sqli_time"][1] == "possible"
+    assert m["xss"][1] == "firm"
+    assert vs._confidence_for("rce", "firm") == "certain"
+    assert vs._confidence_for("xss", "firm") == "firm"
+    return True, "vuln_scanner proof-class confidence mapping OK"
+
+
 def t_db():
     from core.database import Database, Finding
     path = tempfile.mktemp(suffix=".sqlite")
@@ -1311,6 +1347,7 @@ def run_all():
     check("html extraction (links/forms/emails)", t_extract)
     check("sqlite findings database", t_db)
     check("rce channel anti-reflection guard", t_rce_channel)
+    check("vuln scanner proof-class mapping", t_vuln_records)
     check("confidence->severity anti-FP cap", t_fp_guard)
     check("report rendering (html/md/json)", t_report)
     check("http result model", t_http_result)

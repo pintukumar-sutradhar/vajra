@@ -202,6 +202,19 @@ REM = {
 }
 
 
+def _confidence_for(cls, confidence):
+    """Proof-level classes only accept distinctive REAL markers in their
+    motive (actual file contents, executed shell output, computed template
+    result, OOB callback), so confirmation == reproduction == 'certain'.
+    Time-based signals stay tentative-heuristic (capped at medium)."""
+    if confidence == "firm" and cls in (
+            "lfi", "rce", "ssti", "xxe", "rce_blind"):
+        return "certain"
+    if cls == "sqli_time":
+        return "possible"
+    return confidence
+
+
 def run(engine):
     t = engine.target
     targets = engine.state.get("web_targets") or []
@@ -221,6 +234,7 @@ def run(engine):
         sev = SEV[cls]
         if cls == "xss" and res.technique == "direct":
             sev = "high"
+        confidence = _confidence_for(cls, confidence)
         engine.db.add_finding(Finding(
             t.display, "web.vulnscan", "web-vuln", sev, title,
             detail="Origin: %s\nMethod: %s (%s)\nParameter: %s\nWAF: %s\n"
@@ -610,7 +624,7 @@ def _stored_pass(engine, points, targets, waf, record):
                    "stored-response", _mk_result(page["url"],
                                                  "beacon rendered in %s"
                                                  % page["url"]),
-                   confidence="possible")
+                   confidence="firm")
 
 
 def _check_host_header(engine, targets):

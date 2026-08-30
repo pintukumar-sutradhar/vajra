@@ -65,7 +65,7 @@ def _alg_confusion(engine, base, info, summary):
                 evidence=forged[:200],
                 remediation="Enforce an explicit allowed-algorithm list; "
                             "never use public key material as symmetric "
-                            "secret.", confidence="firm"))
+                            "secret.", confidence="certain"))
             engine.log.finding("[jwt] ALG-CONFUSION verified via JWKS n")
     except Exception:
         return
@@ -134,7 +134,7 @@ def run(engine):
                                 "authentication forgeable",
                     detail="Stripped-signature token accepted where the "
                            "original was rejected.", evidence=none_tok,
-                    confidence="firm"))
+                    confidence="certain"))
 
         # ---- RS256 -> HS256 algorithm confusion (live) ----
         if str(hdr.get("alg", "")).upper() == "RS256":

@@ -120,7 +120,7 @@ def run(engine):
                 remediation="Validate filename + content (magic bytes), serve "
                             "uploads from an isolated origin with "
                             "Content-Disposition: attachment.",
-                confidence="firm"))
+                confidence="certain"))
             if chk:
                 engine.log.finding("[upload] CRITICAL stored+served for %s"
                                    % "|".join(hostile))

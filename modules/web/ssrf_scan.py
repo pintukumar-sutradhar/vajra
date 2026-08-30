@@ -64,7 +64,7 @@ def run(engine):
                                                               marker),
                 remediation="Allowlist egress destinations; block link-local "
                             "and metadata IPs at the network layer.",
-                confidence="firm"))
+                confidence="certain"))
             engine.log.finding("[ssrf] BLIND %s -> %s (%s)"
                                % (origin, param, marker))
 
@@ -80,7 +80,7 @@ def run(engine):
                      (method, origin, param, payload, marker, status),
             remediation="Allowlist egress destinations; block link-local "
                         "and metadata IPs at the network layer.",
-            confidence="firm"))
+            confidence="certain"))
         engine.log.finding("[ssrf] %s -> %s (%s)" % (origin, param, marker))
     engine.state["ssrf_confirmed"] = [
         c for c in confirmed[:8] if c.get("url")]
