@@ -550,6 +550,7 @@ class Engine:
             if w["url"] not in seen:
                 seen.add(w["url"])
                 uniq.append(w)
+        self._discover_custom_web(uniq, seen)
         alive = []
         for w in uniq:
             if self._web_target_ok(w):
@@ -564,6 +565,82 @@ class Engine:
         else:
             self.log.warn("web scope empty — no reachable web port; "
                           "web phase skipped, continuing with next phases")
+
+    def _url_port(self, url):
+        try:
+            from urllib.parse import urlparse
+            p = urlparse(url)
+            return p.port or (443 if p.scheme == "https" else 80)
+        except Exception:
+            return None
+
+    def _discover_custom_web(self, uniq, seen):
+        """Web does not have to live on 80/443 — sniff every other open port
+        for an HTTP(S) banner and add it as a web target, so scanners on
+        arbitrary ports (8080, 3000, 9999, ...) are not missed."""
+        open_ports = self.state.get("open_ports", {}) or {}
+        if not open_ports:
+            return
+        try:
+            host = self.target.scan_host()
+        except Exception:
+            return
+        covered = set()
+        for w in uniq:
+            pr = self._url_port(w["url"])
+            if pr:
+                covered.add(pr)
+        for port in sorted(open_ports):
+            if port in covered:
+                continue
+            scheme = self._sniff_http(host, port)
+            if not scheme:
+                continue
+            u = "%s://%s:%d/" % (scheme, host, port)
+            if u in seen:
+                continue
+            seen.add(u)
+            uniq.append({"url": u, "primary": False, "auto": True})
+            self.log.info("[web] discovered HTTP service on custom port "
+                          "%d -> %s" % (port, u))
+
+    def _sniff_http(self, host, port):
+        """Cheaply detect whether an arbitrary TCP port speaks HTTP(S):
+        plaintext GET first, then a (verify-off) TLS handshake + GET."""
+        import socket as _s
+        for tls in (False, True):
+            s = None
+            try:
+                s = _s.create_connection((host, port), timeout=2.5)
+                s.settimeout(2.0)
+                if tls:
+                    import ssl as _ssl
+                    ctx = _ssl._create_unverified_context()
+                    s = ctx.wrap_socket(s, server_hostname=host)
+                req = ("GET / HTTP/1.0\r\nHost: %s:%d\r\n"
+                       "Connection: close\r\n\r\n" % (host, port)).encode()
+                s.sendall(req)
+                try:
+                    s.shutdown(_s.SHUT_WR)
+                except Exception:
+                    pass
+                data = b""
+                while len(data) < 512:
+                    chunk = s.recv(512)
+                    if not chunk:
+                        break
+                    data += chunk
+                if data.lower().startswith(b"http/"):
+                    return "https" if tls else "http"
+            except Exception:
+                pass
+            finally:
+                if s is not None:
+                    try:
+                        s.close()
+                    except Exception:
+                        pass
+        return None
 
     def _web_target_ok(self, w):
         """True if the web target's port is confirmed open by the port scan,
