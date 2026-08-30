@@ -33,8 +33,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
  .sev.critical{background:var(--crit)} .sev.high{background:var(--high)} .sev.medium{background:var(--med)}
  .sev.low{background:var(--low)} .sev.info{background:var(--info)}
  .chip { display:inline-block; background:#21262d; border:1px solid #30363d; border-radius:16px; padding:3px 12px; margin:3px; font-size:12px; }
- pre { background:#0a0d12; border:1px solid var(--line); border-radius:8px; padding:10px; overflow-x:auto; white-space:pre-wrap; word-break:break-word; max-height:260px; font-size:12px; }
- section { margin-bottom:34px; }
+pre { background:#0a0d12; border:1px solid var(--line); border-radius:8px; padding:10px; overflow-x:auto; white-space:pre-wrap; word-break:break-word; max-height:260px; font-size:12px; }
+  table.fixed { table-layout:fixed; width:100%; }
+  table.fixed th.col-sev{width:86px} table.fixed th.col-title{width:27%}
+  table.fixed th.col-detail{width:32%} table.fixed th.col-conf{width:120px}
+  td.poc { width:auto; }
+  pre.poc { background:#0a0d12; border:1px solid #2d333b; border-left:4px solid #f78166;
+            border-radius:8px; padding:12px 14px; overflow:auto; white-space:pre-wrap;
+            word-break:break-word; max-height:360px; font:12.5px/1.55 ui-monospace,Consolas,
+            'Cascadia Mono',monospace; }
+  pre.poc::-webkit-scrollbar { width:8px; height:8px; }
+  pre.poc::-webkit-scrollbar-thumb { background:#30363d; border-radius:4px; }
+  section { margin-bottom:34px; }
  h2 { font-size:18px; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid var(--line); }
  .narr { background:var(--card); border-left:4px solid #f78166; border-radius:8px; padding:16px 18px; white-space:pre-wrap; }
  .muted { color:var(--mut); }
@@ -163,19 +173,26 @@ def render_html(data):
 
     rows = []
     for f in data["findings"]:
+        mitre = _esc(f.get("mitre", ""))
         rows.append(
             '<tr class="frow"><td><span class="sev %s">%s</span></td>'
-            '<td>%s</td><td>%s<br><span class="muted">%s</span></td>'
-            '<td><pre>%s</pre></td><td class="muted">%s%s</td></tr>' % (
+            '<td>%s<br><span class="muted">%s / %s</span></td>'
+            '<td>%s%s</td>'
+            '<td class="poc"><pre class="poc">%s</pre></td>'
+            '<td class="muted">%s</td></tr>' % (
                 f["severity"], f["severity"], _esc(f["title"]),
-                _esc(f["category"] + " / " + f["module"]),
-                _esc(f["detail"])[:400],
-                _esc(f["evidence"][:1200]) if f["evidence"] else "<i>-</i>",
-                _esc((f.get("mitre") or "").split(" ")[0]),
-                (" <span class=muted>" + _esc(f.get("mitre", "")) + "</span>")
-                if f.get("mitre") else ""))
-    finding_rows = ('<table><tr><th>Severity</th><th>Title</th>'
-                     '<th>Detail</th><th>Evidence</th><th>Confidence</th></tr>' +
+                _esc(f["category"]), _esc(f["module"]),
+                _esc(f["detail"]),
+                ("<br><span class='muted'>ATT&amp;CK: %s</span>" % mitre)
+                if mitre else "",
+                _esc(f["evidence"][:2400]) if f["evidence"] else "<i>-</i>",
+                _esc(f.get("confidence") or "-")))
+    finding_rows = ('<table class="fixed findings"><thead><tr>'
+                     '<th class="col-sev">Severity</th>'
+                     '<th class="col-title">Title</th>'
+                     '<th class="col-detail">Detail</th>'
+                     '<th class="col-poc">PoC / Evidence</th>'
+                     '<th class="col-conf">Confidence</th></tr></thead>' +
                      "".join(rows) + "</table>") if rows else \
         '<p class="muted">No findings recorded.</p>'
 

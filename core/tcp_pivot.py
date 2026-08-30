@@ -146,7 +146,7 @@ class PivotProxy(threading.Thread):
                 continue
             except Exception:
                 break
-            t = threading.Thread(target=self._handle, args=(conn,),
+            t = threading.Thread(target=self._handle_client, args=(conn,),
                                  daemon=True)
             t.start()
             self._active.append(t)
@@ -155,7 +155,7 @@ class PivotProxy(threading.Thread):
         except Exception:
             pass
 
-    def _handle(self, conn):
+    def _handle_client(self, conn):
         try:
             conn.settimeout(8.0)
             hdr = conn.recv(2)

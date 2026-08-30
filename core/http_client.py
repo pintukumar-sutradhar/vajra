@@ -335,6 +335,7 @@ class HttpClient:
         self.verify = verify
         self.follow = follow and True
         self.delay = delay
+        self.evade = False
         self.extra_headers = extra_headers or {}
         self._cookie = ""
         self._ua_i = 0
@@ -389,6 +390,14 @@ class HttpClient:
         hdrs.update(self.extra_headers)
         if headers:
             hdrs.update({k: v for k, v in headers.items()})
+        if self.evade:
+            _r = __import__("random")
+            hdrs.setdefault("X-Forwarded-For", "%d.%d.%d.%d" % (
+                _r.randint(11, 235), _r.randint(1, 254),
+                _r.randint(1, 254), _r.randint(1, 254)))
+            hdrs.setdefault("X-Real-IP", "%d.%d.%d.%d" % (
+                _r.randint(11, 235), _r.randint(1, 254),
+                _r.randint(1, 254), _r.randint(1, 254)))
         if self._cookie and not hdrs.get("Cookie"):
             hdrs["Cookie"] = self._cookie
         allow = self.follow if allow_redirects is None else allow_redirects

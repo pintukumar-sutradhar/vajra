@@ -550,9 +550,61 @@ class Engine:
             if w["url"] not in seen:
                 seen.add(w["url"])
                 uniq.append(w)
-        self.state["web_targets"] = uniq
-        if uniq:
-            self.log.info("web scope: %s" % ", ".join(w["url"] for w in uniq))
+        alive = []
+        for w in uniq:
+            if self._web_target_ok(w):
+                alive.append(w)
+            else:
+                self.log.warn("[web] %s unreachable (port closed/filtered) — "
+                              "skipping" % w["url"])
+        self.state["web_targets"] = alive
+        if alive:
+            self.log.info("web scope: %s" % ", ".join(w["url"] for w in alive))
+            self._arm_web_evasion(alive[0])
+        else:
+            self.log.warn("web scope empty — no reachable web port; "
+                          "web phase skipped, continuing with next phases")
+
+    def _web_target_ok(self, w):
+        """True if the web target's port is confirmed open by the port scan,
+        else a real 3s connect probe must succeed (skip & continue when it
+        does not, instead of grinding through full timeouts later)."""
+        try:
+            from urllib.parse import urlparse
+            pr = urlparse(w["url"])
+            port = pr.port or (443 if pr.scheme == "https" else 80)
+            host = pr.hostname
+            if port in self.state.get("open_ports", {}):
+                return True
+            import socket as _s
+            s = _s.create_connection((host, port), timeout=3.0)
+            s.close()
+            return True
+        except Exception:
+            return False
+
+    def _arm_web_evasion(self, w):
+        """Auto WAF detection on the primary seed + auto-evasion on the HTTP
+        client so later web modules (crawl, dirbuster, injection) are not
+        visibly blocked or throttled."""
+        try:
+            r = self.http.get(w["url"].rstrip("/") + "/",
+                              timeout=min(5, self.http.timeout))
+            from modules.web.waf_detect import match_waf
+            from core.utils import load_json
+            sigs = {}
+            try:
+                sigs = load_json("intel/signatures.json").get(
+                    "waf_signatures", {})
+            except Exception:
+                sigs = {}
+            name = match_waf(sigs, r)
+            if name:
+                self.state.setdefault("waf", name)
+                self.http.evade = True
+                self.log.info("[web] auto WAF evasion armed against %s" % name)
+        except Exception:
+            pass
 
     def intel_plan_targets(self):
         return self.intel.plan_web_targets(self.target,

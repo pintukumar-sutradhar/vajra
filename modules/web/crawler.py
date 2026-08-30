@@ -108,7 +108,8 @@ def run(engine):
                 if any(k in low for k in ("password", "secret", "api_key", "apikey",
                                           "token", "todo", "fixme", "debug")):
                     interesting_comments.append("%s :: %s" % (norm, c[:300]))
-            engine.log.debug("crawled [%d] %s (%d links)" % (r.status, norm, len(links)))
+            engine.log.info("crawled [%d] %s (%d links)" %
+                            (r.status, norm, len(links)))
             if r.status == 0:
                 continue
             if depth < depth_limit:

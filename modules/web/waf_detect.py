@@ -56,6 +56,8 @@ def run(engine):
                        "Consider evasion testing during authorized engagements.",
                 confidence="possible"))
             engine.state.setdefault("waf", names)
+            engine.http.evade = True
+            engine.log.warn("[waf] %s — auto evasion armed" % names)
         else:
             engine.db.add_finding(Finding(
                 t.display, "web.waf", "defense", "info",
