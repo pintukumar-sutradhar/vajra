@@ -196,33 +196,69 @@ class Intelligence:
         return "A"
 
     def summarize(self, stats, findings, services, targets):
+        """Plain-language executive summary for non-technical readers."""
         lines = []
         crit = stats.get("critical", 0)
         high = stats.get("high", 0)
         med = stats.get("medium", 0)
         low = stats.get("low", 0)
+        tgt = ", ".join(t.get("display", "?") for t in targets) or "N/A"
         lines.append(
-            "Attack surface: %d live target(s), %d open service(s). "
-            "Vajra recorded %d finding(s): %d critical, %d high, %d medium, %d low."
-            % (len(targets), len(services), len(findings), crit, high, med, low))
+            "What was checked: %d computer system(s) (%s) were examined for "
+            "weaknesses that an outsider could use to break in, steal data "
+            "or disrupt service."
+            % (len(targets), tgt))
         if crit or high:
-            top = sorted([f for f in findings if f["severity"] in ("critical", "high")],
-                         key=lambda f: SEV_RANK_ORDER[f["severity"]])[:4]
-            names = "; ".join(f["title"][:80] for f in top)
-            lines.append("Priority risks: %s." % names)
-            lines.append("Immediate remediation and containment are recommended.")
+            if crit and high:
+                level = "%d critical and %d serious" % (crit, high)
+            elif crit:
+                level = "%d critical" % crit
+            else:
+                level = "%d serious" % high
+            lines.append(
+                "Bottom line: %s weakness(es) were found. This is urgent — "
+                "at least one could let an attacker take control of the "
+                "system or steal data. Treat fixing them as an emergency "
+                "and re-test when done." % level)
         elif med:
-            lines.append("No critical issues found; several medium-risk weaknesses "
-                         "should be scheduled for remediation.")
+            lines.append(
+                "Bottom line: no emergency-level weaknesses were found, but "
+                "several medium concerns were detected. They should be "
+                "fixed on a planned schedule before the system is exposed "
+                "to users.")
         else:
-            lines.append("No significant vulnerabilities identified by automated "
-                         "checks; manual deep testing is still advised.")
-        prods = set()
-        for s in services:
-            if s.get("product"):
-                prods.add("%s %s" % (s["product"], s.get("version", "")))
-        if prods:
-            lines.append("Fingerprinted software: %s." % ", ".join(sorted(prods)[:8]))
+            lines.append(
+                "Bottom line: automated checks could not confirm any "
+                "exploitable weakness. This is good news, but not a "
+                "guarantee of safety — a manual expert review is still "
+                "advised.")
+        counts = []
+        if crit:
+            counts.append("%d critical" % crit)
+        if high:
+            counts.append("%d serious" % high)
+        if med:
+            counts.append("%d medium" % med)
+        if low:
+            counts.append("%d minor" % low)
+        lines.append("Severity summary: %d finding(s) in total (%s)."
+                     % (len(findings), ", ".join(counts)
+                        if counts else "no confirmed issues"))
+        if crit or high:
+            top = sorted([f for f in findings
+                          if f["severity"] in ("critical", "high")],
+                         key=lambda f: SEV_RANK_ORDER[f["severity"]])[:4]
+            lines.append("Most important findings (fix first):")
+            for f in top:
+                lines.append("  - [%s] %s" % (f["severity"].upper(),
+                                              _plain_title(f["title"])))
+        elif med:
+            top = sorted([f for f in findings
+                          if f["severity"] == "medium"],
+                         key=lambda f: f["title"])[:4]
+            lines.append("Medium concerns to schedule:")
+            for f in top:
+                lines.append("  - [medium] %s" % _plain_title(f["title"]))
         return "\n".join(lines)
 
 
@@ -255,3 +291,8 @@ class Intelligence:
 
 
 SEV_RANK_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+
+
+def _plain_title(t):
+    t = (t or "").strip()
+    return t if len(t) <= 96 else t[:93].rstrip() + "..."

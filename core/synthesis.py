@@ -10,15 +10,16 @@ SEV_SHORT = {"critical": "crit", "high": "high", "medium": "med",
 
 
 def auto_narrative(stats, findings, services, targets, score, grade):
-    """Deterministic human-readable executive narrative."""
+    """Deterministic plain-language executive narrative for non-IT readers."""
     total = sum(stats.values())
     critical = stats.get("critical", 0)
     high = stats.get("high", 0)
     lines = []
     if total == 0:
-        lines.append("No findings were recorded during this assessment; the "
-                     "tested attack surface showed no exploitable condition "
-                     "the scanner could confirm.")
+        lines.append("This system passed the automated checks: no weakness "
+                     "could be confirmed by this scan. That is good news, "
+                     "but not a guarantee of safety — a manual expert "
+                     "review is still advised.")
         return "\n".join(lines)
     sev_words = []
     if critical:
@@ -32,22 +33,33 @@ def auto_narrative(stats, findings, services, targets, score, grade):
            ", ".join(sev_words) or "no critical/high", score, grade))
     if critical or high:
         lines.append(
-            "Immediate exposure exists. Priority should go to the %s finding"
-            "(s) marked %s before expanding the engagement."
-            % (critical + high, "critical/high"))
+            "Risk level: high. At least one finding is urgent and could let "
+            "an attacker take control of the system or steal data. Fix "
+            "these first, then re-test.")
+    elif total > 0:
+        lines.append(
+            "Risk level: moderate-to-low. No emergency findings, but the "
+            "items below should still be fixed in a planned way.")
     tops = [f for f in findings
             if f.get("severity") in ("critical", "high")][:6]
     if tops:
-        lines.append("Highest-signal items:")
+        lines.append("Items needing attention:")
         lines.append("\n".join(
-            "  - [%s] %s (%s)" % (SEV_SHORT.get(f.get("severity"), "?"),
-                                  f.get("title", ""), f.get("module", ""))
+            "  - [%s] %s" % (SEV_SHORT.get(f.get("severity"), "?").upper(),
+                             (f.get("title", "") or "").strip())
             for f in tops))
+    else:
+        meds = [f for f in findings if f.get("severity") == "medium"][:6]
+        if meds:
+            lines.append("Medium items to plan:")
+            lines.append("\n".join(
+                "  - [med] %s" % ((f.get("title", "") or "").strip())
+                for f in meds))
     web = sum(1 for s in services if s.get("port") in (80, 443, 8080, 8443)
               or (s.get("service", "").lower().find("http") >= 0))
     if services:
-        lines.append("%d service(s) exposed; %d web/app tier(s) in scope."
-                     % (len(services), web))
+        lines.append("Scope: %d service(s) reachable, of which %d are web "
+                     "application(s)." % (len(services), web))
     return "\n".join(lines)
 
 

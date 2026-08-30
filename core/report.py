@@ -72,6 +72,18 @@ pre { background:#0a0d12; border:1px solid var(--line); border-radius:8px; paddi
   </section>
 
   <section>
+   <h2>How to read this report</h2>
+   <div class="narr">Every finding is colour-coded by severity:
+  - <span class="sev critical">critical</span> Emergency — an attacker could take full control of the system or steal data with little effort.
+  - <span class="sev high">high</span> Urgent — a serious weakness that most attackers can exploit; fix soon.
+  - <span class="sev medium">medium</span> Plan a fix — exploitable only under certain conditions or by a skilled attacker.
+  - <span class="sev low">low</span> Minor — a small hardening gap; fix when convenient.
+  - <span class="sev info">info</span> Information only — not a vulnerability by itself.
+
+The "Evidence / PoC" block under each finding shows exactly what the scanner saw (a returned page, a server reply, an access attempt). If the technical wording is unclear, send those evidence lines to your IT team — they reproduce the exact check. Work top-down: fix critical and high items first, re-test, then move on to medium and low.</div>
+  </section>
+
+  <section>
    <h2>Attack surface</h2>
    $chips
   </section>

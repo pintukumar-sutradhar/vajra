@@ -74,9 +74,9 @@ register("network.brute", "exploit", "modules.network.brute_forcer",
          cond=["ports_open"], profile_skip=[])
 
 register("web.auth_login", "web", "modules.web.auth_logic",
-         "Authenticated-scan bootstrap: OTP/TOTP-aware login, session cookie "
-         "adoption, CSRF handling",
-         cond=["has_web"])
+"Authenticated-scan bootstrap: OTP/TOTP-aware login, session cookie "
+          "adoption, CSRF handling",
+          cond=["has_forms"])
 
 register("web.crawl", "web", "modules.web.crawler",
          "Async BFS crawler collecting pages/forms/emails/JS",
@@ -133,8 +133,8 @@ register("web.vulnscan", "web", "modules.web.vuln_scanner",
          cond=["has_web"])
 
 register("web.policy", "web", "modules.web.policy_check",
-         "Rate-limiting / lockout probing on login surfaces",
-         cond=["has_web"])
+"Rate-limiting / lockout probing on login surfaces",
+          cond=["has_forms"])
 
 register("web.upload", "web", "modules.web.upload_check",
          "File-upload tests: multipart, traversal/double-ext filename, "
@@ -182,8 +182,8 @@ register("exploit.verify", "exploit", "modules.exploit.known_exploits",
          cond=["always"])
 
 register("exploit.form_brute", "exploit", "modules.exploit.form_brute",
-         "Web login-form brute-force against app auth systems (aggressive)",
-         cond=["has_web"], profile_skip=[])
+"Web login-form brute-force against app auth systems (aggressive)",
+          cond=["has_forms"], profile_skip=[])
 
 register("ad.discovery", "ad", "modules.ad.discovery",
          "DC discovery via DNS SRV + LDAP/SMB surface",
