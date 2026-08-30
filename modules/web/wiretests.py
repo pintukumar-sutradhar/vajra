@@ -76,10 +76,7 @@ def _smuggle_probe(engine, url):
                                     "(CL/TE divergence)")
     if st == 0 or second >= 1 and b"\r\n0\r\n\r\n" in raw.split(b"\r\n\r\n", 1)[0]:
         return None
-    if took >= 3.5:
-        return None  # timeout is ambiguous with a 4s socket cap — skip
-    return ("potential", "protocol mismatch sign (%s bytes, %d frames)" %
-            (len(raw), n_resp))
+    return None  # one clean response: no smuggling signal (anti-FP)
 
 
 def _deser_probes(engine, urls):
@@ -148,21 +145,20 @@ def run(engine):
             st, note = _smuggle_probe(engine, wt["url"].rstrip("/"))
         except Exception:
             continue
-        if st == "potential":
+        if st == "possible-smuggle":
             engine.db.add_finding(Finding(
-                t.display, "web.wiretests", "potential", "high",
-                "Request-smuggling mismatch signal (CL.TE/TE.CL) — %s" %
-                wt["url"],
-                detail=("Protocol discontinuity: two different response "
-                        "counts / malformed responses to a CL+TE conflicting "
-                        "request (%s). Needs manual confirmation with a "
-                        "second-hop poisoned request." % (note or "")),
-                evidence="raw socket CL/TE probe",
+                t.display, "web.wiretests", "potential", "medium",
+                "CL.TE/TE.CL request smuggling indicator — %s" % wt["url"],
+                detail=("Two HTTP responses arrived on one connection for a "
+                        "conflicting Content-Length + Transfer-Encoding "
+                        "request (%s). Confirm with a second-hop poisoned "
+                        "request before treating as exploitable." % (note or "")),
+                evidence="raw socket CL/TE probe: %s" % (note or ""),
                 remediation="Disallow conflicting Content-Length and "
                             "Transfer-Encoding in the edge + origin parsers; "
                             "HTTP/2-or-higher egress.",
                 confidence="possible"))
-            engine.log.finding("[SMUGGLE] CL/TE ambiguity at %s" % wt["url"])
+            engine.log.finding("[SMUGGLE] CL/TE divergence at %s" % wt["url"])
             break
     try:
         _deser_probes(engine, [w["url"].rstrip("/") for w in targets])

@@ -7,10 +7,10 @@ from core.database import Finding
 CHECKS = [
     ("strict-transport-security", "HSTS not set",
      "Add Strict-Transport-Security to force HTTPS (e.g. max-age=63072000).",
-     "medium", True),
+     "low", True),
     ("content-security-policy", "Content-Security-Policy missing",
      "Deploy a CSP restricting script/style/object sources.",
-     "medium", False),
+     "low", False),
     ("x-frame-options", "X-Frame-Options missing (clickjacking)",
      "Set X-Frame-Options: DENY/SAMEORIGIN or CSP frame-ancestors.",
      "low", False),

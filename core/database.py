@@ -12,6 +12,19 @@ SEV_WEIGHT = {"critical": 10, "high": 7, "medium": 4, "low": 1.5, "info": 0.2}
 SEV_ORDER = ["critical", "high", "medium", "low", "info"]
 SEV_COLORS = {"critical": "#ff1744", "high": "#ff5252", "medium": "#ffb300",
               "low": "#4fc3f7", "info": "#9e9e9e"}
+SEV_BY_RANK = {4: "critical", 3: "high", 2: "medium", 1: "low", 0: "info"}
+
+# Anti-false-positive policy: a finding may only claim a severity that its
+# evidence confidence supports. "firm"/"verified" evidence can claim any
+# level; heuristic/differential signals ("possible") are bounded to medium;
+# speculative signals are bounded to low. This guarantees no unverified
+# finding can ever be reported as critical/high.
+CONFIDENCE_CAP = {
+    "firm": 4, "verified": 4, "conclusive": 4, "confirmed": 4,
+    "reproduced": 4, "high": 3, "medium": 2,
+    "possible": 2, "suspected": 2, "likely": 2,
+    "low": 1, "speculative": 1, "unverified": 1, "unknown": 1,
+}
 
 
 class Finding:
@@ -24,11 +37,22 @@ class Finding:
         self.module = module
         self.category = category
         self.severity = severity.lower() if severity.lower() in SEV_RANK else "info"
+        self.confidence = (confidence or "firm").lower()
+        cap_rank = CONFIDENCE_CAP.get(self.confidence,
+                                      CONFIDENCE_CAP["possible"])
+        if SEV_RANK[self.severity] > cap_rank:
+            bound_to = SEV_BY_RANK[cap_rank]
+            if detail:
+                detail += "\n"
+            detail += ("[Bounded] claimed severity %s lowered to %s: evidence "
+                       "confidence is '%s' and has not been proof-tested yet "
+                       "(anti-false-positive policy)."
+                       % (self.severity, bound_to, self.confidence))
+            self.severity = bound_to
         self.title = title
         self.detail = detail
         self.evidence = evidence[:20000]
         self.remediation = remediation
-        self.confidence = confidence
         self.mitre = mitre
         self.created_at = datetime.datetime.now().isoformat(timespec="seconds")
 

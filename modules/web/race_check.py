@@ -32,6 +32,9 @@ def _candidates(engine):
                 continue
             fields = f.get("fields", [])
             names = {fd.get("name") for fd in fields}
+            types = {fd.get("type") for fd in fields}
+            if "password" in types:
+                continue  # login surfaces are NOT single-claim ops (anti-FP)
             if not any(n in names for n in ("code", "promo", "coupon",
                                             "voucher", "token", "amount",
                                             "quantity", "count", "score",

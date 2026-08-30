@@ -13,16 +13,24 @@ else
     fi
     # shellcheck disable=SC1091
     source .venv/bin/activate
-    pip install -q --upgrade pip
+    pip install -q --upgrade pip || true
     pip install -q -r requirements.txt || echo "[!] extras failed - stdlib fallback active"
 fi
 
 chmod +x vajra.py
-if [[ ! -f wordlists/passwords_huge.txt ]]; then
-    echo "[*] forging deep wordlists (~300k entries)"
-    python3 tools/gen_wordlists.py
+if [[ ! -f wordlists/passwords_full.txt ]]; then
+    echo "[*] forging deep wordlists (~265k entries)"
+    if [[ -d .venv ]]; then
+        .venv/bin/python tools/gen_wordlists.py
+    else
+        python3 tools/gen_wordlists.py
+    fi
 fi
-python3 vajra.py --selftest
+if [[ -d .venv ]]; then
+    .venv/bin/python vajra.py --selftest
+else
+    python3 vajra.py --selftest
+fi
 
 if [[ -w /usr/local/bin ]]; then
     ln -sf "$(pwd)/vajra.py" /usr/local/bin/vajra

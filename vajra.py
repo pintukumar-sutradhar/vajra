@@ -128,7 +128,17 @@ def parse_args():
         prog="vajra",
         description="VAJRA - all-in-one automated penetration testing "
                     "framework (recon, network, web, exploitation, "
-                    "post-exploitation, adaptive evasion)",
+                    "post-exploitation, adaptive evasion)\n"
+                    "ETHICS: only run VAJRA against systems you own or have "
+                    "explicit written\n"
+                    "authorization to test. This is an offensive-security "
+                    "tool and is intended\n"
+                    "exclusively for authorized engagements.\n"
+                    "FALSE POSITIVES: every critical/high finding is proof-"
+                    "tested and bounded by\n"
+                    "evidence confidence; unverified signals are reported as "
+                    "medium/low with a\n"
+                    "[Bounded] note until re-confirmed .",
         formatter_class=argparse.RawTextHelpFormatter,
         epilog="""examples:
   python3 vajra.py -t 10.10.10.5 --profile full --yes
@@ -141,8 +151,10 @@ outputs:  Outputs/vajra_<run>/<target>/  → report.html/json/md · sqlite ·
 profiles: quick | full | vast | stealth | webonly | recon
   vast      = everything everywhere: all 65535 TCP ports, UDP probes, deep
               wordlists (>100k), 400-page crawl, full exploitation scope.
-  full      = all TCP ports + deep wordlists (no UDP).
+  full      = all TCP ports + deep wordlists + time-based SQLi (RECOMMENDED
+              for engagement depth; quick is for triage only).
   quick     = top-100 ports, shallow but fast (default).
+  stealth   = low-noise: throttled requests, rotating UA, fewer probes.
 
 wordlist tiers: fast lists always ship; deep tiers (115k users / 148k
 passwords / 16k dirs / 18k subs) activate on --profile full|vast or

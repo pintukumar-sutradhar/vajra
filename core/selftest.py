@@ -66,6 +66,51 @@ def t_extract():
     return True, "html extraction OK"
 
 
+def t_rce_channel():
+    import re as _re
+    from modules.exploit.exploitation import RCEChannel
+
+    class Resp:
+        def __init__(self, body):
+            self.body = body
+
+    class FakeEngine:
+        def nonce(self, n):
+            return "R" * n
+
+    class Chan(RCEChannel):
+        def __init__(self, sender):
+            self.sender = sender
+            super().__init__(FakeEngine(), None, "q")
+
+        def _send(self, payload):
+            return self.sender(payload)
+
+    def reflect(payload):
+        return Resp(payload.strip())
+
+    def real_shell(payload):
+        m = _re.search(r"VJR+R+S", payload)
+        if not m:
+            return Resp("")
+        s = m.group(0)
+        e = s[:-1] + "E"
+        m2 = _re.search(_re.escape(s) + r"[^;]*;\s*(.*?)\s*;\s*echo " +
+                        _re.escape(e), payload)
+        cmd = m2.group(1).strip() if m2 else ""
+        if cmd.startswith("echo "):
+            return Resp("\n%s\n%s\n%s\n" % (s, cmd[5:], e))
+        return Resp("\n%s\nuid=1000(kali) gid=1000(kali) groups=1000(kali)\n"
+                    "%s\n" % (s, e))
+
+    assert not Chan(reflect).alive, "reflecting app must NOT establish RCE channel"
+    live = Chan(real_shell)
+    assert live.alive, "real shell must establish channel"
+    proof = live.run("id")
+    assert proof and "uid=1000(kali)" in proof, proof
+    return True, "RCE channel anti-reflection guard OK"
+
+
 def t_db():
     from core.database import Database, Finding
     path = tempfile.mktemp(suffix=".sqlite")
@@ -80,6 +125,23 @@ def t_db():
     db.close()
     os.unlink(path)
     return True, "database roundtrip OK"
+
+
+def t_fp_guard():
+    from core.database import Finding
+    firm = Finding("t", "web.vulnscan", "web-vuln", "critical", "confirmed RCE",
+                   confidence="firm")
+    assert firm.severity == "critical"
+    possible = Finding("t", "web.vulnscan", "web-vuln", "critical",
+                       "blind signal", confidence="possible")
+    assert possible.severity == "medium" and "[Bounded]" in possible.detail
+    speculative = Finding("t", "network.osfp", "recon", "high", "suspicion",
+                          confidence="low")
+    assert speculative.severity == "low"
+    legit = Finding("t", "exploit.exploit", "credentials", "critical",
+                    "exfil", confidence="verified")
+    assert legit.severity == "critical"
+    return True, "confidence->severity cap (anti-FP) OK"
 
 
 def t_report():
@@ -1247,6 +1309,8 @@ def run_all():
     check("banner CVE correlation", t_intel)
     check("html extraction (links/forms/emails)", t_extract)
     check("sqlite findings database", t_db)
+    check("rce channel anti-reflection guard", t_rce_channel)
+    check("confidence->severity anti-FP cap", t_fp_guard)
     check("report rendering (html/md/json)", t_report)
     check("http result model", t_http_result)
     check("payload engine + adaptive evasion", t_payloads)
