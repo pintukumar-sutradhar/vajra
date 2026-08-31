@@ -185,6 +185,46 @@ def t_cms_markers():
     return True, "CMS markers boundary-guarded + two-tier possible/firm OK"
 
 
+def t_tech_scoring():
+    import json
+    from modules.web.tech_fingerprint import _detect_techs, _meta_tags
+    sigs = json.load(open("intel/signatures.json"))["tech_signatures"]
+    wp_page = {
+        "url": "https://site.test/blog/",
+        "headers": {"server": "nginx", "x-pingback": "/xmlrpc.php"},
+        "body": ('<html><head><meta name="generator" content="WordPress 6.4.1">'
+                 '</head><body><a href="/wp-content/themes/x/">css</a>'
+                 '<script src="/wp-includes/js/"></script></body></html>'),
+    }
+    det = _detect_techs(sigs, [wp_page])
+    assert det["WordPress"]["score"] >= 6, det["WordPress"]
+    assert det["WordPress"]["version"] == "6.4.1", det["WordPress"]["version"]
+    next_page = {
+        "url": "https://netx.test/",
+        "headers": {},
+        "body": '<script id="__NEXT_DATA__" type="application/json">{}</script>'
+                '<link href="/_next/static/abc/_app.css">',
+    }
+    det = _detect_techs(sigs, [next_page])
+    assert det["Next.js"]["score"] >= 6, det["Next.js"]
+    generic_word = {"url": "https://w.test/", "headers": {},
+                    "body": "read our python guides here python python"}
+    det = _detect_techs(sigs, [generic_word])
+    assert "Python" not in det, "prose word must not detect Python"
+    html_only = {"url": "https://h.test/", "headers": {},
+                 "body": '<img src="/image/logo.png">'}
+    det = _detect_techs(sigs, [html_only])
+    assert "Magento" not in det, "mage/ inside image/ must not fire Magento"
+    weak = {"url": "https://s.test/", "headers": {},
+            "body": '<title>SvelteKit-like page</title>'}
+    det = _detect_techs(sigs, [weak])
+    assert 3 <= det["Svelte"]["score"] < 6 and not det["Svelte"]["strong"], \
+        "a lone weak html marker is at most an unverified lead, never firm"
+    meta = _meta_tags('<meta name="generator" content="Gatsby 5.12.4">')
+    assert meta.get("generator")
+    return True, "rich whole-site tech scoring: WP/Next firm, prose & mage-safe"
+
+
 def t_service_honesty():
     from modules.network.service_detect import _probe_classify, _probe_banner
     import socket, threading
@@ -235,7 +275,7 @@ def t_js_scope():
 def t_update():
     import core.updater as up
     from core.version import __version__
-    assert __version__ == "1.2-beta"
+    assert __version__ == "1.3-beta"
     assert up.current_version() == __version__
     assert isinstance(up.is_git(), bool)
     repo, branch = up._remote()
@@ -1455,6 +1495,7 @@ def run_all():
     check("rce channel anti-reflection guard", t_rce_channel)
     check("self-update wiring + version", t_update)
     check("CMS markers boundary-guarded", t_cms_markers)
+    check("rich tech signature scoring", t_tech_scoring)
     check("service names no-guess rule", t_service_honesty)
     check("JS analysis same-origin scope", t_js_scope)
     check("vuln scanner proof-class mapping", t_vuln_records)

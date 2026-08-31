@@ -1,6 +1,7 @@
 """Vajra - web technology / CMS fingerprinting + web-version -> CVE
 correlation against the built-in vulnerability database."""
 import re
+from urllib.parse import urlsplit
 
 from core.database import Finding
 from core.utils import load_json, GEN_RE
@@ -266,6 +267,114 @@ def _confirm_cms_probe(engine, base, c):
     return None
 
 
+def _meta_tags(body):
+    """<meta name=... content=...> -> {lower_name: content}."""
+    out = {}
+    for m in re.finditer(r"<meta\b[^>]*>", body or "", re.I):
+        tag = m.group(0)
+        nm = ct = None
+        for a in re.finditer(r"([\w.-]+)=([\"'])(.*?)\2", tag, re.I):
+            k, v = a.group(1).lower(), a.group(3)
+            if k == "name":
+                nm = v.lower()
+            elif k == "content":
+                ct = v
+        if nm:
+            out[nm] = ct
+    return out
+
+
+def _score_page(cfg, page):
+    """Per-page contribution for one technology signature, as a list of
+    (weight, proof, version) entries.  Weighting is context-aware exactly
+    like Wappalyzer: a self-asserting location (header, cookie, meta
+    generator) is worth 2x a URL marker, which is worth 2x a bounded html
+    marker; plain text words are not signatures at all."""
+    out = []
+    headers = {k.lower(): str(v) for k, v in (page.get("headers") or {}).items()}
+    for hname, hrx in (cfg.get("headers") or {}).items():
+        val = headers.get(hname)
+        if val is None:
+            continue
+        if hrx and not re.search(hrx, val, re.I):
+            continue
+        out.append((6, "header %s: %s" % (hname, val[:60]), ""))
+    seth = (headers.get("set-cookie") or "").lower()
+    for ck in cfg.get("cookies") or []:
+        if _bounded_in(ck.lower(), seth):
+            out.append((6, "cookie: " + ck, ""))
+            break
+    for mname, mrx in (cfg.get("meta") or {}).items():
+        mval = (page.get("meta") or {}).get(mname)
+        if mval and (not mrx or re.search(mrx, mval, re.I)):
+            out.append((7, "meta[%s]: %s" % (mname, mval[:60]), ""))
+    u = urlsplit(page.get("url") or "").path.lower()
+    for up in cfg.get("url") or []:
+        if up in u:
+            out.append((5, "path: " + up, ""))
+            break
+    low = (page.get("body") or "").lower()
+    for hp in cfg.get("html") or []:
+        if _bounded_in(hp, low):
+            out.append((3, "html: " + hp, ""))
+    return out
+
+
+def _detect_techs(sigs, pages):
+    """Aggregate per-signature weights across pages.  A signature only scores
+    once per DISTINCT marker — repeating the same template footer on 20 pages
+    does not turn a weak marker into a firm claim."""
+    res = {}
+    for cfg in sigs:
+        name = cfg.get("name")
+        weight = 0
+        proofs = []
+        seen = set()
+        for p in pages:
+            for w, proof, _v in _score_page(cfg, p):
+                if proof in seen:
+                    continue
+                seen.add(proof)
+                weight += w
+                proofs.append(proof)
+        if weight >= 3:
+            strong = any(x.startswith(("header ", "cookie:", "meta["))
+                         for x in proofs)
+            version = ""
+            if cfg.get("version") and proofs:
+                cols = {
+                    "html": "body",
+                }
+                for p in pages[:6]:
+                    blob = "%s\n%s %s" % (
+                        p.get("body") or "",
+                        (p.get("headers") or {}).get("server", ""),
+                        (p.get("headers") or {}).get("x-powered-by", ""))
+                    m = re.search(cfg["version"], blob, re.I)
+                    if m:
+                        version = m.group(1)
+                        break
+            res[name] = {"score": weight, "proofs": proofs[:8],
+                         "version": version, "strong": strong}
+    return res
+
+
+def _cms_markers_from(pages):
+    """Aggregate weighted CMS markers across every crawled page."""
+    counts = {}
+    for p in pages:
+        hay = {"body": (p.get("body") or ""),
+               "header": " ".join(str(v) for v in
+                                  (p.get("headers") or {}).values())}
+        for c, seen in _cms_markers(hay).items():
+            counts.setdefault(c, set()).update(seen)
+    return counts
+
+
+def _strong_cms_from(gen_low, c):
+    return bool(gen_low and _bounded_in(c, gen_low))
+
+
 def run(engine):
     t = engine.target
     targets = engine.state.get("web_targets") or []
@@ -275,112 +384,104 @@ def run(engine):
         sigs = load_json("intel/signatures.json").get("tech_signatures", [])
     except Exception:
         sigs = []
-    techs = set()
-    tech_proof = {}          # tech -> first observed  (url : where : sample)
-    strong = set()           # techs seen in a self-asserting context
-    sightings = []
-    cms_counts = {}
-    strong_cms = set()
+    pages = []
     for wt in targets:
         base = wt["url"].rstrip("/")
         r = engine.http.get(base + "/")
         if r.status == 0:
             continue
-        hay = {
-            "header": " ".join("%s:%s" % (k, v) for k, v in list(r.headers.items())[:20]).lower(),
-            "body": r.body[:20000].lower(),
-            "cookie": r.cookies_str.lower(),
-            "path": "",
-        }
-        gen = GEN_RE.search(r.body)
-        gen_low = (gen.group(1).strip()[:60].lower()
-                   if gen else "")
-        if gen:
-            techs.add(gen.group(1).strip()[:60])
-        for s in sigs:
-            where = s.get("where", "body")
-            pat = s.get("pattern", "")
-            if where in hay and _bounded_in(pat, hay[where]):
-                name = s["name"]
-                techs.add(name)
-                tech_proof.setdefault(name, (base, where, pat))
-                if where in ("header", "cookie"):
-                    strong.add(name)
-        for c in CMS_ACTIONS:
-            if gen_low and _bounded_in(c, gen_low):
-                strong.add(c.capitalize())
-                strong_cms.add(c)
-        mc = _cms_markers(hay)
-        for c, seen in mc.items():
-            cms_counts.setdefault(c, set()).update(seen)
-        needle = "%s %s %s" % (r.headers.get("server", ""),
-                               r.headers.get("x-powered-by", ""),
-                               r.body[:3000])
+        pages.append({"url": base + "/", "headers": r.headers,
+                      "body": r.body, "meta": _meta_tags(r.body)})
+    for p in (engine.state.get("pages") or [])[:80]:
+        pages.append({"url": p["url"], "headers": p["headers"],
+                      "body": p.get("body") or "", "meta": _meta_tags(
+                          p.get("body") or "")})
+    det = _detect_techs(sigs, pages)
+    gen = None
+    gen_low = ""
+    for p in pages[:6]:
+        gv = (p.get("meta") or {}).get("generator")
+        if gv:
+            gen = gv
+            gen_low = gv.lower()
+            break
+    if gen and not any(gen_low.startswith(n.lower()) for n in det):
+        det.setdefault(gen.strip()[:60],
+                       {"score": 9, "proofs": ["meta generator: " + gen],
+                        "version": "", "strong": True})
+    techs = {name for name, d in det.items() if d["score"] >= 3}
+    tech_proof = {name: d["proofs"][0] if d["proofs"] else name
+                  for name, d in det.items()}
+    strong = {name for name, d in det.items() if d["strong"]}
+    sightings = []
+    for p in pages:
+        needle = "%s %s %s" % (
+            (p.get("headers") or {}).get("server", ""),
+            (p.get("headers") or {}).get("x-powered-by", ""),
+            (p.get("body") or "")[:3000])
         seen_v = set()
         for rx, tech in VERS_HUNTERS:
             m = rx.search(needle)
             if m and (tech, m.group(1)) not in seen_v:
                 seen_v.add((tech, m.group(1)))
-                sightings.append((tech, m.group(1), base))
+                sightings.append((tech, m.group(1), p.get("url", "")))
     engine.state.setdefault("tech", sorted(techs))
     for tech in sorted(techs):
-        proof = tech_proof.get(tech) or ("", "body", "")
-        _, _where, _pat = proof
-        key = tech.lower()
-        if key in CMS_ACTIONS:
-            continue                       # CMS findings emitted below
-        if tech.lower() in GENERIC_TECH and tech not in strong:
+        info = det[tech]
+        if tech.lower() in CMS_ACTIONS:
+            continue                        # CMS findings emitted below
+        if info["strong"] or info["score"] >= 6:
+            vtxt = " %s" % info["version"] if info["version"] else ""
+            engine.log.info("[tech] " + tech + vtxt)
             engine.db.add_finding(Finding(
                 t.display, "web.tech", "recon", "info",
-                "Possible %s — unverified body marker" % tech,
-                detail="The word '%s' appears in page body only; a copied "
-                       "template or prose could match it. Runs as a lead, "
-                       "not as a confirmed technology." % _pat,
-                evidence="marker '%s' in %s of GET %s/" % (_pat, _where,
-                                                           proof[0] or "-"),
+                "Technology fingerprint: %s%s" % (tech, vtxt),
+                evidence="; ".join(info["proofs"]),
+                confidence="firm"))
+        else:
+            engine.db.add_finding(Finding(
+                t.display, "web.tech", "recon", "info",
+                "Possible %s — unverified signal" % tech,
+                detail="Only weak/bounded page markers matched (%d pts); "
+                       "the word alone can be prose or copied templates. Runs "
+                       "as a lead, not as a confirmed technology." % info["score"],
+                evidence="; ".join(info["proofs"]),
                 confidence="possible"))
-            engine.log.info("[tech] %s (body-only marker, UNVERIFIED)" % tech)
-            continue
-        engine.log.info("[tech] " + tech)
-        engine.db.add_finding(Finding(
-            t.display, "web.tech", "recon", "info",
-            "Technology fingerprint: %s" % tech,
-            evidence="%s" % (_pat or tech),
-            confidence="firm"))
+            engine.log.info("[tech] %s possible (score %d, UNVERIFIED) %s"
+                            % (tech, info["score"], info["proofs"][:1]))
     for c in sorted(CMS_ACTIONS):
-        markers = cms_counts.get(c, set())
-        if not markers and c.capitalize() not in techs and \
-                c not in {x.lower() for x in techs}:
+        info = det.get(c)
+        markers = _cms_markers_from(pages)
+        if not info and not markers[c]:
             continue
-        base = tech_proof.get(c.capitalize(),
-                              tech_proof.get(c, ("", "body", "")))[0] \
-            or (targets[0]["url"].rstrip("/") if targets else "")
+        base = targets[0]["url"].rstrip("/") if targets else ""
         probe_note = None
-        firm = _firm_cms(c, markers) or any(
-            tok in FIRM_TOKENS for tok, _w in markers) or \
-            c in strong_cms
-        if not firm and markers and base:
+        firm = bool(info and (info["score"] >= 6 or info["strong"])) or \
+            _strong_cms_from(gen_low, c) or _firm_cms(c, markers[c])
+        if not firm and info and base:
             probe_note = _confirm_cms_probe(engine, base, c)
             firm = bool(probe_note)
-        toks = ", ".join(sorted(t for t, _w in markers)) or "-"
+        toks = ", ".join(sorted(set(t for t, _w in markers[c]) or
+                                [info["proofs"][0] if info else c])) or "-"
         title, detail, remed = CMS_ACTIONS[c]
         if firm:
-            extra = probe_note or "two independent CMS markers observed"
+            extra = (probe_note or
+                     (info and "; ".join(info["proofs"])[:160]) or
+                     "two independent CMS markers observed")
             engine.db.add_finding(Finding(
                 t.display, "web.tech", "attack-surface", "medium", title,
-                detail="%s\nObserved on %s\nConfirmed by: %s" %
-                       (detail, base, extra),
-                evidence="%s\nMarkers: %s\n%s" % (c, toks, extra),
+                detail="%s\nConfirmed by: %s" % (detail, extra),
+                evidence="%s\n%s" % (c, extra),
                 remediation=remed, confidence="firm"))
             engine.log.finding("[cms] %s CONFIRMED (%s)" % (c, extra))
         else:
             engine.db.add_finding(Finding(
                 t.display, "web.tech", "recon", "info",
-                "Possible %s — single unverified marker" % c,
-                detail="One marker ('%s') found on %s; that can be copied "
-                       "theme furniture or prose. Needs a second marker or "
-                       "a signature probe to be promoted." % (toks, base),
-                evidence="markers on %s: %s" % (base, toks),
+                "Possible %s — unverified signal" % c,
+                detail="Signals found on %s (%s). A copied theme or the "
+                       "CMS word alone is not proof; promote with a second "
+                       "marker or a signature probe." % (base, toks),
+                evidence="on %s: %s" % (base, toks),
                 confidence="possible"))
-            engine.log.info("[cms] %s present? single marker — UNVERIFIED" % c)
+            engine.log.info("[cms] %s present? weak signal — UNVERIFIED" % c)
     cve_correlation(engine, t, sightings)
