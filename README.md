@@ -47,7 +47,7 @@
 - [Toolkit & knowledge base](#toolkit--knowledge-base)
 - [Wordlists](#wordlists)
 - [CLI reference](#cli-reference)
- - [AI brain & model selection](#ai-brain--model-selection)
+ - [AI & model selection](#ai--model-selection)
  - [AI-select mission mode](#ai-select-mission-mode)
 - [Authenticated web scans](#authenticated-web-scans)
 - [FAQ](#faq)
@@ -320,7 +320,7 @@ direct ──blocked?──► fingerprint guard (Cloudflare · Akamai · Imperv
   logic with findings context.
 - **Optional AI** — add `--ai` to involve a local Ollama + **Qwen3 8B**
   (auto-installs; fully offline once pulled; swap models via
-  [`config/config.json`](#ai-brain--model-selection)). Use `--ai-select` to hand
+  [`config/config.json`](#ai--model-selection)). Use `--ai-select` to hand
   the mission to the operator-agent: Qwen3 inspects each target's live state
   (ports, services, web targets, findings) and picks and executes the best
   next action from a closed tool set — deeper port probes, re-running
@@ -428,7 +428,7 @@ socket, with TLS stagers (`--tls`) and `--obfuscate` (packed payloads) —
     --aggressive      deep tiers + intrusive exploitation + reverse stages
     --lhost/--lport   pre-set callback endpoint for reverse stages
     --listener        standalone multi-session handler
-    --ai              enable local Ollama AI brain (model set in config/config.json)
+    --ai              enable local Ollama AI (model set in config/config.json)
     --ai-select       mission mode: the model picks next actions per target
     --udp             UDP service probes (DNS/NTP/SNMP)
     --syn             raw SYN scanning (root)
@@ -460,9 +460,9 @@ socket, with TLS stagers (`--tls`) and `--obfuscate` (packed payloads) —
                       replacement keeping Outputs/ + config/config.json)
 ```
 
-## AI brain & model selection
+## AI & model selection
 
-The AI brain is a **local** Ollama server (default endpoint `127.0.0.1:11434`,
+The AI runs on a **local** Ollama server (default endpoint `127.0.0.1:11434`,
 Ollama's native `/api/generate` API) serving any model you choose. It is
 entirely optional (`--ai`), fully offline once the model is pulled, and every
 call is time-boxed — if the model is missing or unreachable, VAJRA reports
@@ -539,7 +539,7 @@ You should see `[ai] Qwen3 online via Ollama (<your-model>)`. If you see only
 `[ai] disabled` or `not reachable`, check the model name and that Ollama is
 running (`curl -s http://127.0.0.1:11434/api/tags`).
 
-### What the brain is used for
+### What the AI is used for
 
 The configured model powers three things the moment `--ai` is active:
 
@@ -553,7 +553,7 @@ The configured model powers three things the moment `--ai` is active:
   target's live state and picks the next action — see the next section.
 
 All generated payloads are real payload text in real HTTP requests, never code
-executed on your machine. Findings produced via the brain still pass through
+executed on your machine. Findings produced via the AI still pass through
 the same proof + confidence pipeline (`Certain`/`Firm`/`Tentative`) as every
 other finding.
 
@@ -611,7 +611,7 @@ handshakes, relay checks, credential attacks across protocols.
 **Is the AI mandatory?** No — fully off unless you pass `--ai`. Everything
 else works without it.
 
-**How do I change the AI model?** See [AI brain & model selection](#ai-brain--model-selection):
+**How do I change the AI model?** See [AI & model selection](#ai--model-selection):
 pull any Ollama tag, then set the *exact* tag name as `ai_model` in
 `config/config.json`. Default is `qwen3:8b` with nothing to change.
 

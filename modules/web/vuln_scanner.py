@@ -125,7 +125,7 @@ def build_points(engine):
 
 
 def ai_second_pass(engine, sender, motive, cls, waf, blocked_sample, context):
-    """When filters defeat the whole bank, consult the local Qwen3 brain."""
+    """When filters defeat the whole bank, consult the local Qwen3 AI."""
     try:
         ai = getattr(engine, "ai", None)
     except Exception:

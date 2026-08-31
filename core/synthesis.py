@@ -1,5 +1,5 @@
 """VAJRA synthesis layer — deterministic run narrative, cross-host campaign
-correlation and the cumulative AI-brain write-up. Runs with zero LLM
+correlation and the cumulative AI write-up. Runs with zero LLM
 dependencies; the output is also fed to the AI operator as prior context."""
 import datetime
 
@@ -83,7 +83,7 @@ def correlate_across(findings):
     return out
 
 
-def build_brain_blocks(per_target, delta_summary=None, spread=None):
+def build_ai_blocks(per_target, delta_summary=None, spread=None):
     """Human/AI-readable markdown summarizing an entire run."""
     stamp = datetime.datetime.now().isoformat(timespec="seconds")
     blocks = ["## Run %s" % stamp]

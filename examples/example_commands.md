@@ -91,7 +91,7 @@ Outputs/<run>/<target>/
 | `--aggressive` | intrusive: deep tiers, brute, exploitation, reverse stages |
 | `--lhost/--lport` | pre-set callback endpoint for reverse stages |
 | `--listener` | standalone multi-session handler |
-| `--ai / --ai-select` | local Ollama brain / operator-agent mission mode |
+| `--ai / --ai-select` | local Ollama AI / operator-agent mission mode |
 | `--udp / --syn` | UDP probes / raw SYN scans (root) |
 | `--no-brute` | skip credential attacks |
 | `--ad-*` | AD creds → authenticated LDAP + kerberoasting + movement |

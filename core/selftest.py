@@ -577,7 +577,7 @@ def t_agent_mission():
     assert d["tool"] == "done"
     d = parse_action("nothing more to do")
     assert d["tool"] == "done"
-    # brain-knowledge wiring: catalog + keyword routing
+    # AI-knowledge wiring: catalog + keyword routing
     assert any("web.vulnscan" in l for l in _MODULE_INDEX.splitlines())
     assert any("web.api" in l for l in _MODULE_INDEX.splitlines())
     for text, want in (("probe ssrf against the api", "web.ssrf_scan"),
@@ -1299,12 +1299,12 @@ def t_workspace():
     ws2 = Workspace("9.9.9.9", root=d)
     snap = ws2.import_export(ws.export(os.path.join(d, "ws.json")))
     assert snap and "1.2.3.4" in snap["targets"]
-    return True, ("snapshot/delta/state/brain/export+import OK")
+    return True, ("snapshot/delta/state/AI/export+import OK")
 
 
 def t_synthesis():
     from core.synthesis import (auto_narrative, correlate_across,
-                                build_brain_blocks)
+                                build_ai_blocks)
     finds = [
         {"severity": "critical", "module": "web.vulnscan",
          "title": "RCE in api", "target": "10.0.0.1", "detail": "x"},
@@ -1320,11 +1320,11 @@ def t_synthesis():
     assert correlate_across(finds) == []
     dup = finds + [dict(finds[1], target="10.0.0.3")]
     assert any(c["count"] == 2 for c in correlate_across(dup))
-    blocks = build_brain_blocks(
+    blocks = build_ai_blocks(
         {"10.0.0.1": {"findings": [finds[0]], "score": 8.0}},
         delta_summary={"new": 1, "fixed": 0, "still": 0})
     assert "## Run" in blocks and "RCE in api" in blocks
-    return True, ("narrative + cross-host correlation + brain blocks OK")
+    return True, ("narrative + cross-host correlation + AI blocks OK")
 
 
 def t_compliance():
@@ -1517,7 +1517,7 @@ def run_all():
     check("listener / LHOST-LPORT core", t_listener)
     check("MITRE ATT&CK tagging", t_mitre)
     check("JWT decode core", t_jwt)
-    check("AI brain (opt-in) offline-safe", t_ai_offline)
+    check("AI (opt-in) offline-safe", t_ai_offline)
     check("Outputs target naming", t_outputs_naming)
     check("Active Directory attack core", t_ad_core)
     check("SMBv1 / MS17-010 packet core", t_smbv1_packets)
@@ -1533,7 +1533,7 @@ def run_all():
     check("AXFR/race/PDF/SOCKS5/CVE-cache caps", t_next_caps)
     check("SNMPv1 community GET (BER + mock)", t_snmp_brute)
     check("native SMBv1 RAP share walk", t_share_native)
-    check("workspace snapshots/delta/state/brain/export/import", t_workspace)
+    check("workspace snapshots/delta/state/AI/export/import", t_workspace)
     check("synthesis narrative + cross-host correlation", t_synthesis)
     check("compliance coverage (CIS/NIST/PCI per module)", t_compliance)
     check("SOCKS5 pivot proxy E2E relay", t_pivot_proxy)

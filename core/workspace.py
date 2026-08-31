@@ -103,7 +103,7 @@ class Workspace:
         return {"new": new, "fixed": fixed, "still_open": still,
                 "previous": prev.get("generated", "")}
 
-    # ---- brain + state -------------------------------------------------
+    # ---- AI + state -------------------------------------------------
 
     def append_narrative(self, text):
         stamp = datetime.datetime.now().isoformat(timespec="seconds")

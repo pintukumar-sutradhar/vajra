@@ -1,4 +1,4 @@
-"""VAJRA AI brain — talks internally to a local Ollama server running the
+"""VAJRA AI — talks internally to a local Ollama server running the
 Qwen3 8B model. Fully offline once provisioned; auto-installs server + model
 when missing; every call is time-boxed so scanning never slows down. Also
 exposes the mission loop primitives used by the 'AI select' operator-

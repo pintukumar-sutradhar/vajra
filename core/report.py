@@ -107,7 +107,7 @@ A finding whose confidence is below its claimed severity is automatically downgr
   </section>
 
   <section>
-   <h2>Synthesis &amp; AI-brain narrative</h2>
+   <h2>Synthesis &amp; AI narrative</h2>
    <div class="narr">$synthesis</div>
   </section>
 
@@ -314,7 +314,7 @@ def render_markdown(data):
     lines.append("")
     lines.append(data["narrative"])
     lines.append("")
-    lines.append("## Synthesis & AI-brain narrative")
+    lines.append("## Synthesis & AI narrative")
     lines.append("")
     lines.append(data.get("synthesis", ""))
     lines.append("")

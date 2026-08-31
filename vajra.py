@@ -199,7 +199,7 @@ passwords / 16k dirs / 18k subs) activate on --profile full|vast or
     ap.add_argument("--listener", action="store_true",
                     help="standalone multi-session callback handler")
     ap.add_argument("--ai", action="store_true",
-                    help="enable the local Ollama+Qwen3 8B brain "
+                    help="enable the local Ollama+Qwen3 8B AI "
                          "(auto-installs if missing; off by default)")
     ap.add_argument("--ai-select", action="store_true",
                     help="mission mode: Qwen3 inspects scan state and picks "

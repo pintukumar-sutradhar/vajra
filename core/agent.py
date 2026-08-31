@@ -1,6 +1,6 @@
 """VAJRA mission agent — the 'AI select' operator-agent loop.
 
-Each iteration the local Qwen3 brain inspects the live scan state (open
+Each iteration the local Qwen3 AI inspects the live scan state (open
 ports, services, web targets, findings), chooses the single highest-value
 next action from a CLOSED tool set, and the framework executes it through a
 small safe adapter layer. The loop continues until the model says done, the
@@ -27,7 +27,7 @@ INTRUSIVE_MODULES = {
     "exploit.form_brute", "ad.privesc_ops", "ad.movement",
 }
 # exploit.verify (known_exploits) is read-only probing — deliberately NOT
-# gated so the brain can triage CVEs even in a read-only engagement.
+# gated so the AI can triage CVEs even in a read-only engagement.
 # Post-exploit / channel-creation modules are only meaningful once real
 # credentials or an execution channel exist — never fire without evidence.
 CHAIN_MODULES = {"ad.movement"}

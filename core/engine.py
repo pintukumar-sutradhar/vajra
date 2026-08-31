@@ -144,7 +144,7 @@ class Engine:
             except Exception as e:
                 self.log.warn("[oob] listener failed: %r" % e)
         if self.ai.enabled:
-            self.log.info("[ai] brain enabled — Ollama + %s provisioning "
+            self.log.info("[ai] AI online — Ollama + %s provisioning "
                           "in background" % self.ai.model)
             self.ai.warm_start()
         else:
@@ -452,8 +452,8 @@ class Engine:
         delta = ws.delta_for(t.display, findings)
         ws.save_state(t.display, self.state)
         try:
-            from core.synthesis import build_brain_blocks
-            block = build_brain_blocks(
+            from core.synthesis import build_ai_blocks
+            block = build_ai_blocks(
                 {t.display: {"findings": findings}},
                 delta_summary={"new": len(delta["new"]),
                                "fixed": len(delta["fixed"]),
@@ -461,7 +461,7 @@ class Engine:
                 spread=None)
             ws.append_narrative(block)
         except Exception as e:
-            self.log.debug("brain block failed: %r" % e)
+            self.log.debug("AI block failed: %r" % e)
         self.state["delta"] = {
             "new": [f["title"] for f in delta["new"]],
             "fixed": [f["title"] for f in delta["fixed"]],
@@ -492,17 +492,17 @@ class Engine:
         ws.snapshot(per_target, profile=self.profile,
                     meta={"targets": list(per_target)})
         try:
-            from core.synthesis import correlate_across, build_brain_blocks
+            from core.synthesis import correlate_across, build_ai_blocks
             all_f = [dict(f, target=disp)
                      for disp, pt in per_target.items()
                      for f in pt.get("findings", [])]
-            block = build_brain_blocks(
+            block = build_ai_blocks(
                 per_target, delta_summary=None, spread=correlate_across(all_f))
             ws.append_narrative(block)
             self.log.info("[workspace] snapshot persisted (%d target(s)) -> "
                           "workspace_report.md" % len(per_target))
         except Exception as e:
-            self.log.debug("workspace brain update failed: %r" % e)
+            self.log.debug("workspace AI update failed: %r" % e)
 
     def run_mission(self):
         if not self.ai.enabled:
@@ -914,7 +914,7 @@ def build_data_for(db, target, engine):
     try:
         from core.compliance import remediate as compliance_remediate
         from core.synthesis import (auto_narrative as synth_narrative,
-                                    correlate_across, build_brain_blocks)
+                                    correlate_across, build_ai_blocks)
         spread = correlate_across(
             [f for db in engine.dbs for f in db.findings()])
     except Exception:
