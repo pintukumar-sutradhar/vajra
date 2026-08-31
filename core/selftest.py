@@ -144,11 +144,17 @@ def t_vuln_records():
     assert m["xss"][1] == "firm"
     assert vs._confidence_for("rce", "firm") == "certain"
     assert vs._confidence_for("xss", "firm") == "firm"
+    assert vs._poc_gate("sqli", "firm", "payload=x\ncontext=...") == "firm"
+    assert vs._poc_gate("xss", "firm", "") == "possible"
+    assert vs._poc_gate("sqli", "firm", "") == "possible"
+    assert vs._poc_gate("redirect", "firm", "Location: https://h/") == "firm"
     return True, "vuln_scanner proof-class confidence mapping OK"
 
 
 def t_cms_markers():
-    from modules.web.tech_fingerprint import _bounded_in, CMS_ACTIONS
+    from modules.web.tech_fingerprint import (_bounded_in, CMS_ACTIONS,
+                                              _cms_markers, _firm_cms,
+                                              FIRM_TOKENS)
     assert _bounded_in("mage/", "image/x.png") is False   # img-tag false hit
     assert _bounded_in("mage/", "<div class=x>mage/x</div>") is True
     assert _bounded_in("mage/", "mage/static/version") is True  # real magento
@@ -160,7 +166,56 @@ def t_cms_markers():
     for c in ("wordpress", "drupal", "joomla", "magento"):
         assert c in CMS_ACTIONS and \
             CMS_ACTIONS[c][0].lower().startswith(c)
-    return True, "CMS markers boundary-guarded (mage!=image), per-CMS notes OK"
+    # two-tier CMS truth: a lone structural marker (or copied theme link) is
+    # only a 'possible' lead; two independent markers imply a firm claim.
+    body = '<img src="/image/logo.png"><div>mage in prose only</div>'
+    mk = _cms_markers({"body": body, "header": ""})
+    assert not mk.get("magento"), "mage/ inside image/ or prose must not fire"
+    wp2 = _cms_markers({"body": '"wp-content/themes/x" + wp-json prefix '
+                        "href='/wp-json/wp/v2/users' \"wp-includes\"",
+                        "header": ""})
+    assert _firm_cms("wordpress", wp2["wordpress"]) is True
+    wp1 = _cms_markers({"body": '<link href="/wp-content/themes/x/">',
+                        "header": ""})
+    assert _firm_cms("wordpress", wp1["wordpress"]) is False
+    dru = _cms_markers({"body": "keep", "header": "x-drupal-cache: HIT"})
+    assert any(tok in FIRM_TOKENS for tok, _w in dru["drupal"])
+    prose = _cms_markers({"body": "our drupal migration guide", "header": ""})
+    assert _firm_cms("drupal", prose["drupal"]) is False
+    return True, "CMS markers boundary-guarded + two-tier possible/firm OK"
+
+
+def t_service_honesty():
+    from modules.network.service_detect import _probe_classify, _probe_banner
+    import socket, threading
+    junk = []
+
+    def serve(payload):
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+        t = threading.Thread(target=lambda: (
+            (lambda c: (c.send(payload), c.close()))(
+                srv.accept()[0])), daemon=True)
+        t.start()
+        return srv, port
+
+    def collect(port):
+        for rx, tech in []:
+            pass
+        return _probe_banner("127.0.0.1", port, force_http=False)
+
+    s1, p1 = serve(b"HELLO we are a mystery service\r\n")
+    s2, p2 = serve(b"SSH-2.0-OpenSSH_8.9p1 Ubuntu\r\n")
+    b1 = collect(p1)
+    b2 = collect(p2)
+    s1.close()
+    s2.close()
+    assert _probe_classify(b1) is False, "junk echo must not prove a service"
+    assert _probe_classify(b2) is True, "SSH greeting proves the service"
+    return True, "service names never guessed from junk; banner-driven only"
 
 
 def t_js_scope():
@@ -1400,6 +1455,7 @@ def run_all():
     check("rce channel anti-reflection guard", t_rce_channel)
     check("self-update wiring + version", t_update)
     check("CMS markers boundary-guarded", t_cms_markers)
+    check("service names no-guess rule", t_service_honesty)
     check("JS analysis same-origin scope", t_js_scope)
     check("vuln scanner proof-class mapping", t_vuln_records)
     check("confidence->severity anti-FP cap", t_fp_guard)

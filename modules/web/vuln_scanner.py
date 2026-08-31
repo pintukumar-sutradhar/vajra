@@ -215,6 +215,16 @@ def _confidence_for(cls, confidence):
     return confidence
 
 
+def _poc_gate(cls, confidence, evidence):
+    """No vulnerability finding is ever reported above 'possible' without a
+    captured proof snippet — a missing PoC means exploitation was NOT
+    demonstrated, so the report must not claim it was."""
+    if cls in ("sqli", "xss", "lfi", "rce", "ssti", "xxe", "redirect",
+               "nosql", "rce_blind", "sqli_time") and not (evidence or "").strip():
+        return "possible"
+    return confidence
+
+
 def run(engine):
     t = engine.target
     targets = engine.state.get("web_targets") or []
@@ -235,6 +245,7 @@ def run(engine):
         if cls == "xss" and res.technique == "direct":
             sev = "high"
         confidence = _confidence_for(cls, confidence)
+        confidence = _poc_gate(cls, confidence, res.evidence)
         engine.db.add_finding(Finding(
             t.display, "web.vulnscan", "web-vuln", sev, title,
             detail="Origin: %s\nMethod: %s (%s)\nParameter: %s\nWAF: %s\n"

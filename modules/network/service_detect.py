@@ -128,6 +128,16 @@ SERVICE_HINTS = [
 ]
 
 
+def _probe_classify(banner):
+    """A banner only "proves" a service when its text is a recognizable
+    protocol greeting — never when it is arbitrary echoed junk (in which
+    case the port stays 'unproven' instead of being handed a guessed name)."""
+    if isinstance(banner, bytes):
+        banner = banner.decode("utf-8", "replace")
+    low = (banner or "").lower()
+    return any(hint in low for hint, _name in SERVICE_HINTS)
+
+
 def _smtp_relay_check(host, port):
     try:
         s = socket.create_connection((host, port), timeout=6)
@@ -191,9 +201,10 @@ def run(engine):
     if t.kind == "url" and t.port:
         url_hint = t.port
     for port, latency in sorted(open_ports.items()):
-        svc = {"host": host, "port": port, "service": guess_service(port) or "unknown",
-               "banner": "", "product": "", "version": "", "tls": False,
-               "latency_ms": latency}
+        svc = {"host": host, "port": port, "service": "unknown",
+               "possible_service": guess_service(port) or None,
+               "proven": False, "banner": "", "product": "", "version": "",
+               "tls": False, "latency_ms": latency}
         use_tls = port in (443, 8443, 993, 995, 465, 992, 990)
         banner = ""
         force_http = url_hint is not None and port == url_hint and \
@@ -206,9 +217,8 @@ def run(engine):
             for hint, name in SERVICE_HINTS:
                 if hint in low:
                     svc["service"] = name
+                    svc["proven"] = True
                     break
-            if "starttls" in low or "esmtp" in low and False:
-                pass
             if not banner and port in (443, 465, 993, 995):
                 use_tls = True
         if use_tls or svc["service"] in ("https", "https-alt"):
@@ -217,8 +227,8 @@ def run(engine):
                 svc["tls"] = True
                 svc["tls_version"] = info.get("version", "")
                 svc["cert"] = {k: v for k, v in info.items() if k != "error"}
-                if svc["service"] in ("unknown",):
-                    svc["service"] = "https" if port in (443, 8443) else "tls"
+                svc["proven"] = True
+                svc["service"] = "https" if port in (443, 8443) else "tls"
                 if not banner:
                     banner = "%s / cert CN=%s" % (
                         info.get("version", "TLS"),
@@ -228,15 +238,24 @@ def run(engine):
                     banner = banner or ""
         if banner:
             svc["banner"] = banner[:1000]
-            prod_ver = _extract_prod_version(banner)
-            if prod_ver:
-                svc["product"], svc["version"] = prod_ver
+            provable = _probe_classify(banner) or svc["proven"]
+            if provable:
+                svc["proven"] = True
+                prod_ver = _extract_prod_version(banner)
+                if prod_ver:
+                    svc["product"], svc["version"] = prod_ver
+        if not svc["proven"] and svc["banner"]:
+            svc["service"] = "unproven"
+        elif not svc["proven"]:
+            svc["service"] = "unknown"
         services.append(svc)
         engine.db.add_service(t.display, port, svc["service"], svc["banner"],
                               svc["product"], svc["version"], svc["tls"])
         label = "%-5d %-12s %s" % (port, svc["service"],
                                    svc["banner"][:90].replace("\n", " "))
-        engine.log.finding("[service] " + label)
+        engine.log.finding("[service] %s (port open verified; %s)" % (
+            label, "service confirmed by banner/handshake"
+            if svc["proven"] else "service UNPROVEN — no protocol response"))
     engine.state["services"] = services
 
     for svc in services:
