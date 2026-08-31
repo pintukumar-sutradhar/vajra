@@ -25,6 +25,6 @@ jobs:
       - name: Run the 46-check proof suite
         run: |
           python vajra.py --selftest
-      - name: Smoke a local target (accuracy repro: clean page must stay clean)
+      - name: "Smoke a local target (clean page must stay clean)"
         run: |
           python vajra.py --version
