@@ -13,6 +13,9 @@
 
 ### Automated Penetration Testing Framework
 
+[![CI](https://github.com/pintukumar-sutradhar/vajra/actions/workflows/ci.yml/badge.svg)](https://github.com/pintukumar-sutradhar/vajra/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-Custom-blue.svg)](LICENSE)
+
 `recon` · `network` · `web` · `exploitation` · `post-exploitation`
 
 ![Python](https://img.shields.io/badge/Python-3.9%2B-2b7fbf)
@@ -131,7 +134,7 @@ workspaces that turn every re-run into a measurable retest.
 ```bash
 git clone https://github.com/pintukumar-sutradhar/vajra && cd vajra
 ./setup.sh                     # deps + wordlists + QA suite
-python3 vajra.py --selftest    # 45-point verification
+python3 vajra.py --selftest    # 46-point verification
 python3 vajra.py --version     # VAJRA v1.2-beta
 python3 vajra.py --update      # pull the latest build from GitHub
 ```

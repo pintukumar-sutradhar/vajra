@@ -225,6 +225,88 @@ def t_tech_scoring():
     return True, "rich whole-site tech scoring: WP/Next firm, prose & mage-safe"
 
 
+def t_fp_corpus():
+    """False-positive regression corpus: realistic clean pages must stay clean.
+
+    Each negative case is a page our engine must not call 'firm' (no strong
+    context, no score >= 6, and repeated weak markers never stack site-wide).
+    A positive control proves firm detection still fires for honest pages.
+    """
+    import json
+    from modules.web.tech_fingerprint import _detect_techs
+    sigs = json.load(open("intel/signatures.json"))["tech_signatures"]
+
+    def det(pages):
+        return _detect_techs(sigs, pages)
+
+    def not_firm(r, tech):
+        if tech not in r:
+            return
+        assert not r[tech]["strong"], "%s must not be firm here" % tech
+        assert r[tech]["score"] < 6, "%s scored too high" % tech
+
+    def empty(pages):
+        r = det(pages)
+        assert not r, "clean page claimed tech: %s" % sorted(r)
+
+    # 1) copied single wp-content link inside an image, no real WP signals
+    wp_copy = {"url": "https://site.test/",
+               "headers": {},
+               "body": '<img src="/wp-content/themes/x/img/theme.png">'}
+    not_firm(det([wp_copy]), "WordPress")
+
+    # 2) marketing prose full of tech words from an unrelated blog
+    prose = {"url": "https://blog.test/2019/how-to/",
+             "headers": {},
+             "body": ("WordPress and PHP power thousands of websites. Apache and "
+                      "nginx are the top web servers, ruby on rails and python "
+                      "frameworks dominate, drupal joomla magento shopify jekyll "
+                      "gatsby next.js and rails all compete. Static pages built "
+                      "with sveltekit and vue are increasingly popular.") * 4}
+    r = det([prose])
+    for t in ("WordPress", "PHP", "Apache", "Nginx", "Drupal", "Joomla",
+              "Magento", "Shopify", "Svelte", "Next.js", "Vue.js"):
+        not_firm(r, t)
+
+    # 3) one 'sveltekit' word in the title repeated across 5 crawled pages
+    svelte = {"url": "https://s.test/", "headers": {},
+              "body": "<title>sveltekit-like single tenant</title>"}
+    r = det([svelte] * 5)
+    assert 3 <= r["Svelte"]["score"] < 6 and not r["Svelte"]["strong"], r
+    assert r["Svelte"]["score"] < 6, "5 identical weak markers must not stack"
+
+    # 4) boilerplate HTML5 with zero framework markers
+    empty([{"url": "https://b.test/", "headers": {},
+            "body": ("<!DOCTYPE html><html><head><meta name=\"viewport\" "
+                     "content=\"width=device-width\"><title>Company</title>"
+                     "</head><body><h1>Welcome</h1><p>stuff</p></body></html>")}])
+
+    # 5) mage/ token nested inside an ordinary /image/ path
+    not_firm(det([{"url": "https://shop.test/", "headers": {},
+                   "body": '<img src="/image/mage/photo.jpg" alt="magento">'}]),
+             "Magento")
+
+    # 6) generic shop text, no Shopify CDN / checkout tokens
+    shop = {"url": "https://store.test/products",
+            "headers": {},
+            "body": "<h1>Cart</h1><p>Add to cart and checkout.</p>"}
+    not_firm(det([shop]), "Shopify")
+
+    # 7) frameworkless SPA shell with hashed bundle, no meta/identifier
+    empty([{"url": "https://a.test/", "headers": {},
+            "body": ('<script src="/assets/app.9f8a2b.js"></script>'
+                     '<div id="root"></div>')}])
+
+    # positive control: a real nginx + Jekyll page still proves firm
+    real = {"url": "https://docs.test/", "headers": {"server": "nginx"},
+            "body": ('<meta name="generator" content="Jekyll v4.3.2">'
+                     '<link rel="stylesheet" href="/static/css/main.css">')}
+    r = det([real])
+    assert r["Nginx"]["strong"] or r["Nginx"]["score"] >= 6, r["Nginx"]
+    return True, ("FP corpus clean (prose, wp-copy, svelte x5, boilerplate, "
+                  "mage/shop, SPA) + positive control OK")
+
+
 def t_service_honesty():
     from modules.network.service_detect import _probe_classify, _probe_banner
     import socket, threading
@@ -1505,6 +1587,7 @@ def run_all():
     check("self-update wiring + version", t_update)
     check("CMS markers boundary-guarded", t_cms_markers)
     check("rich tech signature scoring", t_tech_scoring)
+    check("false-positive regression corpus", t_fp_corpus)
     check("service names no-guess rule", t_service_honesty)
     check("JS analysis same-origin scope", t_js_scope)
     check("vuln scanner proof-class mapping", t_vuln_records)
