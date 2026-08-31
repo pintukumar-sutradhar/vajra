@@ -275,7 +275,7 @@ def t_js_scope():
 def t_update():
     import core.updater as up
     from core.version import __version__
-    assert __version__ == "1.3-beta"
+    assert __version__ == "1.2-beta"
     assert up.current_version() == __version__
     assert isinstance(up.is_git(), bool)
     repo, branch = up._remote()
