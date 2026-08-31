@@ -117,8 +117,11 @@ class Intelligence:
             aliases = [prod_key] + list(meta.get("aliases", []))
             hit_alias = None
             for al in aliases:
-                if al.lower() in bl:
-                    idx = bl.index(al.lower())
+                alw = al.lower()
+                m = re.search(r"(?<![a-z0-9])" + re.escape(alw),
+                              bl) if alw else None
+                if m:
+                    idx = m.start()
                     tail = banner[idx:idx + len(al) + 40]
                     hit_alias = (al, tail)
                     break
