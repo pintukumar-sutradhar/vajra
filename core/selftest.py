@@ -532,17 +532,35 @@ def t_cve_db():
     from core.utils import load_json
     from core.intelligence import Intelligence
     db = load_json("intel/cve_db.json").get("products", {})
-    assert len(db) >= 120, len(db)
+    assert len(db) >= 1000, len(db)
     total = sum(len(m.get("ranges", {})) for m in db.values())
-    assert total >= 170, total
+    assert total >= 5000, total
     intel = Intelligence()
     hits = intel.correlate_banner("F5 BIG-IP 16.1.0 TMUI login")
     assert any(h["product"] == "F5 BIG-IP" for h in hits), hits
+    assert not any(h["product"] == "ip" for h in hits), hits
+    assert not any(c["id"] == "CVE-2023-42282" for h in hits
+                   for c in h["cves"]), hits
     hits = intel.correlate_banner("Server: Apache/2.4.49")
     flat = {c["id"] for h in hits for c in h["cves"]}
     assert any("CVE-2021-41773" in x for x in flat)
-    return True, "%d products / %d range entries; BIG-IP + traversal matched" % (
-        len(db), total)
+
+    probes = run_probe_registry_check()
+    return True, "%d products / %d range entries; BIG-IP + traversal matched; %d probes" % (
+        len(db), total, probes)
+
+
+def run_probe_registry_check():
+    from modules.exploit import known_exploits
+    probes = [p for p in known_exploits.PROBES
+              if p.__name__ in ("probe_fortigate_traversal",
+                                "probe_cisco_asa_traversal",
+                                "probe_openfire_admin")]
+    names = {p.__name__ for p in known_exploits.PROBES}
+    assert {"probe_fortigate_traversal", "probe_cisco_asa_traversal",
+            "probe_openfire_admin"} <= names
+    assert all("log4shell" not in n and "drupalgeddon" not in n for n in names)
+    return len(known_exploits.PROBES)
 
 
 def t_listener():
@@ -572,6 +590,73 @@ def t_ai_offline():
     assert isinstance(items, list)
     return True, "graceful when Ollama absent (%.1fs, %d suggestions)" % (
         dt, len(items))
+
+
+def t_ai_assist():
+    import importlib.util
+    import os
+    import tempfile as _tf
+    spec = importlib.util.spec_from_file_location(
+        "ai_assist_mod", "modules/web/ai_assist.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    class FakeAI:
+        enabled = True
+        def available(self, refresh=False):
+            return True
+        def ask(self, p, system=None, max_tokens=None):
+            return "Apply vendor patch; impact RCE."
+        def plan_actions(self, s):
+            return ["Probe CVE-2021-41773", "Check actuator"]
+
+    class OffAI:
+        enabled = True
+        def available(self, refresh=False):
+            return False
+
+    class Db:
+        def __init__(self, rows):
+            self.rows, self.added = rows, None
+        def findings(self, disp):
+            return self.rows
+        def add_finding(self, f):
+            self.added = f
+
+    class Log:
+        @staticmethod
+        def info(*a): pass
+        @staticmethod
+        def debug(*a): pass
+
+    T = type("T", (), {"display": "10.0.0.1"})()
+    rows = [{"severity": "critical", "title": "Apache traversal",
+             "detail": "d", "id": "f1", "url": "http://x/"},
+            {"severity": "high", "title": "Actuator", "detail": "d",
+             "id": "f2", "url": "http://x/"}]
+
+    td = _tf.mkdtemp()
+    E = type("E", (), {"target": T, "target_dirs": {"10.0.0.1": td},
+                       "log": Log(), "db": Db(rows)})()
+    E.ai = FakeAI()
+    mod.run(E)
+    ast = os.path.join(td, "ai_assist.json")
+    assert os.path.exists(ast), "ai_assist.json not written online"
+    import json as _json
+    content = _json.load(open(ast))
+    assert content["advisory_only"] is True
+    assert len(content["remediations"]) == 2
+    assert len(content["next_actions"]) >= 1
+    assert E.db.added is not None and E.db.added.category == "advisory"
+
+    td2 = _tf.mkdtemp()
+    E2 = type("E2", (), {"target": T, "target_dirs": {"10.0.0.1": td2},
+                         "log": Log(), "db": Db(rows)})()
+    E2.ai = OffAI()
+    mod.run(E2)
+    assert not os.path.exists(os.path.join(td2, "ai_assist.json"))
+    assert E2.db.added is None
+    return True, "AI assist online writes artifact + advisory; offline is silent"
 
 
 def t_outputs_naming():
@@ -1596,11 +1681,12 @@ def run_all():
     check("http result model", t_http_result)
     check("payload engine + adaptive evasion", t_payloads)
     check("massive wordlist tiers", t_wordlists)
-    check("vast CVE database", t_cve_db)
+    check("offline CVE database + verified probes", t_cve_db)
     check("listener / LHOST-LPORT core", t_listener)
     check("MITRE ATT&CK tagging", t_mitre)
     check("JWT decode core", t_jwt)
     check("AI (opt-in) offline-safe", t_ai_offline)
+    check("AI assist (advisory, offline-safe)", t_ai_assist)
     check("Outputs target naming", t_outputs_naming)
     check("Active Directory attack core", t_ad_core)
     check("SMBv1 / MS17-010 packet core", t_smbv1_packets)

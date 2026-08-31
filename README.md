@@ -92,9 +92,11 @@ workspaces that turn every re-run into a measurable retest.
   attacks against 20+ platforms.
 - **Post-exploitation** — system situational awareness through established
   channels, including automated privilege-escalation path analysis.
-- **Intelligence built in** — offline banner→CVE correlation across 133
-  products, an intel knowledge base (`intel/`: ports · services · default
-  creds · login surfaces · leak paths · cloud · os), MITRE ATT&CK tagging on
+- **Intelligence built in** — offline banner→CVE correlation across
+  12,800+ packaged products (GitHub Advisory Database, built by
+  `tools/build_cve_db.py`) plus an intel knowledge base (`intel/`: ports ·
+  services · default creds · login surfaces · leak paths · cloud · os),
+  MITRE ATT&CK tagging on
   every finding, numeric risk scoring (0–100), MITRE ATT&CK tagging on
   every finding, and an AI campaign planner
   (opt-in).
@@ -133,7 +135,7 @@ workspaces that turn every re-run into a measurable retest.
 ```bash
 git clone https://github.com/pintukumar-sutradhar/vajra && cd vajra
 ./setup.sh                     # deps + wordlists + QA suite
-python3 vajra.py --selftest    # 46-point verification
+python3 vajra.py --selftest    # 47-point verification
 python3 vajra.py --version     # VAJRA v1.2-beta
 python3 vajra.py --update      # pull the latest build from GitHub
 ```
@@ -282,7 +284,12 @@ delay, reveals leaks against OTP-protected forms) · **catalog-driven default
 credentials** (basic-auth panels run read-only; form/service default-cred
 tries gated behind `--aggressive`; `intel/creds_default.json` covers Tomcat,
 JBoss, WebLogic, WildFly, Jenkins, Grafana, routers, cameras, DBs…) ·
-password spray · CVE exposure probes
+ password spray · CVE exposure probes · **verified-exposure triage
+ (`exploit.verify`, read-only)**: Apache path-traversal → RCE, Grafana plugin
+ traversal, PHPUnit eval-stdin, WP user/REST & XML-RPC, Spring Boot Actuator,
+ WAF/debug pages, FortiGate SSL-VPN disclosure, Cisco ASA/FTD file read,
+ Openfire admin bypass, WebLogic/Sitecore console reachability — each gated on
+ a real response marker (never payload-driven, zero false positives)
 
 **Post** — identity/kernel/network/logins/accounts/sudo/SUID/cron/env/SSH
 material/container hints + privesc candidate analysis — runs against every
@@ -314,13 +321,18 @@ direct ──blocked?──► fingerprint guard (Cloudflare · Akamai · Imperv
 
 ## Intelligence
 
-- **CVE knowledge base** — 133 products / 183 operator-parsed version ranges
-  matched directly against harvested banners (Heartbleed → Log4Shell,
-  EternalBlue, ProxyLogon, BIG-IP TMUI, FortiOS, vCenter, Confluence OGNL…).
+- **CVE knowledge base** — 12,800+ products / 51,000+ operator-parsed version
+  ranges matched directly against harvested banners (Heartbleed → Log4Shell,
+  EternalBlue, ProxyLogon, BIG-IP TMUI, FortiOS, vCenter, Confluence OGNL…),
+  rebuilt from the GitHub Advisory Database with `tools/build_cve_db.py`.
 - **MITRE ATT&CK** — every finding auto-tagged with technique IDs.
-- **Campaign planner** — mid-run next-best-action list combining rule-based
-  logic with findings context.
-- **Optional AI** — add `--ai` to involve a local Ollama + **Qwen3 8B**
+ - **Campaign planner** — mid-run next-best-action list combining rule-based
+   logic with findings context.
+ - **AI remediation assist** — `web.ai_assist` (advisory only, offline-safe):
+   when `--ai` is on and a local model is reachable it writes per-finding
+   remediation drafts and a next-attack plan to `ai_assist.json`; with no
+   model it stays silent and adds no findings (zero false positives).
+ - **Optional AI** — add `--ai` to involve a local Ollama + **Qwen3 8B**
   (auto-installs; fully offline once pulled; swap models via
   [`config/config.json`](#ai--model-selection)). Use `--ai-select` to hand
   the mission to the operator-agent: Qwen3 inspects each target's live state

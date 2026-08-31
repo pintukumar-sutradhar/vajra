@@ -233,6 +233,11 @@ register("post.recon", "post", "modules.post.system_recon",
          "Post-exploitation system recon through established channels",
          cond=["has_channels"])
 
+register("web.ai_assist", "post", "modules.web.ai_assist",
+         "AI remediation + next-attack planning over the run's findings "
+         "(advisory only, offline-safe, --ai gated)",
+         cond=["always"], profile_skip=["recon"])
+
 PHASE_ORDER = ["recon", "net", "web", "exploit", "ad", "post"]
 
 
