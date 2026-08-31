@@ -563,6 +563,87 @@ def run_probe_registry_check():
     return len(known_exploits.PROBES)
 
 
+def t_coverage_bank():
+    from core.utils import load_json
+    bank = load_json("intel/coverage_bank.json")
+    checks = bank.get("checks", [])
+    bycat = {}
+    for c in checks:
+        bycat[c["category"]] = bycat.get(c["category"], 0) + 1
+    for cat in ("web", "api", "network", "server"):
+        assert bycat.get(cat, 0) >= 100, (cat, bycat)
+    assert len(checks) >= 400, len(checks)
+    ids = [c["id"] for c in checks]
+    assert len(set(ids)) == len(ids), "duplicate check ids"
+    import json as _json
+    for c in checks:
+        m = c.get("match") or {}
+        assert (m.get("body_contains") or m.get("body_regex") or
+                m.get("headers")), "no discriminator in %s" % c.get("id")
+        scope = _json.dumps(c.get("scope"))
+        assert "{_p}" not in scope and "{_h}" not in scope, c.get("id")
+        if c.get("exploit"):
+            assert c["exploit"].get("success"), c.get("id")
+            assert c["exploit"].get("payload") or c["exploit"].get("path")
+
+    from modules.exploit import coverage
+    import re
+
+    class Resp:
+        def __init__(self, status, body, headers):
+            self.status, self.body, self.headers = status, body, headers
+
+    class T:
+        def __init__(self):
+            self.display = "10.0.0.9"
+
+    class E:
+        target = T()
+        state = {}
+        http, db, args, log = None, None, None, None
+
+    cov = coverage.Coverage(E(), bank)
+    ok = cov._matched(Resp(200, "<html>index of /admin</html>", {}),
+                      {"expect_html": 1},
+                      {"status": [200], "body_regex": r"index of /"})
+    assert ok and "index of /" in ok
+    none = cov._matched(Resp(200, "just a page", {}),
+                        {"expect_html": 1},
+                        {"status": [200], "body_regex": r"index of /"})
+    assert none is None, "marker absent must not fire"
+    none2 = cov._matched(Resp(200, "anything", {}), {},
+                         {"status": [200]})
+    assert none2 is None, "status alone must not fire"
+    raw = cov._raw_matched(b"220 FTP ready\r\n", {"body_regex": r"FTP"}, 21)
+    assert raw and "port=21" in raw
+    raw_none = cov._raw_matched(b"HTTP/1.1 200 OK\r\n", {"body_regex": r"FTP"}, 21)
+    assert raw_none is None
+
+    # no-FP regression: a catch-all server returning 200 + pthread benign HTML
+    # for every path must NOT fire weak markers
+    benign = Resp(200, "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+                       "</head><body>index of nothing</body></html>", {})
+    assert cov._matched(benign, {"expect_html": 1},
+                        {"status": [200], "body_regex": r"index of /"}) is None
+    assert cov._matched(benign, {"expect_html": 1},
+                        {"status": [200],
+                         "body_regex": r"<title[^>]*>[^<]*(admin|login)"}) is None
+    assert cov._matched(benign, {"expect_json": 1},
+                        {"status": [200], "body_regex": r'"id"\s*:'}) is None
+    assert cov._matched(benign, {"expect_html": 1},
+                        {"status": [200],
+                         "headers": {"Set-Cookie": r"JSESSIONID=[^;]*"}}) is None
+    json_ok = cov._matched(Resp(200, '{"id": 1}', {"Content-Type":
+                                                   "application/json"}),
+                           {"expect_json": 1},
+                           {"status": [200], "body_regex": r'"id"\s*:\s*\d+'})
+    assert json_ok, "real JSON field must fire"
+    return True, ("bank %d checks (web=%d api=%d network=%d server=%d), "
+                  "strict matcher discriminates" % (
+                      len(checks), bycat["web"], bycat["api"],
+                      bycat["network"], bycat["server"]))
+
+
 def t_listener():
     from core.listener import pick_lport, detect_lhost, render_reverse_payloads
     port = pick_lport()
@@ -1682,6 +1763,7 @@ def run_all():
     check("payload engine + adaptive evasion", t_payloads)
     check("massive wordlist tiers", t_wordlists)
     check("offline CVE database + verified probes", t_cve_db)
+    check("uniform coverage bank (1x0+/category, no-FP markers)", t_coverage_bank)
     check("listener / LHOST-LPORT core", t_listener)
     check("MITRE ATT&CK tagging", t_mitre)
     check("JWT decode core", t_jwt)

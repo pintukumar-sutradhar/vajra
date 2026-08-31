@@ -181,6 +181,11 @@ register("exploit.verify", "exploit", "modules.exploit.known_exploits",
          "Safe verification probes for known CVE exposures",
          cond=["always"])
 
+register("exploit.coverage", "exploit", "modules.exploit.coverage",
+         "Uniform coverage bank (538 checks): OWASP WSTG, API Top 10, "
+         "network & server exposure — proof-gated auto-exploitation",
+         cond=["has_web_or_services"])
+
 register("exploit.form_brute", "exploit", "modules.exploit.form_brute",
 "Web login-form brute-force against app auth systems (aggressive)",
           cond=["has_forms"], profile_skip=[])
