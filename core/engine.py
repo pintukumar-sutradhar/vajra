@@ -12,7 +12,7 @@ from core.database import Database, Finding, SEV_ORDER
 from core.intelligence import Intelligence
 from core.ai import AIEngine
 from core.report import (build_data, render_html, render_json,
-                         render_markdown, render_pdf)
+                         render_markdown, render_pdf, render_sarif)
 from core.utils import PROJECT_ROOT
 from modules import get_modules
 
@@ -796,6 +796,10 @@ class Engine:
             if formats in ("md", "markdown", "all"):
                 p = os.path.join(tdir, "report.md")
                 open(p, "w", encoding="utf-8").write(render_markdown(data))
+                paths.append(p)
+            if formats in ("sarif", "all"):
+                p = os.path.join(tdir, "report.sarif")
+                open(p, "w", encoding="utf-8").write(render_sarif(data))
                 paths.append(p)
             if formats in ("pdf", "all"):
                 p = os.path.join(tdir, "report.pdf")

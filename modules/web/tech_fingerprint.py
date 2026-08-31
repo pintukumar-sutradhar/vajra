@@ -156,8 +156,8 @@ def cve_correlation(engine, t, version_sightings):
                 engine.db.add_finding(Finding(
                     t.display, "web.tech", "vuln-exposure", "medium",
                     "Live CVE pulse: %s %s (%s)" % (tech, version, len(live)),
-                    detail="Offline KB had no match for %s %s; live CIRCL "
-                           "query returned:\n%s" % (tech, version, lines),
+                    detail="Offline KB had no match for %s %s; live OSV "
+                           "(exact version-range) query returned:\n%s" % (tech, version, lines),
                     evidence="%s %s" % (tech, version),
                     remediation="Validate the versions against vendor "
                                 "advisories; upgrade out of range.",

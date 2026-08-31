@@ -258,7 +258,8 @@ signal, deserialization markers) · **cloud exposure** (read-only S3 / GCS /
 Azure-Blob bucket listing probes from domain + subdomain candidates) · JWT
 auditor · GraphQL prober · prototype pollution · WAF fingerprinting · tech
 stack + version → **built-in CVE correlation** (or `--cve-update` for a live
-CIRCL lookup when the offline KB misses) · security headers (+ full
+OSV exact-match lookup when the offline KB misses; only confirmed
+version-range hits are reported) · security headers (+ full
 CORS matrix, HSTS, cookie SameSite) · **TLS audit incl. cert expiry /
 self-signed / SAN coverage** · DOM-XSS JS sink/source hunting · sitemap-consume
 crawling · JS secret hunting
@@ -441,10 +442,11 @@ socket, with TLS stagers (`--tls`) and `--obfuscate` (packed payloads) —
     --export-findings FILE   export findings from workspace to JSON file
 -o, --output          output root (default: Outputs/)
     --workspace       name the workspace (default: auto per-target)
-    --format          html | json | md | pdf | all
+    --format          html | json | md | pdf | sarif | all
     --socks5 HOST:PORT  egress via a SOCKS5 proxy (web + raw probes route through)
     --cve-update      when the offline KB misses a product:version, query the
-                       live CIRCL CVE API (cached in intel/cve_online_cache.json)
+                       live OSV API — exact version-range match, no fuzzy
+                       results (cached in intel/cve_online_cache.json)
     --modules         run only listed modules
     --exclude-modules skip listed modules
     --proxy           HTTP proxy

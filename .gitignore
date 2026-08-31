@@ -6,3 +6,4 @@ Outputs/
 .venv/
 .DS_Store
 .vajra_state.json
+intel/cve_online_cache.json

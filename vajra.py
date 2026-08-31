@@ -54,7 +54,8 @@ def import_findings_and_report(findings_file, targets, output_root):
     import json
     import os
     from core.database import Database
-    from core.report import build_data, render_html, render_json, render_markdown
+    from core.report import (build_data, render_html, render_json,
+                             render_markdown, render_sarif)
     from core.intelligence import Intelligence
     from core.engine import sanitize_target_name
 
@@ -117,11 +118,14 @@ def import_findings_and_report(findings_file, targets, output_root):
             f.write(json_out)
         with open(os.path.join(tdir, 'report.md'), 'w') as f:
             f.write(md)
+        with open(os.path.join(tdir, 'report.sarif'), 'w') as f:
+            f.write(render_sarif(data))
 
         print(f"[+] Imported {len(findings_by_target.get(t_display, []))} findings for {t_display}")
         print(f"[+] Report written to {tdir}/report.html")
         print(f"[+] Report written to {tdir}/report.json")
         print(f"[+] Report written to {tdir}/report.md")
+        print(f"[+] Report written to {tdir}/report.sarif")
 
 
 def parse_args():
@@ -176,8 +180,8 @@ passwords / 16k dirs / 18k subs) activate on --profile full|vast or
     ap.add_argument("-o", "--output", default="Outputs",
                     help="output root (default: Outputs/ — per-target bundles)")
     ap.add_argument("--format", default="all",
-                    choices=["html", "json", "md", "pdf", "all"],
-                    help="report format")
+                    choices=["html", "json", "md", "pdf", "sarif", "all"],
+                    help="report format (sarif = SARIF 2.1.0 for CI)")
     ap.add_argument("--modules", help="comma list of modules to run only")
     ap.add_argument("--exclude-modules", dest="exclude_modules", default="",
                     help="comma list of modules to skip")

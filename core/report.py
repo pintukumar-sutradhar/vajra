@@ -443,6 +443,69 @@ def render_json(data):
     return json.dumps(data, indent=2, default=str)
 
 
+_SARIF_LEVEL = {"critical": "error", "high": "error", "medium": "warning",
+                "low": "note", "info": "note"}
+
+_SARIF_CATEGORY = {"web": "WebApp", "network": "Network", "exploit": "Exploit",
+                   "ad": "ActiveDirectory", "recon": "Recon",
+                   "post": "PostCorp", "core": "Aegis"}
+
+
+def render_sarif(data):
+    """SARIF 2.1.0 export (static-analysis schema) for CI/DevOps ingestion.
+    Findings map to results; each finding's rule is inlined into the run so
+    the file is self-contained (MSTEST-style stable toolComponent)."""
+    from datetime import datetime
+    rules, seen, results = [], set(), []
+    for f in data.get("findings", []):
+        rule_id = f.get("module") or "web.vulnscan"
+        rule = {
+            "id": rule_id,
+            "name": rule_id.replace(".", "-"),
+            "shortDescription": {"text": f.get("title") or rule_id},
+            "helpUri": "https://github.com/pintukumar-sutradhar/vajra",
+        }
+        if f.get("detail"):
+            rule["help"] = {"text": f.get("detail")}
+        if f.get("mitre"):
+            rule.setdefault("properties", {})["mitre"] = f.get("mitre")
+        if rule_id not in seen:
+            seen.add(rule_id)
+            rules.append(rule)
+        results.append({
+            "ruleId": rule_id,
+            "level": _SARIF_LEVEL.get((f.get("severity") or "info").lower(),
+                                      "note"),
+            "message": {"text": f.get("title") or ""},
+            "locations": [{
+                "physicalLocation": {"artifactLocation": {
+                    "uri": "vajra://%s" % (f.get("target") or "unknown")}},
+            }],
+            "properties": {
+                k: v for k, v in {
+                    "severity": f.get("severity"),
+                    "confidence": f.get("confidence"),
+                    "category": _SARIF_CATEGORY.get(
+                        (f.get("module") or "").split(".")[0], "General"),
+                    "remediation": f.get("remediation"),
+                    "evidence": (f.get("evidence") or "".join(f.get("evidence", []) or []))[:2000],
+                }.items() if v},
+        })
+    sarif = {
+        "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {"driver": {
+                "name": "VAJRA",
+                "informationUri": "https://github.com/pintukumar-sutradhar/vajra",
+                "version": (data.get("meta") or {}).get("profile", ""),
+                "rules": rules}},
+            "results": results,
+        }],
+    }
+    return json.dumps(sarif, indent=2)
+
+
 _SEV_RGB = {"critical": (1.0, 0.1, 0.1), "high": (0.95, 0.32, 0.24),
             "medium": (0.95, 0.7, 0.1), "low": (0.2, 0.6, 0.95),
             "info": (0.55, 0.58, 0.62)}

@@ -1088,7 +1088,16 @@ def t_next_caps():
             (PROJECT_ROOT / "intel/cve_online_cache.selftest.json").unlink()
         except OSError:
             pass
-    return True, "AXFR wire helpers, race candidates, PDF xref, SOCKS5 relay, CVE cache OK"
+
+    # OSV-exact helpers: semver range containment, CVSS3 base, product aliasing
+    assert cref._range_match("2.4.49", "2.4.49", "2.4.51")
+    assert not cref._range_match("2.4.51", "2.4.49", "2.4.51")
+    assert cref._range_match("5.2.5", "0", "6.1.7")
+    assert abs(cref._cvss_base3(
+        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H") - 9.8) < 0.1
+    assert cref.ALIASES.get("ruby on rails") == "rails"
+    return True, ("AXFR wire helpers, race candidates, PDF xref, SOCKS5 relay, "
+                  "CVE cache + OSV range/CVSS helpers OK")
 
 
 def t_snmp_brute():
