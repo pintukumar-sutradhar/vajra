@@ -13,7 +13,8 @@ from core.intelligence import Intelligence
 from core.ai import AIEngine
 from core.report import (build_data, render_html, render_json,
                          render_markdown, render_pdf, render_sarif)
-from core.utils import PROJECT_ROOT
+from core.progress import ProgressMeter
+from core.utils import PROJECT_ROOT, is_ip, hosts_for_ip
 from modules import get_modules
 
 
@@ -25,23 +26,51 @@ def sanitize_target_name(display):
 
 
 PROFILES = {
-    "quick": {"ports": "top100", "crawl_max_pages": 25, "crawl_max_depth": 3,
+    "quick": {"label": "Quick triage",
+              "ports": "top100", "port_count": 100,
+              "crawl_max_pages": 25, "crawl_max_depth": 3,
               "dir_threads": 20, "max_injection_points": 40,
-              "max_payloads_direct": 60, "max_mutants": 10},
-    "full": {"ports": "all", "crawl_max_pages": 150, "crawl_max_depth": 5,
+              "max_payloads_direct": 60, "max_mutants": 10,
+              "time_based_sqli": False, "oob_enabled": False,
+              "phases": ["recon", "net", "web"],
+              "description": "fast recon-grade sweep for triage"},
+    "full": {"label": "Full engagement",
+             "ports": "all", "port_count": 65535,
+             "crawl_max_pages": 150, "crawl_max_depth": 5,
              "dir_threads": 40, "max_injection_points": 120,
-             "time_based_sqli": True,
-             "max_payloads_direct": 160, "max_mutants": 28},
-    "vast": {"ports": "all", "crawl_max_pages": 400, "crawl_max_depth": 6,
+             "time_based_sqli": True, "oob_enabled": True,
+             "max_payloads_direct": 160, "max_mutants": 28,
+             "phases": ["recon", "net", "web", "exploit", "ad", "post"],
+             "description": "full-stack engagement: wide ports, deep "
+                            "crawling, OOB detections (recommended for depth)"},
+    "vast": {"label": "Exhaustive",
+             "ports": "all", "port_count": 65535,
+             "crawl_max_pages": 400, "crawl_max_depth": 6,
              "dir_threads": 64, "max_injection_points": 300,
-             "time_based_sqli": True, "max_payloads_direct": 320,
-             "max_mutants": 48, "scan_concurrency": 900},
-    "stealth": {"ports": "top100", "scan_concurrency": 50, "dir_threads": 6,
+             "time_based_sqli": True, "oob_enabled": True,
+             "max_payloads_direct": 320, "max_mutants": 48,
+             "scan_concurrency": 900,
+             "phases": ["recon", "net", "web", "exploit", "ad", "post"],
+             "description": "exhaustive: enterprise-scale crawl + payload depth"},
+    "stealth": {"label": "Low-noise stealth",
+                "ports": "top100", "port_count": 100,
+                "scan_concurrency": 50, "dir_threads": 6,
                 "crawl_max_pages": 30, "max_injection_points": 30,
-                "delay": 0.4, "brute_delay": 0.6, "rotate_ua": True},
-    "webonly": {"ports": None, "crawl_max_pages": 200, "crawl_max_depth": 5,
-                "dir_threads": 25, "max_injection_points": 80},
-    "recon": {"ports": "top100"},
+                "delay": 0.4, "brute_delay": 0.6, "rotate_ua": True,
+                "phases": ["recon", "net", "web"],
+                "description": "low-noise: throttled, rotating UA, shallow "
+                               "payloads"},
+    "webonly": {"label": "Web application only",
+                "ports": None, "port_count": 0,
+                "crawl_max_pages": 200, "crawl_max_depth": 5,
+                "dir_threads": 25, "max_injection_points": 80,
+                "phases": ["web"],
+                "description": "web-only: pull the app, skip network phase"},
+    "recon": {"label": "Reconnaissance only",
+              "ports": "top100", "port_count": 100,
+              "crawl_max_pages": 10,
+              "phases": ["recon"],
+              "description": "passive/active recon only (no exploitation)"},
 }
 
 try:
@@ -130,6 +159,9 @@ class Engine:
                                            self.web_creds["totp"]) else ""))
         self.start_time = time.time()
         self._warned_conds = set()
+        self._ad_mode = bool(getattr(args, "ad", False)) or \
+            bool(getattr(args, "ad_user", None)) or \
+            bool(self.config.get("ad_enabled", False))
         self.oob = None
         if getattr(args, "oob", False) or self.profile in ("full", "vast") \
                 or bool(self.cfg("oob_enabled", False)):
@@ -406,6 +438,27 @@ class Engine:
                               % t.hostname)
             else:
                 self.log.info("resolved: %s" % ", ".join(ips[:5]))
+        # Offline-safe name resolution: map IP -> hostnames from /etc/hosts so
+        # an IP-only web target that needs a vhost/Host header can still be
+        # served its site when DNS is not reachable.
+        etc_names = []
+        for ip in (t.ips or [t.scan_host()]):
+            if is_ip(ip):
+                etc_names.extend(hosts_for_ip(ip))
+        if etc_names:
+            self.state["etc_hosts"] = list(dict.fromkeys(etc_names))
+            # Prefer the longest dot-qualified name (most specific vhost).
+            etc_names_sorted = sorted(etc_names, key=len, reverse=True)
+            for nm in etc_names_sorted:
+                for ip in (t.ips or [t.scan_host()]):
+                    if is_ip(ip):
+                        try:
+                            self.http.set_host_override(ip, nm)
+                        except Exception:
+                            pass
+            self.log.info("[recon] /etc/hosts resolves %s -> %s (offline "
+                          "vhost candidates)" % (t.scan_host(),
+                                                 ", ".join(etc_names)))
         enabled_names = None
         if self.args.modules:
             enabled_names = [x.strip() for x in self.args.modules.split(",")]
@@ -414,8 +467,16 @@ class Engine:
         if self.args.no_brute:
             disabled.add("network.brute")
         recon_only = self.profile == "recon"
+        all_mods = list(get_modules())
+        self._run_meter = ProgressMeter(
+            label="run %s" % t.display, total=max(1, len(all_mods)),
+            log=self.log)
         for phase in ("recon", "net", "web", "exploit", "ad", "post"):
             if recon_only and phase not in ("recon",):
+                continue
+            if phase == "ad" and not self._ad_mode:
+                self.log.info("[ad] AD phase skipped — not enabled. Pass "
+                              "--ad (or --ad-user) to scan Active Directory.")
                 continue
             if phase == "web":
                 self._plan_web()
@@ -443,6 +504,9 @@ class Engine:
         self._workspace_target(t)
         self.db.add_event(t.display, "scan-end", "")
         self.dbs.append(self.db)
+        if self._run_meter is not None:
+            self._run_meter.finish()
+            self._run_meter = None
 
     def _workspace_target(self, t):
         ws = getattr(self, "workspace", None)
@@ -524,6 +588,9 @@ class Engine:
     def _exec(self, m):
         t0 = time.time()
         self.log.info("» module %-22s %s" % (m["name"], "(" + m["desc"] + ")"))
+        if getattr(self, "_run_meter", None) is not None:
+            self._run_meter.label = "module %s" % m["name"]
+            self._run_meter.advance()
         self.db.add_event(self.target.display, "module-start", m["name"])
         try:
             mod = importlib.import_module(m["func"])
@@ -558,6 +625,8 @@ class Engine:
                 ok = bool(want & set(st.get("udp_open", [])))
             elif c == "has_web":
                 ok = bool(st.get("web_targets"))
+            elif c == "has_cloud":
+                ok = bool(st.get("cloud_indicators"))
             elif c == "has_web_tls":
                 ok = any(w["url"].lower().startswith("https")
                          for w in st.get("web_targets", [])) or \

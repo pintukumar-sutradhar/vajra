@@ -337,6 +337,10 @@ class HttpClient:
         self.delay = delay
         self.evade = False
         self.extra_headers = extra_headers or {}
+        # ip -> hostname : when a URL's host is a plain IP with a mapping, use
+        # the mapped hostname as the HTTP Host header while still connecting to
+        # the IP. Enables offline vhost serving from /etc/hosts (no DNS).
+        self.host_override = {}
         self._cookie = ""
         self._ua_i = 0
         self._lock = threading.Lock()
@@ -345,6 +349,24 @@ class HttpClient:
             self.ua_pool = list(USER_AGENTS)
         else:
             self.ua_pool = [self.ua]
+
+    def set_host_override(self, ip, host):
+        """Send 'Host: <host>' for subsequent HTTP requests to the given IP
+        (vhost served from /etc/hosts when DNS is unavailable)."""
+        if host:
+            self.host_override[(ip or "").strip("[]")] = host
+
+    def _apply_host_override(self, url, hdrs):
+        if hdrs.get("Host") or not self.host_override:
+            return
+        try:
+            from urllib.parse import urlparse
+            from core.utils import is_ip
+            uh = urlparse(url).hostname
+            if uh and is_ip(uh) and uh.strip("[]") in self.host_override:
+                hdrs["Host"] = self.host_override[uh.strip("[]")]
+        except Exception:
+            pass
 
     def apply_cookies(self, cookie_str, merge=True):
         """Adopt Set-Cookie value(s) (e.g. 'SID=abc; foo=bar') so every
@@ -390,6 +412,7 @@ class HttpClient:
         hdrs.update(self.extra_headers)
         if headers:
             hdrs.update({k: v for k, v in headers.items()})
+        self._apply_host_override(url, hdrs)
         if self.evade:
             _r = __import__("random")
             hdrs.setdefault("X-Forwarded-For", "%d.%d.%d.%d" % (

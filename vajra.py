@@ -209,6 +209,11 @@ passwords / 16k dirs / 18k subs) activate on --profile full|vast or
                     help="include UDP service probes (DNS/NTP/SNMP)")
     ap.add_argument("--syn", action="store_true",
                     help="raw SYN scan instead of connect scan (root)")
+    ap.add_argument("--ad", action="store_true",
+                    help="enable the Active Directory phase. AD modules are "
+                         "SILENT by default and only run when this flag (or "
+                         "any --ad-* credential option) is present — they are "
+                         "no longer probing every target automatically.")
     ap.add_argument("--ad-user", default=None,
                     help="Active Directory username (enables LDAP bind / "
                          "kerberoast prep)")

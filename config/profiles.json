@@ -2,11 +2,15 @@
   "_meta": {
     "file": "scan engagement profiles. Keys here override config.json for the selected profile.",
     "profiles": "quick | full | vast | stealth | webonly | recon",
-    "override": "-p/--profile selects; --modules selects modules explicitly"
+    "override": "-p/--profile selects; --modules selects modules explicitly",
+    "ad": "AD phase is OFF by default; pass --ad (or --ad-user) to enable it.",
+    "cloud": "cloud exposure scan only runs when cloud/CDN tech is detected."
   },
   "profiles": {
     "quick": {
+      "label": "Quick triage",
       "ports": "top100",
+      "port_count": 100,
       "crawl_max_pages": 25,
       "crawl_max_depth": 3,
       "dir_threads": 20,
@@ -14,35 +18,52 @@
       "max_payloads_direct": 60,
       "max_mutants": 10,
       "time_based_sqli": false,
-      "description": "fast recon-grade sweep for triage"
+      "oob_enabled": false,
+      "phases": ["recon", "net", "web"],
+      "description": "fast recon-grade sweep for triage: top-100 ports, "
+                     "shallow crawl (25 pages), quick dir-busting, no "
+                     "time-based SQLi, no OOB listener. ~1-3 min/host."
     },
     "full": {
+      "label": "Full engagement",
       "ports": "all",
+      "port_count": 65535,
       "crawl_max_pages": 150,
       "crawl_max_depth": 5,
       "dir_threads": 40,
       "max_injection_points": 120,
       "time_based_sqli": true,
+      "oob_enabled": true,
       "max_payloads_direct": 160,
       "max_mutants": 28,
-      "oob_enabled": true,
-      "description": "full-stack engagement: wide ports, deep crawling, OOB detections"
+      "phases": ["recon", "net", "web", "exploit", "ad", "post"],
+      "description": "full-stack engagement (recommended for depth): all "
+                     "65535 TCP ports, deep wordlists, time-based SQLi, OOB "
+                     "blind detections, exploitation phase. AD/cloud still "
+                     "gate on their own enablement conditions."
     },
     "vast": {
+      "label": "Exhaustive",
       "ports": "all",
+      "port_count": 65535,
       "crawl_max_pages": 400,
       "crawl_max_depth": 6,
       "dir_threads": 64,
       "max_injection_points": 300,
       "time_based_sqli": true,
+      "oob_enabled": true,
       "max_payloads_direct": 320,
       "max_mutants": 48,
       "scan_concurrency": 900,
-      "oob_enabled": true,
-      "description": "exhaustive: enterprise-scale crawl + payload depth"
+      "phases": ["recon", "net", "web", "exploit", "ad", "post"],
+      "description": "exhaustive enterprise-grade scan: maximum crawl and "
+                     "payload depth, high concurrency. Expect an extended "
+                     "runtime."
     },
     "stealth": {
+      "label": "Low-noise stealth",
       "ports": "top100",
+      "port_count": 100,
       "scan_concurrency": 50,
       "dir_threads": 6,
       "crawl_max_pages": 30,
@@ -50,20 +71,32 @@
       "delay": 0.4,
       "brute_delay": 0.6,
       "rotate_ua": true,
-      "description": "low-noise: throttled, rotating UA, shallow payloads"
+      "phases": ["recon", "net", "web"],
+      "description": "low-noise: throttled requests (0.4s delay), rotating "
+                     "User-Agent, shallow payloads, no brute-force or "
+                     "aggressive exploitation."
     },
     "webonly": {
+      "label": "Web application only",
       "ports": null,
+      "port_count": 0,
       "crawl_max_pages": 200,
       "crawl_max_depth": 5,
       "dir_threads": 25,
       "max_injection_points": 80,
-      "description": "web-only: pull the app, skip network phase"
+      "phases": ["web"],
+      "description": "web-only: pull and test the application, skip the "
+                     "network/port phases entirely."
     },
     "recon": {
+      "label": "Reconnaissance only",
       "ports": "top100",
+      "port_count": 100,
       "crawl_max_pages": 10,
-      "description": "passive/active recon only (no exploitation phases)"
+      "phases": ["recon"],
+      "description": "passive/active recon only: DNS, subdomains, WHOSIS, "
+                     "port scan and service/OS detection. No exploitation, "
+                     "no web app attacks, no AD."
     }
   }
 }

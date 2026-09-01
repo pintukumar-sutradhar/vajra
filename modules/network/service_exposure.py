@@ -20,6 +20,12 @@ MAX_PROBES_PER_SERVICE = 3
 MAX_SOCKET_READ = 4096
 
 
+def _as_bytes(x):
+    if isinstance(x, bytes):
+        return x
+    return str(x).encode("latin1", "replace")
+
+
 def _raw(host, port, payload, timeout=4.0, tls=False):
     """Send bytes, return response bytes or None."""
     import ssl
@@ -107,10 +113,10 @@ def run(engine):
                 continue
             expect = probe.get("expect", [])
             if expect and expect != [""]:
-                if not any(e in buf for e in expect):
+                if not any(_as_bytes(e) in buf for e in expect):
                     continue
             not_expect = probe.get("not_expect", [])
-            if not_expect and any(x in buf for x in not_expect):
+            if not_expect and any(_as_bytes(x) in buf for x in not_expect):
                 continue
             evidence = buf[:600]
             sev = probe.get("severity", "info")

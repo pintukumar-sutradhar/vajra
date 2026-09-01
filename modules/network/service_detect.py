@@ -1,14 +1,26 @@
 """Vajra - service detection, banner grabbing, TLS certificate analysis and
-CVE correlation and certificate analysis."""
+CVE correlation.
+
+Detection is nmap-grade: when `nmap -sV` is present on the host it is used as
+the authoritative source (parsed and merged per-port). When nmap is missing, a
+native signature database (svc_sigs.py) plus deep protocol handshakes carry
+the same job, and well-known ports are always labelled from the port map so an
+open 445 never shows as "unknown/unverified".
+"""
 import socket
 import ssl
 import datetime
 import tempfile
 import os
+import re
+import subprocess
+import shutil
 
 from core.database import Finding
 from core.intelligence import guess_service, is_http_port
+from core.utils import which_tool
 from modules.network.probes import run_deep_probes
+from modules.network.svc_sigs import SIGS
 
 PROBE_TIMEOUT = 4.0
 
@@ -30,7 +42,7 @@ def _recv_some(sock, n=1024):
 def _probe_banner(host, port, force_http=False):
     probes = []
     if force_http or is_http_port(port) or port in (80, 443, 8080, 8443,
-                                                    8000, 8008, 5000, 3000):
+                                                     8000, 8008, 5000, 3000):
         probes.append(("GET / HTTP/1.1\r\nHost: %s\r\n"
                        "User-Agent: Mozilla/5.0 Vajra\r\n\r\n" % host).encode())
     elif port in (21, 22, 25, 110, 143, 587, 993, 995, 465):
@@ -118,24 +130,351 @@ def _days_left(not_after_str):
 
 SERVICE_HINTS = [
     ("openssh", "ssh"), ("dropbear", "ssh"), ("ssh-", "ssh"),
-    ("vsftpd", "ftp"), ("proftpd", "ftp"), ("pure-ftpd", "ftp"), ("220 ", "ftp"),
+    ("vsftpd", "ftp"), ("proftpd", "ftp"), ("pure-ftpd", "ftp"),
+    ("220 ", "ftp"), ("220-", "ftp"),
     ("smtp", "smtp"), ("postfix", "smtp"), ("220 mx", "smtp"),
     ("http/1.", "http"), ("server:", "http"), ("<html", "http"),
     ("redis", "redis"), ("-err ", "redis"),
     ("mysql", "mysql"), ("mongodb", "mongodb"),
     ("imap", "imap"), ("pop3", "pop3"), ("+ok", "pop3"),
     ("microsoft", "msrpc"), ("kerberos", "kerberos"),
+    ("rfb ", "vnc"), ("ssh", "ssh"), ("220-", "ftp"),
+    ("hey, this is a docker", "docker"),
 ]
 
 
 def _probe_classify(banner):
     """A banner only "proves" a service when its text is a recognizable
-    protocol greeting — never when it is arbitrary echoed junk (in which
-    case the port stays 'unproven' instead of being handed a guessed name)."""
+    protocol greeting — never when it is arbitrary echoed junk."""
     if isinstance(banner, bytes):
         banner = banner.decode("utf-8", "replace")
     low = (banner or "").lower()
     return any(hint in low for hint, _name in SERVICE_HINTS)
+
+
+def _native_signature(banner):
+    """Match a banner against the native signature DB. Returns
+    (service, product, version) or (None, None, None)."""
+    if isinstance(banner, bytes):
+        banner = banner.decode("utf-8", "replace")
+    if not banner:
+        return None, None, None
+    for rx, service, product, vgrp in SIGS:
+        try:
+            m = rx.search(banner)
+        except Exception:
+            continue
+        if m:
+            ver = None
+            if vgrp is not None:
+                try:
+                    ver = m.group(vgrp)
+                except Exception:
+                    ver = None
+            return service, product, ver
+    return None, None, None
+
+
+def _run_nmap_sv(host, ports):
+    """Best-effort `nmap -sV` service + version detection. Returns
+    {port: {"service":.., "product":.., "version":.., "extra":..}}.
+    Never raises; empty on any failure."""
+    nmap = which_tool("nmap")
+    if not nmap:
+        return {}
+    if not ports:
+        return {}
+    port_list = ",".join(str(p) for p in ports)
+    # --version-light keeps it fast and non-intrusive; --allports not needed.
+    cmd = [nmap, "-sV", "--version-light", "-Pn", "-n", "-T3",
+           "--host-timeout", "90s", "--version-intensity", "4",
+           "-p", port_list, host]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True,
+                             timeout=180).stdout
+    except Exception:
+        return {}
+    result = {}
+    # Parse lines like:  445/tcp  open  microsoft-ds  Microsoft Windows ...
+    for ln in out.splitlines():
+        ln = ln.strip()
+        m = re.match(r"^(\d+)/tcp\s+(\S+)\s+(\S+)(?:\s+(.*))?$", ln)
+        if not m:
+            continue
+        port = int(m.group(1))
+        state = m.group(2)
+        svc_name = m.group(3).strip()
+        rest = (m.group(4) or "").strip()
+        if state != "open":
+            continue
+        product = ""
+        version = ""
+        extra = ""
+        # Rest is usually "product version extra(cpe)" broken on spaces.
+        # Heuristic: the service name itself is authoritative; the tail is
+        # product/version. Try to pull a product token and a version token.
+        if rest:
+            # Strip trailing parenthesis CPE
+            rest_clean = re.sub(r"\s*\([^)]*\)\s*$", "", rest)
+            tokens = rest_clean.split()
+            version_match = re.search(r"(\d+(?:[._\-\w]*\d+)?)", rest_clean)
+            if version_match:
+                version = version_match.group(1)
+                # product is everything before the version token
+                vpos = version_match.start()
+                product = rest_clean[:vpos].strip()
+            else:
+                product = rest_clean
+            extra = rest
+        result[port] = {"service": svc_name, "state": state,
+                        "product": product, "version": version,
+                        "extra": extra}
+    return result
+
+
+def _build_base_services(engine, t, host, open_ports):
+    """Native pass: banner + signature DB + known-port map, without nmap."""
+    services = []
+    url_hint = None
+    if t.kind == "url" and t.port:
+        url_hint = t.port
+    for port, latency in sorted(open_ports.items()):
+        known_service = guess_service(port) or None
+        svc = {"host": host, "port": port, "service": "unknown",
+               "possible_service": known_service,
+               "proven": False, "banner": "", "product": "", "version": "",
+               "tls": False, "latency_ms": latency}
+        if known_service and known_service != "unknown":
+            svc["service"] = known_service
+            svc["proven"] = True
+        use_tls = port in (443, 8443, 993, 995, 465, 992, 990)
+        banner = ""
+        force_http = url_hint is not None and port == url_hint and \
+            t.scheme == "http"
+        if not use_tls or force_http:
+            banner = _probe_banner(host, port,
+                                   force_http=force_http).decode(
+                                       "utf-8", "replace").strip()
+            low = banner.lower()
+            for hint, name in SERVICE_HINTS:
+                if hint in low:
+                    svc["service"] = name
+                    svc["proven"] = True
+                    break
+            sig_svc, sig_prod, sig_ver = _native_signature(banner)
+            if sig_svc and sig_svc != svc["service"]:
+                svc["service"] = sig_svc
+                svc["proven"] = True
+            if sig_prod:
+                svc["product"] = sig_prod
+            if sig_ver:
+                svc["version"] = sig_ver
+            if not banner and port in (443, 465, 993, 995):
+                use_tls = True
+        if use_tls or svc["service"] in ("https", "https-alt"):
+            info = _tls_info(host, port,
+                             server_name=t.hostname if t.is_domain else None)
+            if "error" not in info:
+                svc["tls"] = True
+                svc["tls_version"] = info.get("version", "")
+                svc["cert"] = {k: v for k, v in info.items() if k != "error"}
+                svc["proven"] = True
+                if svc["service"] in ("unknown", "unproven", "http"):
+                    svc["service"] = "https"
+                if not banner:
+                    banner = "%s / cert CN=%s" % (
+                        info.get("version", "TLS"),
+                        info.get("subject", {}).get("commonName", "?"))
+            elif svc["service"] in ("unknown", "https"):
+                banner = banner or ""
+        if banner:
+            svc["banner"] = banner[:1000]
+            provable = _probe_classify(banner) or svc["proven"] or \
+                svc["possible_service"]
+            if provable:
+                svc["proven"] = True
+                prod_ver = _extract_prod_version(banner)
+                if prod_ver:
+                    svc["product"], svc["version"] = prod_ver
+        if not svc["proven"] and svc["banner"]:
+            svc["service"] = "unproven"
+        elif not svc["proven"]:
+            svc["service"] = "unknown"
+        services.append(svc)
+    return services
+
+
+def run(engine):
+    t = engine.target
+    host = t.scan_host()
+    open_ports = engine.state.get("open_ports", {})
+    if not open_ports:
+        return
+    services = _build_base_services(engine, t, host, open_ports)
+
+    # --- nmap -sV integration: authoritative override where available ---
+    nmap_res = _run_nmap_sv(host, sorted(open_ports))
+    if nmap_res:
+        engine.log.info("[services] nmap -sV detected %d service(s) "
+                        "authoritatively" % len(nmap_res))
+    for svc in services:
+        nm = nmap_res.get(svc["port"])
+        if not nm:
+            continue
+        # nmap's service name is authoritative when non-generic.
+        svc["nmap_service"] = nm["service"]
+        # Product/version from nmap are far more precise than banner guesses.
+        if nm["product"]:
+            svc["product"] = nm["product"]
+        if nm["version"]:
+            svc["version"] = nm["version"]
+        # Prefer nmap's identified service when ours is only a port-map guess
+        # or was marked unproven/unknown.
+        ours = svc["service"]
+        if ours in ("unknown", "unproven") or (
+                svc.get("possible_service") == ours and
+                ours not in ("ssh", "smtp", "ftp",
+                             "http", "https", "mysql")):
+            svc["service"] = nm["service"]
+        svc["proven"] = True
+        svc["proven_by"] = "nmap"
+
+    # Label the authoritative service name (nmap first, then native).
+    for svc in services:
+        sname = svc.get("nmap_service") or svc["service"]
+        label = "%-5d %-12s %s" % (svc["port"], sname,
+                                   svc["banner"][:90].replace("\n", " "))
+        if svc.get("product") and svc.get("version"):
+            label += "  [%s %s]" % (svc["product"], svc["version"])
+        engine.log.finding("[service] %s (port open verified; %s)" % (
+            label,
+            "identified by %s" % svc.get("proven_by", "banner/handshake")
+            if svc["proven"] else "service UNPROVEN — no protocol response"))
+        engine.db.add_service(t.display, svc["port"], sname, svc["banner"],
+                              svc["product"], svc["version"], svc["tls"])
+    engine.state["services"] = services
+
+    _post_checks(engine, t, host, services)
+    if nmap_res:
+        _log_unknown_ports(engine, services)
+
+
+def _log_unknown_ports(engine, services):
+    for svc in services:
+        if svc["service"] in ("unknown", "unproven"):
+            engine.log.warn("[services] port %d remains unidentified — "
+                            "not classified, will NOT be reported as a "
+                            "service (avoids false positives)" % svc["port"])
+
+
+def _post_checks(engine, t, host, services):
+    for svc in services:
+        if svc["port"] in (25, 587) and svc.get("banner"):
+            relayed, detail = _smtp_relay_check(host, svc["port"])
+            if relayed:
+                engine.db.add_finding(Finding(
+                    t.display, "network.services", "exposure", "high",
+                    "OPEN MAIL RELAY on port %d" % svc["port"],
+                    detail="External spoofed sender accepted for external "
+                           "recipient; spam/phishing infrastructure value.",
+                    evidence=detail[:500],
+                    remediation="Restrict RCPT domains; require auth for "
+                                "external delivery.", confidence="firm"))
+        if svc["port"] == 389:
+            dse = _ldap_rootdse(host)
+            if dse:
+                svc["deep_probe"] = "LDAP rootDSE anonymous read: " + dse
+
+    try:
+        notes = run_deep_probes(host, services)
+    except Exception as e:
+        notes = []
+        engine.log.debug("deep probes failed: %r" % e)
+    for n in notes:
+        engine.log.info("[deep-probe] " + n)
+    if notes:
+        engine.db.add_finding(Finding(
+            t.display, "network.services", "recon", "info",
+            "Deep protocol handshake results (%d)" % len(notes),
+            detail="Active handshakes beyond passive banners across "
+                   "non-HTTP protocols.",
+            evidence="\n".join(notes)[:4000], confidence="firm"))
+    for svc in services:
+        dp = svc.get("deep_probe", "") or ""
+        if "[NO AUTHENTICATION]" in dp:
+            engine.db.add_finding(Finding(
+                t.display, "exploit.creds", "exposure", "high",
+                "VNC server allows connections WITHOUT authentication "
+                "(port %d)" % svc["port"],
+                detail="Full desktop control available anonymously.",
+                evidence=dp, confidence="firm"))
+        if "[UNAUTHENTICATED]" in dp:
+            engine.db.add_finding(Finding(
+                t.display, "exploit.creds", "exposure", "high",
+                "Redis INFO disclosed without authentication (port %d)"
+                % svc["port"],
+                detail="Server internals, OS and memory layout leak to "
+                       "anonymous clients.", evidence=dp[:600],
+                confidence="firm"))
+        mstat = re.search(r"stat_lines=(\d+)", dp)
+        if mstat and int(mstat.group(1)) > 0:
+            engine.db.add_finding(Finding(
+                t.display, "exploit.creds", "exposure", "medium",
+                "Memcached statistics exposed without auth (port %d)"
+                % svc["port"],
+                detail="%d STAT variables disclose cache keys, network and "
+                       "memory layout." % int(mstat.group(1)),
+                confidence="firm"))
+
+    intel_hits = []
+    for svc in services:
+        for hit in engine.intel.correlate_banner(svc["banner"]):
+            intel_hits.append((svc, hit))
+    for svc, hit in intel_hits:
+        cves = ", ".join("%s(%s)" % (c["id"], c["cvss"] or "?")
+                         for c in hit["cves"][:5])
+        top_cvss = max((c["cvss"] or 0) for c in hit["cves"])
+        sev = "critical" if top_cvss >= 9 else (
+            "high" if top_cvss >= 7 else "medium")
+        engine.db.add_finding(Finding(
+            t.display, "network.services", "cve-surface", sev,
+            "Potentially vulnerable software on port %d: %s %s" %
+            (svc["port"], hit["product"], hit["version"]),
+            detail="Banner-matched known vulnerabilities: %s\n%s" %
+                   (cves, "\n".join("- %s: %s" % (c["id"], c["desc"])
+                                    for c in hit["cves"][:6])),
+            evidence="Banner: %s" % svc["banner"][:300],
+            remediation="Update the affected component to a patched version; "
+                        "verify exposure manually before exploitation "
+                        "attempts.",
+            confidence="possible"))
+
+    for svc in services:
+        cert = svc.get("cert") or {}
+        if svc.get("tls"):
+            days = _days_left(cert.get("notAfter"))
+            if days is not None:
+                if days < 0:
+                    engine.db.add_finding(Finding(
+                        t.display, "web.tls", "tls", "high",
+                        "Expired TLS certificate on port %d (%d days)" %
+                        (svc["port"], -days),
+                        evidence="notAfter=%s" % cert.get("notAfter")))
+                elif days < 15:
+                    engine.db.add_finding(Finding(
+                        t.display, "web.tls", "tls", "medium",
+                        "TLS certificate expiring soon on port %d (%d "
+                        "days)" % (svc["port"], days),
+                        evidence=str(cert.get("notAfter"))))
+            subj = cert.get("subject", {})
+            issuer_cn = cert.get("issuer", {}).get("commonName", "")
+            cn = subj.get("commonName", "")
+            if issuer_cn and cn and issuer_cn.lower().replace("*", "") == \
+                    cn.lower().replace("*", ""):
+                engine.db.add_finding(Finding(
+                    t.display, "web.tls", "tls", "high",
+                    "Self-signed certificate on port %d" % svc["port"],
+                    evidence="CN=%s issued by=%s" % (cn, issuer_cn)))
 
 
 def _smtp_relay_check(host, port):
@@ -192,177 +531,6 @@ def _ldap_rootdse(host):
     return None
 
 
-def run(engine):
-    t = engine.target
-    host = t.scan_host()
-    open_ports = engine.state.get("open_ports", {})
-    services = []
-    url_hint = None
-    if t.kind == "url" and t.port:
-        url_hint = t.port
-    for port, latency in sorted(open_ports.items()):
-        svc = {"host": host, "port": port, "service": "unknown",
-               "possible_service": guess_service(port) or None,
-               "proven": False, "banner": "", "product": "", "version": "",
-               "tls": False, "latency_ms": latency}
-        use_tls = port in (443, 8443, 993, 995, 465, 992, 990)
-        banner = ""
-        force_http = url_hint is not None and port == url_hint and \
-            t.scheme == "http"
-        if not use_tls or force_http:
-            banner = _probe_banner(host, port,
-                                   force_http=force_http).decode(
-                                       "utf-8", "replace").strip()
-            low = banner.lower()
-            for hint, name in SERVICE_HINTS:
-                if hint in low:
-                    svc["service"] = name
-                    svc["proven"] = True
-                    break
-            if not banner and port in (443, 465, 993, 995):
-                use_tls = True
-        if use_tls or svc["service"] in ("https", "https-alt"):
-            info = _tls_info(host, port, server_name=t.hostname if t.is_domain else None)
-            if "error" not in info:
-                svc["tls"] = True
-                svc["tls_version"] = info.get("version", "")
-                svc["cert"] = {k: v for k, v in info.items() if k != "error"}
-                svc["proven"] = True
-                svc["service"] = "https" if port in (443, 8443) else "tls"
-                if not banner:
-                    banner = "%s / cert CN=%s" % (
-                        info.get("version", "TLS"),
-                        info.get("subject", {}).get("commonName", "?"))
-            else:
-                if svc["service"] in ("unknown", "https"):
-                    banner = banner or ""
-        if banner:
-            svc["banner"] = banner[:1000]
-            provable = _probe_classify(banner) or svc["proven"]
-            if provable:
-                svc["proven"] = True
-                prod_ver = _extract_prod_version(banner)
-                if prod_ver:
-                    svc["product"], svc["version"] = prod_ver
-        if not svc["proven"] and svc["banner"]:
-            svc["service"] = "unproven"
-        elif not svc["proven"]:
-            svc["service"] = "unknown"
-        services.append(svc)
-        engine.db.add_service(t.display, port, svc["service"], svc["banner"],
-                              svc["product"], svc["version"], svc["tls"])
-        label = "%-5d %-12s %s" % (port, svc["service"],
-                                   svc["banner"][:90].replace("\n", " "))
-        engine.log.finding("[service] %s (port open verified; %s)" % (
-            label, "service confirmed by banner/handshake"
-            if svc["proven"] else "service UNPROVEN — no protocol response"))
-    engine.state["services"] = services
-
-    for svc in services:
-        if svc["port"] in (25, 587) and svc.get("banner"):
-            relayed, detail = _smtp_relay_check(host, svc["port"])
-            if relayed:
-                engine.db.add_finding(Finding(
-                    t.display, "network.services", "exposure", "high",
-                    "OPEN MAIL RELAY on port %d" % svc["port"],
-                    detail="External spoofed sender accepted for external "
-                           "recipient; spam/phishing infrastructure value.",
-                    evidence=detail[:500],
-                    remediation="Restrict RCPT domains; require auth for "
-                                "external delivery.", confidence="firm"))
-        if svc["port"] == 389:
-            dse = _ldap_rootdse(host)
-            if dse:
-                svc["deep_probe"] = "LDAP rootDSE anonymous read: " + dse
-
-    try:
-        notes = run_deep_probes(host, services)
-    except Exception as e:
-        notes = []
-        engine.log.debug("deep probes failed: %r" % e)
-    for n in notes:
-        engine.log.info("[deep-probe] " + n)
-    if notes:
-        engine.db.add_finding(Finding(
-            t.display, "network.services", "recon", "info",
-            "Deep protocol handshake results (%d)" % len(notes),
-            detail="Active handshakes beyond passive banners across "
-                   "non-HTTP protocols.",
-            evidence="\n".join(notes)[:4000], confidence="firm"))
-    import re as _re
-    for svc in services:
-        dp = svc.get("deep_probe", "") or ""
-        if "[NO AUTHENTICATION]" in dp:
-            engine.db.add_finding(Finding(
-                t.display, "exploit.creds", "exposure", "high",
-                "VNC server allows connections WITHOUT authentication "
-                "(port %d)" % svc["port"],
-                detail="Full desktop control available anonymously.",
-                evidence=dp, confidence="firm"))
-        if "[UNAUTHENTICATED]" in dp:
-            engine.db.add_finding(Finding(
-                t.display, "exploit.creds", "exposure", "high",
-                "Redis INFO disclosed without authentication (port %d)"
-                % svc["port"],
-                detail="Server internals, OS and memory layout leak to "
-                       "anonymous clients.", evidence=dp[:600],
-                confidence="firm"))
-        mstat = _re.search(r"stat_lines=(\d+)", dp)
-        if mstat and int(mstat.group(1)) > 0:
-            engine.db.add_finding(Finding(
-                t.display, "exploit.creds", "exposure", "medium",
-                "Memcached statistics exposed without auth (port %d)"
-                % svc["port"],
-                detail="%d STAT variables disclose cache keys, network and "
-                       "memory layout." % int(mstat.group(1)),
-                confidence="firm"))
-
-    intel_hits = []
-    for svc in services:
-        for hit in engine.intel.correlate_banner(svc["banner"]):
-            intel_hits.append((svc, hit))
-    for svc, hit in intel_hits:
-        cves = ", ".join("%s(%s)" % (c["id"], c["cvss"] or "?") for c in hit["cves"][:5])
-        top_cvss = max((c["cvss"] or 0) for c in hit["cves"])
-        sev = "critical" if top_cvss >= 9 else ("high" if top_cvss >= 7 else "medium")
-        engine.db.add_finding(Finding(
-            t.display, "network.services", "cve-surface", sev,
-            "Potentially vulnerable software on port %d: %s %s" %
-            (svc["port"], hit["product"], hit["version"]),
-            detail="Banner-matched known vulnerabilities: %s\n%s" %
-                   (cves, "\n".join("- %s: %s" % (c["id"], c["desc"]) for c in hit["cves"][:6])),
-            evidence="Banner: %s" % svc["banner"][:300],
-            remediation="Update the affected component to a patched version; "
-                        "verify exposure manually before exploitation attempts.",
-            confidence="possible"))
-
-    for svc in services:
-        cert = svc.get("cert") or {}
-        if svc.get("tls"):
-            days = _days_left(cert.get("notAfter"))
-            if days is not None:
-                if days < 0:
-                    engine.db.add_finding(Finding(
-                        t.display, "web.tls", "tls", "high",
-                        "Expired TLS certificate on port %d (%d days)" %
-                        (svc["port"], -days),
-                        evidence="notAfter=%s" % cert.get("notAfter")))
-                elif days < 15:
-                    engine.db.add_finding(Finding(
-                        t.display, "web.tls", "tls", "medium",
-                        "TLS certificate expiring soon on port %d (%d days)" %
-                        (svc["port"], days), evidence=str(cert.get("notAfter"))))
-            subj = cert.get("subject", {})
-            issuer_cn = cert.get("issuer", {}).get("commonName", "")
-            cn = subj.get("commonName", "")
-            if issuer_cn and cn and issuer_cn.lower().replace("*", "") == \
-                    cn.lower().replace("*", ""):
-                engine.db.add_finding(Finding(
-                    t.display, "web.tls", "tls", "high",
-                    "Self-signed certificate on port %d" % svc["port"],
-                    evidence="CN=%s issued by=%s" % (cn, issuer_cn)))
-
-
 def _extract_prod_version(banner):
     patterns = [r"(openssh)[_ ](\d+[\w.]*)", r"(apache)/(\d+[\w.]*)",
                 r"(nginx)/(\d+[\w.]*)", r"(microsoft-iis)/(\d+[\w.]*)",
@@ -371,7 +539,6 @@ def _extract_prod_version(banner):
                 r"(werkzeug)/(\d+[\w.]*)", r"(python)/(\d+[\w.]*)",
                 r"(simplehttp)/(\d+[\w.]*)", r"(jenkins)/?\s*\(?([\w.-]+)",
                 r"(mysql)[_ ]?(\d+[\w.]*)", r"(postgresql)[_ ]?(\d+[\w.]*)"]
-    import re
     for pat in patterns:
         m = re.search(pat, banner, re.I)
         if m:

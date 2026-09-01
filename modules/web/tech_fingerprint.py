@@ -375,6 +375,46 @@ def _strong_cms_from(gen_low, c):
     return bool(gen_low and _bounded_in(c, gen_low))
 
 
+# Cloud / CDN / object-storage markers. The cloud exposure scan must only run
+# when evidence of a cloud-backed target is found (never on every target).
+CLOUD_TECH = {"Cloudflare", "Akamai", "Fastly", "AWS CloudFront", "Azure",
+              "Google Cloud", "Amazon S3", "AWS", "GCP"}
+CLOUD_HOST_HINTS = (".s3.", ".s3.amazonaws.com", ".blob.core.windows.net",
+                    ".storage.googleapis.com", ".cloudfront.net", ".azurefd.net",
+                    ".akamaiedge.net", ".fastly.net", ".aliyuncs.com",
+                    ".amazonaws.com")
+
+
+def _flag_cloud(engine, techs, pages):
+    """Set engine.state['cloud_indicators'] True only when concrete cloud
+    evidence exists — a known cloud/CDN technology fingerprint, or a web/url
+    hostname that points at a cloud storage/CDN domain."""
+    hits = set()
+    for name in techs:
+        if name in CLOUD_TECH:
+            hits.add(name)
+    hay = []
+    for wt in engine.state.get("web_targets", []) or []:
+        try:
+            hay.append(urlsplit(wt["url"]).netloc.lower())
+        except Exception:
+            pass
+    for p in pages:
+        hdr = " ".join(str(v).lower() for v in (p.get("headers") or {}).values())
+        if any(h in hdr for h in (".cloudfront.net", ".azurefd.net",
+                                  ".akamaiedge.net", "x-amz-", ".s3.")):
+            hits.add("cloud-headers")
+    host = (engine.target.hostname or "").lower()
+    if any(h in host for h in CLOUD_HOST_HINTS):
+        hits.add("cloud-hostname")
+    if hits:
+        engine.state["cloud_indicators"] = True
+        engine.state.setdefault("cloud_tech", []).extend(sorted(hits))
+        engine.log.info("[cloud] cloud-backed target detected (%s) — "
+                        "enabling cloud exposure scan"
+                        % ", ".join(sorted(hits)))
+
+
 def run(engine):
     t = engine.target
     targets = engine.state.get("web_targets") or []
@@ -413,6 +453,7 @@ def run(engine):
     tech_proof = {name: d["proofs"][0] if d["proofs"] else name
                   for name, d in det.items()}
     strong = {name for name, d in det.items() if d["strong"]}
+    _flag_cloud(engine, techs, pages)
     sightings = []
     for p in pages:
         needle = "%s %s %s" % (

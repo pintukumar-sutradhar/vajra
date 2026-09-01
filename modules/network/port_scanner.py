@@ -93,14 +93,19 @@ def run(engine):
                     (host, len(ports), engine.cfg("scan_concurrency", 600)))
     t0 = time.time()
 
+    from core.progress import ProgressMeter
+    meter = ProgressMeter(label="port scan %s" % host, total=len(ports),
+                          log=engine.log)
+
     def progress(done, total):
-        engine.log.debug("port scan %d/%d" % (done, total))
+        meter.update(done)
 
     if use_syn:
         engine.log.info("SYN scan mode (%d ports, root)" % len(ports))
         result = _syn_scan(host, ports,
                            timeout=float(engine.cfg("scan_timeout", 2.0)))
         dur = time.time() - t0
+        meter.finish()
         engine.state["open_ports"] = dict(sorted(result.items()))
         engine.log.success("SYN scan done: %d open port(s)" % len(result))
         return
@@ -116,6 +121,7 @@ def run(engine):
         raise
     finally:
         loop.close()
+    meter.finish()
     dur = time.time() - t0
     engine.state["open_ports"] = {p: l for p, l in result.items()}
     engine.log.success("Port scan finished in %.1fs: %d open port(s)%s" %

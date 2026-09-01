@@ -163,7 +163,7 @@ register("web.api", "web", "modules.web.api_module",
 register("web.cloud", "web", "modules.web.cloud_check",
          "Public bucket exposure scan (S3 / GCS / Azure Blob) via read-only "
          "listing probes",
-         cond=["always"], profile_skip=[])
+         cond=["has_cloud"], profile_skip=[])
 
 register("exploit.creds", "exploit", "modules.exploit.default_creds",
          "Default credentials and unauth admin panels",

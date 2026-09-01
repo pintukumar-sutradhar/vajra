@@ -12,6 +12,7 @@ banner. The MS17-010 verdict prefers the local nmap script
 transaction (MaxParameterCount=4) when impacket is importable. Exploitation is
 never automated: if vulnerable, an operator-run Metasploit resource script is
 dropped into evidence/ for a deliberate decision."""
+import os
 import socket
 import struct
 
@@ -324,19 +325,13 @@ class SmbSession:
                  + struct.pack("<H", 0))
         pkt = smb2_header(cmd=1, msg_id=self.msg_id,
                           session_id=session_id) + setup + blob
-        resp = self._rt(pkt[len(payload_slice()):]) \
-            if False else self._rt(pkt)
-        return resp
+        return self._rt(pkt)
 
     def close(self):
         try:
             self.sock.close()
         except Exception:
             pass
-
-
-def payload_slice():
-    return b""
 
 
 def status_of(resp):
@@ -359,9 +354,6 @@ def ntlm_fingerprint(host):
         for aid, name in AV_NAMES.items():
             if avs.get(aid):
                 info[name] = avs[aid]
-        v = r.find(b"\x06\x00\x28")  # version field heuristic
-        if len(r) > 130:
-            osb = r[r.find(b"\x06\x00") + 0:] if False else b""
         join = lambda ks: " / ".join(info[k] for k in ks if k in info)
         fq = join(["dns-domain", "dns-host"])
         nb = join(["netbios-domain", "netbios-host"])

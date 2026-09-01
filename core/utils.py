@@ -126,6 +126,37 @@ def is_ip(value):
         return False
 
 
+_ETC_HOSTS = None
+
+
+def load_etc_hosts():
+    """Parse /etc/hosts into {ip: [hostname, ...]}. Cached. Returns an empty
+    dict on any error so callers never depend on the file's existence."""
+    global _ETC_HOSTS
+    if _ETC_HOSTS is None:
+        mapping = {}
+        try:
+            with open("/etc/hosts", "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.split("#", 1)[0].strip()
+                    if not line:
+                        continue
+                    parts = line.split()
+                    if len(parts) >= 2 and is_ip(parts[0]):
+                        mapping.setdefault(parts[0].strip("[]"), []).extend(
+                            p for p in parts[1:] if p)
+        except Exception:
+            pass
+        _ETC_HOSTS = mapping
+    return _ETC_HOSTS
+
+
+def hosts_for_ip(ip):
+    """Return hostnames for an IP registered in /etc/hosts (offline-safe
+    resolution that works when DNS is not reachable)."""
+    return load_etc_hosts().get((ip or "").strip("[]"), [])
+
+
 def expand_cidr(raw, cap=256):
     net = ipaddress.ip_network(raw, strict=False)
     hosts = [str(h) for h in net.hosts()]
