@@ -184,7 +184,13 @@ A finding whose confidence is below its claimed severity is automatically downgr
    <div class="narr">$synthesis</div>
   </section>
 
-  $remediation
+   $remediation
+
+  <section>
+   <h2>Attack paths &amp; finding correlation</h2>
+   $atkpath
+   $correlated
+  </section>
 
   <section>
    <h2>Retest delta (vs previous snapshot)</h2>
@@ -242,6 +248,12 @@ def build_data(engine):
     narrative = engine.intel.summarize(stats, findings, services,
                                        [{"display": d} for d in targets])
     score = engine.intel.score(findings)
+    try:
+        from core.attackpath import correlate_findings, build_attack_paths
+        correlated = correlate_findings(findings)
+        paths = build_attack_paths(engine.state, findings)
+    except Exception:
+        correlated, paths = [], []
     return {
         "meta": {"tool": "VAJRA",
                  "generated": datetime.datetime.now().isoformat(timespec="seconds"),
@@ -259,6 +271,8 @@ def build_data(engine):
         "os_guess": engine.state.get("os_guess", ""),
         "evasion": list(getattr(engine, "evasion_all", []))[:150],
         "objectives": objectives(findings, getattr(engine, "state", {})),
+        "correlated": correlated,
+        "attack_paths": paths,
     }
 
 
@@ -361,7 +375,65 @@ def render_html(data):
         delta=_esc("\n".join(
             "%s: %s" % (k, ", ".join(v[:3]) + ("..." if len(v) > 3 else ""))
             for k, v in data.get("delta", {}).items())),
-        remediation=_render_remediation(data.get("remediation", [])))
+        remediation=_render_remediation(data.get("remediation", [])),
+        atkpath=attack_paths_html(data.get("attack_paths") or []),
+        correlated=correlated_html(data.get("correlated") or []))
+
+
+def attack_paths_html(paths):
+    if not paths:
+        return ('<div class="narr muted">No evidence-grounded attack paths '
+                'were derived — nothing to chain.</div>')
+    blocks = []
+    for i, p in enumerate(paths, 1):
+        step_rows = "".join(
+            '<tr><td><b>%s</b></td><td><code>%s</code></td><td>%s</td></tr>' % (
+                _esc(s["title"]), _esc(s.get("technique", "-")),
+                _esc("; ".join(s.get("evidence", []))[:200] or "-"))
+            for s in p.get("steps", []))
+        blocks.append(
+            '<div class="card" style="margin-bottom:12px">'
+            '<div><span class="sev %s">%s</span> '
+            '<b style="color:#f78166">Path %d:</b> %s '
+            '<span class="muted">&rarr;</span> %s</div>'
+            '<div class="muted" style="margin:6px 0">confidence=%s &nbsp;|&nbsp; '
+            'privilege: %s &nbsp;|&nbsp; technique: <code>%s</code></div>'
+            '<table><tr><th>Step</th><th>Technique</th><th>Evidence</th></tr>'
+            '%s</table></div>' % (
+                _esc(p.get("severity", "info")), _esc(p.get("severity", "info")),
+                i, _esc(p.get("start", "")), _esc(p.get("destination", "")),
+                _esc(p.get("confidence", "-")),
+                _esc(p.get("privilege_gained", "-")),
+                _esc(p.get("technique", "-")), step_rows))
+    return "".join(blocks)
+
+
+def correlated_html(corr):
+    if not corr:
+        return ""
+    rows = []
+    for c in corr:
+        if not c.get("key"):
+            continue
+        plural = "s" if c.get("title_count", 1) > 1 else ""
+        rows.append(
+            '<tr><td><span class="sev %s">%s</span></td>'
+            '<td><b>%s</b><br><span class="muted">%s</span></td>'
+            '<td>%s</td>'
+            '<td>%d finding%s from %d module(s)</td>'
+            '<td><code>%s</code></td></tr>' % (
+                _esc(c.get("severity", "info")), _esc(c.get("severity", "info")),
+                _esc(c.get("label", "")), _esc(c.get("target", "")),
+                "; ".join(_esc(t[:70]) for t in c.get("titles", [])[:3]),
+                c.get("title_count", 1), plural, len(c.get("sources", [])),
+                _esc(c.get("technique", "")) if c.get("technique") else "-"))
+    if not rows:
+        return ""
+    return ('<div style="margin-top:14px"><b>Correlated findings '
+            '(one issue, many detection sources):</b>'
+            '<table style="margin-top:8px"><tr><th>Sev</th><th>Issue</th>'
+            '<th>Evidence titles</th><th>Sources</th><th>MITRE</th></tr>%s'
+            '</table></div>' % "".join(rows))
 
 
 def objectives_html(objs):
@@ -413,6 +485,7 @@ def _render_remediation(sections):
 
 
 def render_markdown(data):
+    from core.attackpath import attack_path_md
     stats = data["stats"]
     lines = []
     lines.append("# ⚡ Vajra Security Assessment Report")
@@ -443,6 +516,23 @@ def render_markdown(data):
     lines.append("")
     lines.append(data.get("synthesis", ""))
     lines.append("")
+    lines.append("## Attack Paths")
+    lines.append("")
+    lines.append(attack_path_md(data.get("attack_paths") or []))
+    lines.append("")
+    if data.get("correlated"):
+        lines.append("## Correlated findings (deduplicated)")
+        lines.append("")
+        lines.append("| Severity | Issue | Sources | Evidence titles |")
+        lines.append("|---|---|---|---|")
+        for c in data["correlated"]:
+            if not c.get("key"):
+                continue
+            lines.append("| %s | %s | %s | %s |" % (
+                c["severity"], c["label"],
+                ", ".join(c["sources"]),
+                "; ".join(t[:60] for t in c["titles"][:3])))
+        lines.append("")
     lines.append("## Remediation Playbook")
     lines.append("")
     for sec in data.get("remediation", []):

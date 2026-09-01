@@ -1183,6 +1183,12 @@ def build_data_for(db, target, engine):
     except Exception:
         compliance_remediate = lambda f: []
         spread = []
+    try:
+        from core.attackpath import correlate_findings, build_attack_paths
+        correlated = correlate_findings(findings)
+        paths = build_attack_paths(engine.state, findings)
+    except Exception:
+        correlated, paths = [], []
     data = {
         "meta": {"tool": "VAJRA",
                  "generated": datetime.datetime.now().isoformat(
@@ -1199,6 +1205,8 @@ def build_data_for(db, target, engine):
         "remediation": compliance_remediate(findings),
         "delta": engine.state.get("delta") or {},
         "spread": spread,
+        "correlated": correlated,
+        "attack_paths": paths,
         "services": services,
         "findings": findings,
         "events": events,

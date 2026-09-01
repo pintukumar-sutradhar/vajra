@@ -1821,6 +1821,53 @@ def t_staged_c2():
     return True, ("staged stagers compile (plain/tls/obfuscated) OK")
 
 
+def t_attack_paths():
+    from core.attackpath import (correlate_findings, build_attack_paths,
+                                 canonical_key, attack_path_md)
+    # dedup: one XSS issue detected by three different modules -> one cluster
+    finds = [
+        {"severity": "high", "module": "web.vulnscan",
+         "title": "reflected XSS in /search", "target": "http://app.local",
+         "evidence": "<script>", "confidence": "firm"},
+        {"severity": "high", "module": "web.wiretests",
+         "title": "cross-site scripting /search", "target": "http://app.local",
+         "evidence": "x", "confidence": "tentative"},
+        {"severity": "medium", "module": "web.policy",
+         "title": "XSS header mishandling", "target": "http://app.local",
+         "confidence": "tentative"},
+        {"severity": "low", "module": "network.tls",
+         "title": "weak TLS cipher", "target": "app.local", "confidence": "t"},
+    ]
+    corr = correlate_findings(finds)
+    xss = [c for c in corr if c.get("key") == "xss"]
+    assert xss, "no xss cluster"
+    assert xss[0]["title_count"] == 3, xss
+    assert xss[0]["severity"] == "high" and xss[0]["confidence"] == "firm"
+    assert len(xss[0]["sources"]) == 3
+    assert canonical_key("command injection in upload") == "command_injection"
+    # attack paths are evidence-grounded only
+    state = {"services": [{"target": "app.local", "port": 443,
+                           "service": "https"}],
+             "open_ports": {443: ["https"], 22: ["ssh"]},
+             "creds": [("ssh", "alice", "pw", "10.0.0.5")],
+             "web_auth": {"established": True},
+             "ad": {"domain": "corp.local", "forest": "corp.local"}}
+    paths = build_attack_paths(state, finds)
+    assert paths, "expected paths"
+    for p in paths:
+        assert "start" in p and "destination" in p and "steps" in p
+        assert p["severity"] in ("critical", "high", "medium", "low", "info")
+        assert p["confidence"] in ("certain", "firm", "tentative")
+        assert p.get("technique"), "missing technique"
+        for s in p["steps"]:
+            assert "title" in s and "evidence" in s
+    # empty state / no findings -> no fabricated path (must not blow up)
+    assert build_attack_paths({}, []) == []
+    md = attack_path_md(paths)
+    assert "->" in md and "Path 1" in md
+    return True, ("correlation/dedup + evidence-grounded attack paths OK")
+
+
 def run_all():
     print("\nVAJRA self-test")
     print("-" * 60)
@@ -1873,6 +1920,7 @@ def run_all():
     check("AD DACL parser (canonical SIDs, risky/danger)", t_sid_acl)
     check("post-exploit SSH loot survey", t_loot_survey)
     check("staged C2 stagers compile (plain/tls/obfuscated)", t_staged_c2)
+    check("correlation/dedup + evidence-grounded attack paths", t_attack_paths)
     fails = [r for r in RESULTS if not r[1]]
     print("-" * 60)
     print(" %d/%d checks passed%s" % (len(RESULTS) - len(fails), len(RESULTS),

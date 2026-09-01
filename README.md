@@ -136,7 +136,7 @@ workspaces that turn every re-run into a measurable retest.
 ```bash
 git clone https://github.com/pintukumar-sutradhar/vajra && cd vajra
 ./setup.sh                     # deps + wordlists + QA suite
-python3 vajra.py --selftest    # 47-point verification
+python3 vajra.py --selftest    # 50-point verification (49 core + attack-path & finding correlation)
 python3 vajra.py --version     # VAJRA v1.3-beta
 python3 vajra.py --update      # pull the latest build from GitHub
 ```
@@ -486,6 +486,16 @@ Benchmark / NIST CSF / PCI DSS 4.0, grouped by severity), a **retest delta**
 patterns. Workspaces live under `Outputs/workspaces/<target>/` (or your
 `--workspace` name) — latest snapshot, run history, per-target state and a
 running `workspace_report.md`.
+
+Reports also carry an **attack-path & finding-correlation** view. Findings
+describing the *same underlying issue* on a target are merged into one
+correlated cluster (all detection sources plus evidence kept, so Nmap + web
+scanner + CVE scanner never flood the report with duplicates), and the
+framework chains the collected facts into **evidence-grounded attack paths** —
+a start point, intermediate steps, prerequisites, the supporting evidence for
+every step, confidence, privilege gained, severity and a MITRE technique.
+Paths are built **only from assets, services, credentials and findings VAJRA
+actually collected**; it never invents a step that is not backed by evidence.
 
 ## Fast external port scanning & fresh CVE DB
 
