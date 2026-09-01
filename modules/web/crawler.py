@@ -41,6 +41,14 @@ def run(engine):
             return set()
         return set()
 
+    crawl_total = 0
+    for wt in targets:
+        base = wt["url"].rstrip("/")
+        pbase = urlparse(base)
+        limit = max_pages if wt.get("primary") else min(10, max_pages)
+        crawl_total += limit
+    crawled = 0
+
     for wt in targets:
         base = wt["url"].rstrip("/")
         pbase = urlparse(base)
@@ -86,6 +94,10 @@ def run(engine):
                     and depth > 0:
                 continue
             seen.add(norm)
+            crawled += 1
+            engine.progress(min(crawled, crawl_total), crawl_total,
+                            detail="page %d/%d" % (min(crawled, crawl_total),
+                                                   crawl_total))
             r = engine.http.get(norm)
             body = r.body
             title = extract_title(body)

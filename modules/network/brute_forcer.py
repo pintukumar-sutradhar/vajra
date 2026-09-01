@@ -90,9 +90,14 @@ def run(engine):
                        ("unknown" if nfiles < 0 else str(nfiles)),
                 remediation="Disable anonymous FTP or restrict to read-only "
                             "chrooted shares.", confidence="firm"))
+        ftp_total = len(combos)
+        ftp_done = 0
         for u, p in combos:
             if anon_ok:
                 break
+            ftp_done += 1
+            engine.progress(ftp_done, ftp_total,
+                            detail="ftp %d/%d" % (ftp_done, ftp_total))
             ok, nf = _ftp_check(host, 21, u, p)
             if ok is True:
                 creds_found.append(("21/ftp", u, p))
@@ -118,9 +123,14 @@ def run(engine):
                       for p in pwds[:ssh_pwd_cap]]
             engine.log.info("SSH brute: %d combinations" % len(combos))
             stop = False
+            ssh_total = len(combos)
+            ssh_done = 0
             for u, p in combos:
                 if stop:
                     break
+                ssh_done += 1
+                engine.progress(ssh_done, ssh_total,
+                                detail="ssh %d/%d" % (ssh_done, ssh_total))
                 r = _ssh_check(host, 22, u, p)
                 if r is True:
                     creds_found.append(("22/ssh", u, p))

@@ -238,6 +238,8 @@ def run(engine):
     tested = set()
     blocked_stats = {}
     class_hits = {}
+    pt_total = max(1, len(points))
+    pt_done = 0
 
     def record(cls, pt, k, res, confidence="firm"):
         title = TITLES[cls] % k
@@ -259,6 +261,10 @@ def run(engine):
                             res.technique))
 
     for pt in points:
+        pt_done += 1
+        engine.progress(min(pt_done, pt_total), pt_total,
+                        detail="inject %d/%d" % (min(pt_done, pt_total),
+                                                 pt_total))
         fields = [fd[0] for fd in pt.fields]
         if pt.kind == "xml":
             _run_xml_class(engine, pt, t, targets, waf, direct_cap,

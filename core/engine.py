@@ -509,9 +509,16 @@ class Engine:
             disabled.add("network.brute")
         recon_only = self.profile == "recon"
         all_mods = list(get_modules())
+        # A single, vulnerability-scanner-style run meter: total is 100 so the
+        # bar is driven by the % of weighted scan work actually done (base
+        # weight completed + live sub-progress of the running module), not by a
+        # flat module counter. ETA comes from a smoothed work-rate.
+        self._prog_base = 0.0
+        self._prog_grand = float(sum(self._module_weight(m)
+                                     for m in self._scheduled_modules()) or 1)
+        self._mod_progress_weight = 0
         self._run_meter = ProgressMeter(
-            label="run %s" % t.display, total=max(1, len(all_mods)),
-            log=self.log)
+            label="scan %s" % t.display, total=100, log=self.log)
         for phase in ("recon", "net", "web", "exploit", "ad", "post"):
             if recon_only and phase not in ("recon",):
                 continue
@@ -626,23 +633,116 @@ class Engine:
             self.log.error("[ai-mission] aborted: %r" % e)
             self.log.debug(traceback.format_exc())
 
+    # Heuristics for how "expensive" each module is. The run-level progress
+    # meter weights these so a slow module (port scan, dir brute-force) moves
+    # the bar meaningfully, giving a stable % + ETA like a vulnerability
+    # scanner instead of a flat 1/52 step.
+    MODULE_WEIGHTS = {
+        "recon.dns": 1, "recon.whois": 1, "recon.subdomains": 2,
+        "recon.emails": 1, "recon.axfr": 1,
+        "network.portscan": 18, "network.services": 10, "network.udpprobe": 2,
+        "network.osfp": 3, "network.service_exposure": 5,
+        "network.smtp": 2, "network.shares": 3, "network.snmp": 2,
+        "network.brute": 10,
+        "web.auth_login": 3, "web.crawl": 10, "web.dirbuster": 14,
+        "web.headers": 2, "web.tls": 3, "web.waf": 2, "web.tech": 3,
+        "web.js": 3, "web.ssrf_scan": 4, "web.ssrf_pivot": 3,
+        "web.race": 3, "web.jwt_audit": 3, "web.graphql_probe": 3,
+        "web.vulnscan": 12, "web.policy": 2, "web.upload": 3,
+        "web.takeover": 3, "web.wiretests": 2, "web.loot": 4, "web.api": 5,
+        "web.cloud": 3,
+        "exploit.creds": 4, "exploit.exploit": 5, "exploit.spray": 4,
+        "exploit.verify": 2, "exploit.coverage": 4, "exploit.form_brute": 8,
+        "ad.discovery": 3, "ad.smb_recon": 3, "ad.kerberos": 4,
+        "ad.ldap_enum": 4, "ad.spray": 3, "ad.movement": 4,
+        "ad.privesc_ops": 4, "ad.power": 4,
+        "post.loot": 2, "post.recon": 3, "web.ai_assist": 5,
+    }
+
+    def _module_weight(self, m):
+        return int(self.MODULE_WEIGHTS.get(m["name"], 3))
+
+    def _scheduled_modules(self):
+        """Deterministically predict which modules will run for this target so
+        the run meter can show a meaningful total (best effort; conditions may
+        still skip some, which the meter tolerates)."""
+        if self.args.modules:
+            enabled_names = [x.strip() for x in
+                             self.args.modules.split(",")]
+        else:
+            enabled_names = None
+        disabled = {x.strip() for x in
+                    (self.args.exclude_modules or "").split(",") if x.strip()}
+        if self.args.no_brute:
+            disabled.add("network.brute")
+        recon_only = self.profile == "recon"
+        planned = []
+        for phase in ("recon", "net", "web", "exploit", "ad", "post"):
+            if recon_only and phase != "recon":
+                continue
+            if phase == "ad" and not self._ad_mode:
+                continue
+            for m in get_modules():
+                if m["phase"] != phase:
+                    continue
+                name = m["name"]
+                if enabled_names and not any(
+                        name == n or n.split(".")[-1] == name.split(".")[-1]
+                        for n in enabled_names):
+                    continue
+                if name in disabled:
+                    continue
+                if self.profile in m["profile_skip"]:
+                    continue
+                planned.append(m)
+        return planned
+
+    def progress(self, cur=None, total=None, detail=None, weight=None):
+        """Live run-progress reporter callable by any module.
+
+        A module with bulk work calls engine.progress(current, sub_total,
+        detail="bp") during its loop; the run meter then shows the overall %,
+        blending this module's sub-progress into its weight, plus a stable ETA
+        and the active task as detail text.
+        """
+        meter = getattr(self, "_run_meter", None)
+        if meter is None:
+            return
+        if weight is not None:
+            self._mod_progress_weight = weight
+        w = getattr(self, "_mod_progress_weight", 1)
+        if cur is not None and total:
+            frac = max(0.0, min(1.0, cur / float(total)))
+            overall = (self._prog_base + w * frac) / float(self._prog_grand)
+        else:
+            overall = self._prog_base / float(self._prog_grand)
+        meter.update(int(overall * 100), force=False)
+        if detail:
+            meter.set_detail(detail)
+
     def _exec(self, m):
         t0 = time.time()
         self.log.info("» module %-22s %s" % (m["name"], "(" + m["desc"] + ")"))
         if getattr(self, "_run_meter", None) is not None:
-            self._run_meter.label = "module %s" % m["name"]
-            self._run_meter.advance()
+            w = self._module_weight(m)
+            self._mod_progress_weight = w
+            self.progress(cur=0, total=1, detail=m["name"],
+                          weight=w)
         self.db.add_event(self.target.display, "module-start", m["name"])
         try:
             mod = importlib.import_module(m["func"])
             mod.run(self)
             dur = time.time() - t0
+            self._prog_base += self._module_weight(m)
+            self.progress(detail=m["name"])
             self.log.success("» module %-22s done (%.1fs)" % (m["name"], dur))
             self.db.add_event(self.target.display, "module-end",
                               "%s %.1fs" % (m["name"], dur))
         except KeyboardInterrupt:
             raise
         except Exception as e:
+            self._prog_base += self._module_weight(m)
+            self.progress(detail=m["name"])
             self.log.error("module %s crashed: %r" % (m["name"], e))
             self.log.debug(traceback.format_exc())
             self.db.add_event(self.target.display, "module-error",

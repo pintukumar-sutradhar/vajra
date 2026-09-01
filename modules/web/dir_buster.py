@@ -1,7 +1,7 @@
 """Vajra - directory & sensitive file discovery with smart classification."""
 import os
 import re
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from core.database import Finding
 from core.utils import rand_path
@@ -79,8 +79,19 @@ def run(engine):
         rb = engine.http.get(base + "/" + rand_path(12) + ".php",
                              allow_redirects=False)
         baselines[base] = (rb.status, len(rb.body))
+    results = []
+    total_jobs = len(jobs)
+    checked = 0
     with ThreadPoolExecutor(max_workers=threads) as ex:
-        results = list(ex.map(work, jobs))
+        fut = {ex.submit(work, j): j for j in jobs}
+        for af in as_completed(fut):
+            try:
+                results.append(af.result())
+            except Exception:
+                pass
+            checked += 1
+            engine.progress(checked, total_jobs,
+                            detail="dir %d/%d" % (checked, total_jobs))
 
     for base, path, url, status, cls, loc, is_listing, r, soft404 in results:
         if soft404:

@@ -31,6 +31,13 @@ class Logger:
         ts = datetime.datetime.now().strftime("%H:%M:%S")
         line = "[%s] [%-7s] %s" % (ts, lvl, msg)
         with self._lock:
+            # Do not let a live progress bar mangle the log stream: clear the
+            # active meter line first, print, then redraw it underneath.
+            try:
+                from core.progress import _State
+                _State.clear_lines()
+            except Exception:
+                pass
             if self.color:
                 print("%s%s%s" % (COLORS.get(lvl, ""), line, RESET), flush=True)
             else:
@@ -41,6 +48,11 @@ class Logger:
                     self._fh.flush()
                 except Exception:
                     pass
+            try:
+                from core.progress import _State
+                _State.refresh()
+            except Exception:
+                pass
 
     def set_file(self, path):
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
