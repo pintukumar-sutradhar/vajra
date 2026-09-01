@@ -1,10 +1,92 @@
-"""Vajra - high-performance asynchronous TCP connect port scanner."""
+"""Vajra - high-performance asynchronous TCP connect port scanner.
+
+For very large port sets (full 65535 sweeps) and when a fast external
+scanner is installed, the scan is delegated to masscan (or nmap) so a
+full-range sweep completes orders of magnitude faster; otherwise the native
+async connect scanner is used."""
 import asyncio
 import os
+import re
+import shutil
+import subprocess
+import tempfile
 import time
 
 from core.database import Finding
 from core.utils import parse_ports
+
+
+def _has_external():
+    for bin_ in ("masscan", "nmap"):
+        if shutil.which(bin_):
+            return True
+    return False
+
+
+def _masscan_scan(host, ports, timeout=4.0):
+    """Delegate a full-range sweep to masscan for raw speed. Returns
+    {port: latency_ms}. masscan must be run as root for raw SYN."""
+    if not shutil.which("masscan"):
+        return None
+    with tempfile.NamedTemporaryFile("w", suffix=".txt") as fw:
+        fw.write(",".join(str(p) for p in ports))
+        fw.flush()
+        outfile = fw.name + ".out"
+        try:
+            subprocess.run(
+                ["masscan", host, "-p", ",".join(str(p) for p in ports),
+                 "--rate", "10000", "--wait", "3", "-oG", outfile],
+                timeout=max(timeout, 8), capture_output=True)
+        except Exception:
+            return None
+        results = {}
+        try:
+            with open(outfile) as f:
+                for line in f:
+                    m = re.search(r"Host: \S+ \(\)\s+Ports: (\d+)/open", line)
+                    if not m:
+                        m = re.search(r"(\d+)/open/tcp", line)
+                    if m:
+                        results[int(m.group(1))] = 1.0
+        except Exception:
+            return None
+        return dict(sorted(results.items()))
+
+
+def _nmap_scan(host, ports, timeout=4.0):
+    """Delegate to nmap -sT (fast parallel connect) for large sets. Returns
+    {port: latency_ms} from XML output."""
+    if not shutil.which("nmap"):
+        return None
+    with tempfile.NamedTemporaryFile("w", suffix=".xml") as fw:
+        outfile = fw.name + ".xml"
+        try:
+            subprocess.run(
+                ["nmap", "-sT", "-Pn", "--min-rate", "2000",
+                 "-p", ",".join(str(p) for p in ports),
+                 "-oX", outfile, host],
+                timeout=max(timeout, 15), capture_output=True)
+        except Exception:
+            return None
+        results = {}
+        try:
+            text = open(outfile).read()
+            for m in re.finditer(r'portid="(\d+)"[^>]*state="open"', text):
+                results[int(m.group(1))] = 1.0
+        except Exception:
+            return None
+        return dict(sorted(results.items()))
+
+
+def _scan_external(host, ports, timeout, use_syn):
+    """Prefer masscan for a full-range SYN-style sweep; fall back to nmap
+    connect for very large sets when the native scanner would be slow."""
+    if use_syn and shutil.which("masscan"):
+        return _masscan_scan(host, ports, timeout)
+    if shutil.which("nmap") and len(ports) >= 20000:
+        return _nmap_scan(host, ports, timeout)
+    return None
+
 
 
 async def _probe(ip, port, timeout, sem):
@@ -97,6 +179,30 @@ def run(engine):
         # Feed the single run-level meter: live sub-progress with a friendly
         # detail, so the bar % + ETA move as ports actually get scanned.
         engine.progress(done, total, detail="%d/%d ports" % (done, total))
+
+    # Fast external delegation: a full-range sweep (or --syn with masscan)
+    # completes far faster through the raw packet scanner than the native
+    # async connect scanner when such tooling is installed.
+    if use_syn or len(ports) >= 20000:
+        ext = _scan_external(host, ports,
+                             float(engine.cfg("scan_timeout", 2.0)), use_syn)
+        if ext is not None:
+            dur = time.time() - t0
+            tool = "masscan" if shutil.which("masscan") else "nmap"
+            engine.log.info("external scanner used (%s)" % tool)
+            engine.state["open_ports"] = dict(sorted(ext.items()))
+            engine.log.success("External port scan done in %.1fs: %d open "
+                               "port(s) (%s)" % (dur, len(ext), tool))
+            if not ext:
+                engine.db.add_finding(Finding(
+                    t.display, "network.portscan", "network", "info",
+                    "No TCP ports responded from scanned set",
+                    detail="Host may be filtered/down. Tool: external scanner.",
+                    confidence="possible"))
+            return
+        if use_syn and shutil.which("masscan"):
+            engine.log.warn("masscan delegation failed; falling back to "
+                            "native scan")
 
     if use_syn:
         engine.log.info("SYN scan mode (%d ports, root)" % len(ports))

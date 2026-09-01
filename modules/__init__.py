@@ -238,6 +238,19 @@ register("post.recon", "post", "modules.post.system_recon",
          "Post-exploitation system recon through established channels",
          cond=["has_channels"])
 
+register("post.persistence", "post", "modules.post.persistence",
+         "ACTIVE persistence deployment over an established channel "
+         "(cron/systemd/SSH key/schtasks/registry/web-shell) — intrusive, "
+         "aggressive-gated, reversible",
+         cond=["has_channels"], profile_skip=[])
+
+register("post.cloud", "post", "modules.post.cloud_postex",
+         "ACTIVE cloud post-exploitation: validates on-host cloud creds "
+         "(STS/IAM), enumerates public buckets + flags secrets (only when the "
+         "target is cloud-backed)",
+         cond=["has_cloud"], profile_skip=[])
+
+
 register("web.ai_assist", "post", "modules.web.ai_assist",
          "AI remediation + next-attack planning over the run's findings "
          "(advisory only, offline-safe, --ai gated)",

@@ -55,7 +55,7 @@ def import_findings_and_report(findings_file, targets, output_root):
     import os
     from core.database import Database
     from core.report import (build_data, render_html, render_json,
-                             render_markdown, render_sarif)
+                             render_markdown, render_sarif, render_xlsx)
     from core.intelligence import Intelligence
     from core.engine import sanitize_target_name
 
@@ -120,12 +120,14 @@ def import_findings_and_report(findings_file, targets, output_root):
             f.write(md)
         with open(os.path.join(tdir, 'report.sarif'), 'w') as f:
             f.write(render_sarif(data))
+        render_xlsx(data, path=os.path.join(tdir, 'report.xlsx'))
 
         print(f"[+] Imported {len(findings_by_target.get(t_display, []))} findings for {t_display}")
         print(f"[+] Report written to {tdir}/report.html")
         print(f"[+] Report written to {tdir}/report.json")
         print(f"[+] Report written to {tdir}/report.md")
         print(f"[+] Report written to {tdir}/report.sarif")
+        print(f"[+] Report written to {tdir}/report.xlsx")
 
 
 def parse_args():
@@ -193,7 +195,8 @@ or --aggressive""")
     ap.add_argument("-o", "--output", default="Outputs",
                     help="output root (default: Outputs/ — per-target bundles)")
     ap.add_argument("--format", default="all",
-                    choices=["html", "json", "md", "pdf", "sarif", "all"],
+                    choices=["html", "json", "md", "pdf", "sarif", "xlsx",
+                             "all"],
                     help="report format (sarif = SARIF 2.1.0 for CI)")
     ap.add_argument("--modules", help="comma list of modules to run only")
     ap.add_argument("--exclude-modules", dest="exclude_modules", default="",
@@ -254,6 +257,12 @@ or --aggressive""")
                     help="workspace name for snapshots + retest delta "
                          "(default: auto per-target; dirs under "
                          "Outputs/workspaces/)")
+    ap.add_argument("--resume", action="store_true",
+                    help="resume an interrupted scan: re-seed the target with "
+                         "recon/scan state saved in the workspace so already-"
+                         "discovered ports, services and web targets are not "
+                         "re-scanned (best-effort; only fields saved by the "
+                         "workspace are reused)")
     ap.add_argument("--socks5", default=None,
                     help="SOCKS5 proxy for egress, e.g. 127.0.0.1:9050 "
                          "(web + raw probes via the tunnel)")

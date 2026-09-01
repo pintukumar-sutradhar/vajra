@@ -122,9 +122,19 @@ class Workspace:
         keep = {}
         for k in ("open_ports", "udp_open", "services", "web_targets",
                   "subdomains", "tech", "os_guess", "smb_shares",
-                  "snmp", "ad"):
-            if k in state_dict:
-                keep[k] = state_dict[k]
+                  "snmp", "ad", "cloud_indicators", "cloud_tech",
+                  "cloud_buckets", "forms", "emails", "js", "channels",
+                  "creds", "pages", "etc_hosts", "has_cloud_intel"):
+            v = state_dict.get(k)
+            if isinstance(v, (list, dict, str, int, float, bool)) or v is None:
+                keep[k] = v
+        # Persist which modules actually reached completion this run so a
+        # --resume run can skip re-executing already-finished heavy modules.
+        done = state_dict.get("_done_modules")
+        if isinstance(done, (list, set)):
+            keep["_done_modules"] = sorted(done)
+        if "loot" in state_dict:
+            keep["loot"] = state_dict["loot"]
         path = os.path.join(self.state_dir, "%s.json" % safe)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(keep, f, indent=2, default=str)

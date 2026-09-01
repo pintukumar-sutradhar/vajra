@@ -17,6 +17,74 @@ def _poc_text(f):
             return val
     return ""
 
+
+# Red-team mission objectives and how to recognise each from a finding.
+# Each rule is a (category, substrings-in-title-or-detail) probe; a finding
+# that matches is evidence the objective was (at least partially) achieved.
+OBJECTIVE_RULES = [
+    ("Remote Code Execution",
+     ["rce", "command execution", "command injection", "code execution",
+      "web shell", "reverse session", "execution channel", "webshell",
+      "RCE"]),
+    ("Credentials Captured",
+     ["credentials", "credential", "cracked", "hash", "password", "creds",
+      "kerberoast", "ntds", "pth", "default credential", "golden", "silver"]),
+    ("Domain / AD Compromise",
+     ["domain admin", "dc-sync", "dacl", "lateral", "kerberoast", "admincount",
+      "trust", "smb", "ms17", "pass-the-hash", "golden ticket",
+      "silver ticket", "ldap"]),
+    ("Persistence Established",
+     ["persistence", "implant", "schtasks", "cron", "systemd", "registry-run",
+      "authorized_key", "web-root persistence"]),
+    ("Cloud Compromise",
+     ["cloud", "bucket", "aws", "azure", "gcs", "sts", "s3", "cloud key",
+      "cloud cred", "identity"]),
+    ("Sensitive Data Read",
+     ["secret", "key material", "private key", "token", "ssrf", "lfi",
+      "file read", "exfiltration", "env file", "data extraction", ".env",
+      "backup", "dump"]),
+    ("Web Application Pwned",
+     ["sqli", "xss", "xxe", "ssti", "authentication bypass", "sql injection",
+      "injection", "csrf", "idor", "bola", "upload", "open redirect"]),
+    ("Network Pivot / Egress",
+     ["pivot", "socks5", "tunnel", "connect-proxy", "egress", "port scan",
+      "ssrf_pivot"]),
+]
+
+
+def objectives(findings, state=None):
+    """Derive which red-team objectives were (at least partially) achieved,
+    based only on findings whose evidence is present and whose confidence is
+    firm/certain. Returns a list of dicts: {name, achieved, count, examples}.
+    A naive objective is only counted once per distinct supported finding."""
+    got = {}
+    seen = set()
+    state = state or {}
+    for f in findings:
+        conf = (f.get("confidence") or "").lower()
+        if conf not in ("firm", "certain"):
+            continue
+        blob = ("%s %s %s %s" % (f.get("title", ""), f.get("detail", ""),
+                                 f.get("category", ""), f.get("module", ""))).lower()
+        for name, probes in OBJECTIVE_RULES:
+            if any(p.lower() in blob for p in probes):
+                key = (name, f.get("title", ""))
+                if key in seen:
+                    continue
+                seen.add(key)
+                e = got.setdefault(name, {"name": name, "count": 0,
+                                          "examples": []})
+                e["count"] += 1
+                if len(e["examples"]) < 5:
+                    e["examples"].append(f.get("title", ""))
+    # Cloud objective can also be inferred when cloud creds were validated
+    # even if no finding title matched a cloud probe (belt-and-braces).
+    if not got.get("Cloud Compromise") and state.get("cloud_creds"):
+        got["Cloud Compromise"] = {"name": "Cloud Compromise", "count": 1,
+                                   "examples": ["on-host cloud credentials "
+                                                "validated"]}
+    return list(got.values())
+
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -80,6 +148,11 @@ pre { background:#0a0d12; border:1px solid var(--line); border-radius:8px; paddi
   <section>
    <h2>Executive summary</h2>
    <div class="narr">$narrative</div>
+  </section>
+
+  <section>
+   <h2>Red-team objectives achieved</h2>
+   $objectives
   </section>
 
   <section>
@@ -185,6 +258,7 @@ def build_data(engine):
         "subdomains": engine.state.get("subdomains", []),
         "os_guess": engine.state.get("os_guess", ""),
         "evasion": list(getattr(engine, "evasion_all", []))[:150],
+        "objectives": objectives(findings, getattr(engine, "state", {})),
     }
 
 
@@ -271,11 +345,12 @@ def render_html(data):
     score = float(data["score"])
     scorecolor = "#f44336" if score >= 25 else \
         ("#ffb300" if score >= 10 else "#4caf50")
+    es_for = objectives_html(data.get("objectives") or [])
     tpl = Template(HTML_TEMPLATE)
     return tpl.substitute(
         date=data["meta"]["generated"], profile=_esc(data["meta"]["profile"]),
         targets=_esc(", ".join(data["meta"]["targets"])[:90]),
-        score=data["score"], scorecolor=scorecolor,
+        score=data["score"], scorecolor=scorecolor, objectives=es_for,
         crit=stats.get("critical", 0), high=stats.get("high", 0),
         medium=stats.get("medium", 0), low=stats.get("low", 0),
         info=stats.get("info", 0), total=len(data["findings"]),
@@ -287,6 +362,35 @@ def render_html(data):
             "%s: %s" % (k, ", ".join(v[:3]) + ("..." if len(v) > 3 else ""))
             for k, v in data.get("delta", {}).items())),
         remediation=_render_remediation(data.get("remediation", [])))
+
+
+def objectives_html(objs):
+    if not objs:
+        return '<div class="narr muted">No confirmed compromise objectives ' \
+               'were achieved on this target — no proof-tested findings ' \
+               'matched a mission objective.</div>'
+    rows = []
+    for o in objs:
+        chips = "".join('<span class="chip">%s</span>' % _esc(e)
+                        for e in o["examples"])
+        rows.append(
+            '<div class="card" style="margin-bottom:10px">'
+            '<b style="color:#f78166">%s</b> '
+            '<span class="muted">(%d supporting finding(s))</span><br>%s'
+            '</div>' % (_esc(o["name"]), o["count"], chips))
+    return "".join(rows)
+
+
+def objectives_md(objs):
+    if not objs:
+        return "No confirmed compromise objectives were achieved on this " \
+               "target (no proof-tested finding matched a mission objective)."
+    lines = ["| Objective | Supporting findings |", "|---|---|"]
+    for o in objs:
+        stub = "; ".join(o["examples"][:3])
+        lines.append("| %s | %d — %s |" % (o["name"], o["count"], stub))
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _render_remediation(sections):
@@ -330,6 +434,10 @@ def render_markdown(data):
     lines.append("## Executive Summary")
     lines.append("")
     lines.append(data["narrative"])
+    lines.append("")
+    lines.append("## Red-team objectives achieved")
+    lines.append("")
+    lines.append(objectives_md(data.get("objectives") or []))
     lines.append("")
     lines.append("## Synthesis & AI narrative")
     lines.append("")
@@ -675,4 +783,194 @@ def render_pdf(data, path="report.pdf"):
     out += b"%%EOF\n"
     with open(path, "wb") as f:
         f.write(bytes(out))
+    return path
+
+
+# ---------------------------------------------------------------------------
+# Minimal XLSX writer (stdlib only: zipfile + XML). Produces a real
+# spreadsheet that Excel / LibreOffice open natively, with a Summary sheet
+# and a Findings sheet, so findings + evidence are exporter-friendly.
+# ---------------------------------------------------------------------------
+
+def _xlsx_esc(v):
+    if v is None:
+        return ""
+    s = str(v)
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    # quotes are fine inside <v> / <t>; we keep them unescaped for readability
+
+
+def _xlsx_shared_strings(strings):
+    si = "".join("<si><t xml:space='preserve'>%s</t></si>" % _xlsx_esc(s)
+                 for s in strings)
+    return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+            'count="%d" uniqueCount="%d">%s</sst>' % (len(strings),
+                                                      len(strings), si))
+
+
+def _xlsx_sheet(name, rows, widths):
+    """rows: list of lists where each cell is either a number (int/float) or
+    a string (indexed into shared strings). `widths` are in Excel chars."""
+    cols = "".join('<col min="%d" max="%d" width="%s" customWidth="1"/>' %
+                   (i + 1, i + 1, w) for i, w in enumerate(widths))
+    sheet_data = []
+    for r, row in enumerate(rows):
+        cells = []
+        for c, val in enumerate(row):
+            ref = "%s%d" % (_xlsx_col(c), r + 1)
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                cells.append('<c r="%s"><v>%s</v></c>' % (ref, val))
+            else:
+                cells.append('<c r="%s" t="s"><v>%d</v></c>' % (ref, val))
+        sheet_data.append('<row r="%d">%s</row>' % (r + 1, "".join(cells)))
+    return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            '<cols>%s</cols><sheetData>%s</sheetData></worksheet>'
+            % (cols, "".join(sheet_data)))
+
+
+_XLSX_ALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+
+def _xlsx_col(idx):
+    s = ""
+    while True:
+        s = _XLSX_ALPHA[idx % 26] + s
+        idx = idx // 26 - 1
+        if idx < 0:
+            break
+    return s
+
+
+def render_xlsx(data, path="report.xlsx"):
+    """Stdlib-only XLSX report: Summary + Findings worksheets. Findings sheet
+    carries severity, category, MITRE, confidence and the PoC/evidence text,
+    so the report can be consumed in Excel pipelines and archiving."""
+    import zipfile
+
+    strings = []
+    s_idx = {}
+
+    def S(v):
+        v = "" if v is None else str(v)
+        if v not in s_idx:
+            s_idx[v] = len(strings)
+            strings.append(v)
+        return s_idx[v]
+
+    # Summary sheet target rows
+    summary = []
+    summary.append(["VAJRA Security Assessment", "", "", "", ""])
+    summary.append(["Field", "Value", "", "", ""])
+    meta = data.get("meta", {})
+    summary.append(["Generated", S(meta.get("generated", "")), "", "", ""])
+    summary.append(["Profile", S(meta.get("profile", "")), "", "", ""])
+    summary.append(["Targets", S(", ".join(meta.get("targets", []) or [])),
+                    "", "", ""])
+    stats = data.get("stats", {})
+    summary.append(["Risk score", round(float(data.get("score", 0)), 1),
+                    "", "", ""])
+    summary.append(["Findings",
+                    S("%d critical / %d high / %d medium / %d low / %d info" % (
+                        stats.get("critical", 0), stats.get("high", 0),
+                        stats.get("medium", 0), stats.get("low", 0),
+                        stats.get("info", 0))), "", "", ""])
+    summary.append(["", "", "", "", ""])
+    summary.append(["Red-team objectives achieved", "", "", "", ""])
+    objs = data.get("objectives") or []
+    if not objs:
+        summary.append([S("No confirmed compromise objectives achieved"),
+                        "", "", "", ""])
+    else:
+        summary.append(["Objective", "Supporting findings", "", "", ""])
+        for o in objs:
+            summary.append([S(o["name"]), o["count"], "", "", ""])
+
+    # Findings sheet
+    fhead = ["Severity", "Category", "Title", "Detail", "Module",
+             "Confidence", "MITRE", "PoC / Evidence"]
+    findings = [fhead]
+    for f in data.get("findings", []):
+        findings.append([
+            S(f.get("severity", "")), S(f.get("category", "")),
+            S(f.get("title", "")), S(f.get("detail", "")),
+            S(f.get("module", "")), S(f.get("confidence", "")),
+            S(f.get("mitre", "")), S(_poc_text(f)),
+        ])
+
+    # Build shared strings including all table string cells + headers.
+    # Since S() indexes strings, headers referenced in rows already added.
+    rows_sum = [[S(c) if not isinstance(c, (int, float)) else c
+                 for c in row] for row in summary]
+    rows_find = [[S(c) if not isinstance(c, (int, float)) else c
+                  for c in row] for row in findings]
+
+    sheet1 = _xlsx_sheet("Summary", rows_sum, [46, 70, 12, 12, 12])
+    sheet2 = _xlsx_sheet("Findings", rows_find, [10, 14, 34, 40, 14, 12, 12, 50])
+
+    # Workbook + relationships + styles (minimal).
+    wb = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+          '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+          'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+          '<sheets><sheet name="Summary" sheetId="1" r:id="rId1"/>'
+          '<sheet name="Findings" sheetId="2" r:id="rId2"/></sheets></workbook>')
+    rels = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+            'Target="worksheets/sheet1.xml"/>'
+            '<Relationship Id="rId2" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+            'Target="worksheets/sheet2.xml"/>'
+            '<Relationship Id="rId3" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" '
+            'Target="styles.xml"/>'
+            '<Relationship Id="rId4" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" '
+            'Target="sharedStrings.xml"/></Relationships>')
+    content_types = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                     '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                     '<Default Extension="rels" '
+                     'ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                     '<Default Extension="xml" ContentType="application/xml"/>'
+                     '<Override PartName="/xl/workbook.xml" '
+                     'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+                     '<Override PartName="/xl/worksheets/sheet1.xml" '
+                     'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+                     '<Override PartName="/xl/worksheets/sheet2.xml" '
+                     'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+                     '<Override PartName="/xl/styles.xml" '
+                     'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+                     '<Override PartName="/xl/sharedStrings.xml" '
+                     'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>'
+                     '</Types>')
+    styles = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+              '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+              '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font>'
+              '<font><b/><sz val="11"/><name val="Calibri"/></font></fonts>'
+              '<fills count="2"><fill><patternFill patternType="none"/></fill>'
+              '<fill><patternFill patternType="gray125"/></fill></fills>'
+              '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
+              '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+              '<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+              '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs>'
+              '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
+              '</styleSheet>')
+
+    root_rels = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                 '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                 '<Relationship Id="rId1" '
+                 'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+                 'Target="xl/workbook.xml"/></Relationships>')
+
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("_rels/.rels", root_rels)
+        z.writestr("xl/workbook.xml", wb)
+        z.writestr("xl/_rels/workbook.xml.rels", rels)
+        z.writestr("xl/worksheets/sheet1.xml", sheet1)
+        z.writestr("xl/worksheets/sheet2.xml", sheet2)
+        z.writestr("xl/styles.xml", styles)
+        z.writestr("xl/sharedStrings.xml", _xlsx_shared_strings(strings))
+        z.writestr("[Content_Types].xml", content_types)
     return path

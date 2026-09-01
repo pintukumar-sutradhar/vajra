@@ -142,9 +142,64 @@ def build(tarball):
     return products, total, time.time() - t0
 
 
-def main():
-    tarball = sys.argv[1] if len(sys.argv) > 1 else "advisories.tar.gz"
-    products, total, secs = build(tarball)
+def _iter_advisories(advisories_dir):
+    """Yield parsed OSV advisory dicts from a checked-out
+    github/advisory-database tree (github-reviewed advisories only)."""
+    base = os.path.join(advisories_dir, "advisories", "github-reviewed")
+    if not os.path.isdir(base):
+        base = advisories_dir
+    for root, _, files in os.walk(base):
+        for fn in files:
+            if not fn.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(root, fn), encoding="utf-8",
+                          errors="replace") as fh:
+                    yield json.load(fh)
+            except Exception:
+                continue
+
+
+def build_from_dir(advisories_dir):
+    """Like build() but consumes an already-extracted advisory tree, avoiding
+    the need to produce an intermediate tarball."""
+    products, total = {}, 0
+    t0 = time.time()
+    for vuln in _iter_advisories(advisories_dir):
+        if not vuln.get("affected"):
+            continue
+        summary = _clean(vuln.get("summary") or vuln.get("details"))
+        ids = vuln.get("aliases") or []
+        cve_id = next((a for a in ids if a.startswith("CVE-")),
+                      vuln.get("id") or "GHSA")
+        cvss = round(_severity(vuln), 1)
+        entry = "%s|%s|%s" % (cve_id, summary, cvss)
+        produced = False
+        for aff in vuln["affected"]:
+            pkg = aff.get("package") or {}
+            name = str(pkg.get("name") or "").strip().lower()
+            if not name or name in AMBIGUOUS:
+                continue
+            for rng in aff.get("ranges") or []:
+                if str(rng.get("type", "")).upper() not in (
+                        "SEMVER", "ECOSYSTEM"):
+                    continue
+                for introduced, fixed, last in _windows(
+                        rng.get("events") or []):
+                    for spec in _entry_spec(introduced, fixed, last):
+                        cfg = products.setdefault(
+                            name, {"product": name,
+                                   "aliases": [name], "ranges": {}})
+                        lst = cfg["ranges"].setdefault(spec, [])
+                        if not lst or lst[-1] != entry:
+                            lst.append(entry)
+                            produced = True
+        if produced:
+            total += 1
+    return products, total, time.time() - t0
+
+
+def _write_db(products, total, secs, source):
     try:
         existing = json.load(open(OUT, encoding="utf-8")).get("products", {})
     except Exception:
@@ -167,8 +222,7 @@ def main():
                 if e not in kept:
                     kept.append(e)
     out = {"products": products,
-           "meta": {"source": "GitHub Advisory Database (GHSA, OSV schema) "
-                              "+ curated entries",
+           "meta": {"source": source,
                     "generated": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "advisories_processed": total,
                     "products": len(products)}}
@@ -178,6 +232,47 @@ def main():
     print("advisories: %d | products: %d | range-entries: %d | size: %.1f MB "
           "| took %.0fs" % (total, len(products), n_ranges,
                             os.path.getsize(OUT) / 1048576, secs))
+
+
+def main():
+    import argparse
+    import shutil
+    import subprocess
+    import tempfile
+
+    ap = argparse.ArgumentParser(
+        description="Build/refresh the offline CVE DB (GHSA/OSV).")
+    ap.add_argument("tarball", nargs="?", default="advisories.tar.gz",
+                    help="path to a github/advisory-database tar.gz")
+    ap.add_argument("--auto", action="store_true",
+                    help="fetch the latest github/advisory-database tree via "
+                         "git and rebuild automatically (no manual download)")
+    args = ap.parse_args()
+
+    if args.auto:
+        if not shutil.which("git"):
+            print("git is required for --auto")
+            sys.exit(1)
+        tmp = tempfile.mkdtemp(prefix="vajra-cve-")
+        try:
+            repo = os.path.join(tmp, "advisory-database")
+            print("[*] cloning github/advisory-database (shallow)...")
+            subprocess.run(
+                ["git", "clone", "--depth", "1",
+                 "https://github.com/github/advisory-database.git", repo],
+                check=True, capture_output=True)
+            products, total, secs = build_from_dir(repo)
+            _write_db(products, total, secs,
+                      "GitHub Advisory Database (GHSA, OSV schema) — "
+                      "auto-fresh via git + curated entries")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        return
+
+    tarball = args.tarball
+    products, total, secs = build(tarball)
+    _write_db(products, total, secs,
+              "GitHub Advisory Database (GHSA, OSV schema) + curated entries")
 
 
 if __name__ == "__main__":

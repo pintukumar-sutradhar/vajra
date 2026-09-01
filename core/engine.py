@@ -12,7 +12,8 @@ from core.database import Database, Finding, SEV_ORDER
 from core.intelligence import Intelligence
 from core.ai import AIEngine
 from core.report import (build_data, render_html, render_json,
-                         render_markdown, render_pdf, render_sarif)
+                         render_markdown, render_pdf, render_sarif,
+                         render_xlsx)
 from core.progress import ProgressMeter
 from core.utils import PROJECT_ROOT, is_ip, hosts_for_ip
 from modules import get_modules
@@ -467,6 +468,44 @@ class Engine:
         self.state = {"services": [], "open_ports": {}, "pages": [],
                       "forms": [], "emails": [], "js": [], "web_targets": [],
                       "tech": [], "outdir": tdir, "evidence_dir": evdir}
+        self._done_modules = set()
+        self._resumed = False
+        # --resume: re-seed the target with intel the workspace already
+        # collected so an interrupted scan does not redundantly re-run the
+        # expensive recon/scan steps. Fields loaded are exactly the ones
+        # Workspace.save_state persists; anything not found is ignored.
+        if getattr(self.args, "resume", False):
+            try:
+                ws = getattr(self, "workspace", None)
+                if ws is not None:
+                    prior = ws.load_state(t.display)
+                else:
+                    from core.workspace import Workspace
+                    prior = Workspace(
+                        self.args.workspace or
+                        sanitize_target_name(t.display)).load_state(t.display)
+                if prior:
+                    for k in ("open_ports", "udp_open", "services",
+                              "web_targets", "subdomains", "tech", "os_guess",
+                              "smb_shares", "snmp", "ad", "cloud_indicators",
+                              "cloud_tech", "cloud_buckets", "forms",
+                              "emails", "js", "creds", "etc_hosts"):
+                        if k in prior and prior[k] is not None:
+                            if k == "pages" and isinstance(prior.get("pages"), list):
+                                self.state["pages"] = prior["pages"]
+                            else:
+                                self.state[k] = prior[k]
+                    if isinstance(prior.get("_done_modules"), list):
+                        self._done_modules = set(prior["_done_modules"])
+                    self._resumed = True
+                    self.log.info("[resume] re-seeded %d prior intel field(s) "
+                                  "(%d completed module(s) skipped on demand) "
+                                  "for %s"
+                                  % (sum(1 for k in self.state if k not in
+                                         ("outdir", "evidence_dir")),
+                                     len(self._done_modules), t.display))
+            except Exception as e:
+                self.log.warn("[resume] could not load prior state: %r" % e)
         banner_name = "URL %s" % t.display if t.kind == "url" else \
             "HOST %s" % t.display
         self.db.add_event(t.display, "scan-start", "profile=%s" % self.profile)
@@ -545,6 +584,10 @@ class Engine:
                     continue
                 if not self._cond_ok(m["cond"]):
                     continue
+                if self._resumed and m["name"] in self._done_modules:
+                    self.log.info("[resume] skipping already-completed module "
+                                  "%s" % m["name"])
+                    continue
                 self._exec(m)
         if self.ai_select:
             self.run_mission()
@@ -560,6 +603,7 @@ class Engine:
         ws = getattr(self, "workspace", None)
         if not ws:
             return
+        self.state["_done_modules"] = list(self._done_modules)
         findings = self.db.findings(t.display)
         delta = ws.delta_for(t.display, findings)
         ws.save_state(t.display, self.state)
@@ -656,7 +700,8 @@ class Engine:
         "ad.discovery": 3, "ad.smb_recon": 3, "ad.kerberos": 4,
         "ad.ldap_enum": 4, "ad.spray": 3, "ad.movement": 4,
         "ad.privesc_ops": 4, "ad.power": 4,
-        "post.loot": 2, "post.recon": 3, "web.ai_assist": 5,
+        "post.loot": 2, "post.recon": 3, "post.persistence": 6,
+        "post.cloud": 4, "web.ai_assist": 5,
     }
 
     def _module_weight(self, m):
@@ -738,6 +783,7 @@ class Engine:
             self.log.success("» module %-22s done (%.1fs)" % (m["name"], dur))
             self.db.add_event(self.target.display, "module-end",
                               "%s %.1fs" % (m["name"], dur))
+            self._done_modules.add(m["name"])
         except KeyboardInterrupt:
             raise
         except Exception as e:
@@ -1015,6 +1061,10 @@ class Engine:
                 p = os.path.join(tdir, "report.pdf")
                 render_pdf(data, path=p)
                 paths.append(p)
+            if formats in ("xlsx", "excel", "all"):
+                p = os.path.join(tdir, "report.xlsx")
+                render_xlsx(data, path=p)
+                paths.append(p)
         except Exception as e:
             self.log.error("report generation failed: %r" % e)
         stats = data["stats"]
@@ -1153,5 +1203,14 @@ def build_data_for(db, target, engine):
         "subdomains": engine.state.get("subdomains", []),
         "os_guess": engine.state.get("os_guess", ""),
         "evasion": list(getattr(engine, "evasion_all", []))[:150],
+        "objectives": _objectives_for(findings, engine.state),
     }
     return data
+
+
+def _objectives_for(findings, state):
+    try:
+        from core.report import objectives as _obj
+        return _obj(findings, state)
+    except Exception:
+        return []

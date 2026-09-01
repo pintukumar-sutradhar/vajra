@@ -327,6 +327,24 @@ reports what is *present and readable* without downloading or modifying
 anything; without an SSH transport or creds it logs an info finding instead
 of pretending.
 
+`post.persistence` is **active persistence deployment, not read-only**. Over
+any confirmed execution channel (RCE / SSH / lateral) it lands a lightweight,
+reversible, marker-gated implant via cron-user / cron-root / systemd unit /
+SSH authorized-key (Linux) or scheduled task / registry-run / startup folder
+(Windows), verifies the hook registers, emits the matching cleanup recipe, and
+saves the full plant/verify/cleanup sequence as the PoC in evidence. It is
+gated behind `--aggressive` (or the `aggressive` profile) so it never runs
+silently, and it can also prove a web-root web-shell drop when a web root is
+confirmed.
+
+`post.cloud` runs **only when a target is cloud-backed** (Cloud/CDN tech or a
+confirmed cloud identity is detected; otherwise it logs a skip). It validates
+any on-host cloud credentials against the provider (live STS identity call),
+actively lists confirmed public bucket URLs to flag secret-adjacent object
+keys, and re-hydrates the provider CLI — with each identity/read captured as
+the PoC. It is intentionally inert-safe: it reads/validates, and only probes
+ACL capability behind `--aggressive`; it never changes cloud data silently.
+
 ---
 
 ## Adaptive evasion
@@ -423,18 +441,35 @@ before it finishes.
 ## Output
 
 Results land in `Outputs/<run>/<target>/` — reports (HTML dashboard, JSON,
-Markdown, **PDF** — clean stdlib PDF writer, paginated + per-severity colour),
-SQLite store, full transcript log and an `evidence/` folder of
+Markdown, **PDF** — clean stdlib PDF writer, paginated + per-severity colour,
+**XLSX** — stdlib-only spreadsheet with Summary + Findings sheets), SQLite
+store, full transcript log and an `evidence/` folder of
 raw proof dumps per target, plus a run-wide `summary.json`.
 
 Each report now carries the full narrative stack: an auto-written **executive
 synthesis** (attack surface, priority signal, exposed web tier), a
-**compliance remediation playbook** (every finding cross-referenced to CIS
+**proof-of-compromise / objectives summary** (which red-team mission
+objectives — RCE, credentials, AD compromise, persistence, cloud compromise,
+data exfiltration, web pwnage, pivoting — were actually achieved, derived only
+from proof-tested findings with captured evidence), a **compliance remediation
+playbook** (every finding cross-referenced to CIS
 Benchmark / NIST CSF / PCI DSS 4.0, grouped by severity), a **retest delta**
 `vs` the previous workspace snapshot, and cross-host campaign ("spread")
 patterns. Workspaces live under `Outputs/workspaces/<target>/` (or your
 `--workspace` name) — latest snapshot, run history, per-target state and a
 running `workspace_report.md`.
+
+## Fast external port scanning & fresh CVE DB
+
+- **masscan / nmap delegation** — for `--syn` (masscan) or very large port
+  sets (nmap, ≥20k ports) the scan is handed off to those fast external
+  scanners when installed, then parsed back into VAJRA state; otherwise the
+  native async connect scanner is used. `nmap|masscan` are optional — no
+  dependency, pure speed-up.
+- **CVE DB freshness automation** — `tools/build_cve_db.py --auto` fetches
+  the latest `github/advisory-database` tree via git and rebuilds
+  `intel/cve_db.json` automatically, with no manual download:
+  `python tools/build_cve_db.py --auto`.
 
 ## Workspaces, retests & collaboration
 
@@ -443,7 +478,11 @@ running `workspace_report.md`.
   progress is trackable across sessions.
 - If you kill a running scan, the workspace snapshot + reports for whatever
   was found are still persisted for already-reported targets, and the run
-  summary is written.
+  summary is written. Re-run with `--resume` to pick up an interrupted
+  workspace: completed modules are skipped (tracked per-snapshot), already
+  discovered intel (open ports, services, subdomains, tech, creds, channels,
+  loot) is re-seeded into the target, and only unfinished work continues —
+  rate limits, dropped sessions and Ctrl-C no longer forfeit prior progress.
 - `--export-findings FILE -t <target>` merges every finding across that
   target's snapshots into one JSON file (finding fields, import-safe).
 - `--import-findings FILE -t <target>` ingests findings from a peer/JSON
@@ -498,7 +537,9 @@ socket, with TLS stagers (`--tls`) and `--obfuscate` (packed payloads) —
     --export-findings FILE   export findings from workspace to JSON file
 -o, --output          output root (default: Outputs/)
     --workspace       name the workspace (default: auto per-target)
-    --format          html | json | md | pdf | sarif | all
+    --format          html | json | md | pdf | sarif | xlsx | all
+    --resume          pick up an interrupted workspace from its last saved
+                       snapshot (skips modules already proven-done, reseeds intel)
     --socks5 HOST:PORT  egress via a SOCKS5 proxy (web + raw probes route through)
     --cve-update      when the offline KB misses a product:version, query the
                        live OSV API — exact version-range match, no fuzzy

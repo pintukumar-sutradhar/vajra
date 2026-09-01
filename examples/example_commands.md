@@ -99,7 +99,8 @@ Outputs/<run>/<target>/
 | `--oob / --oob-port` | OOB callback listener for blind SSRF/RCE |
 | `--socks5` | route web + raw probes through a SOCKS5 proxy (egress) |
 | `--cve-update` | live CIRCL CVE lookup when the offline KB misses |
-| `--format pdf` | PDF report export alongside html/json/md |
+| `--format xlsx` | XLSX spreadsheet report (Summary + Findings sheets) |
+| `--resume` | continue a killed/interrupted workspace (skip done, reseed intel) |
 | `--udp` | enables UDP probes incl. the SNMPv1 community sweep (161) |
 | `--proxy` | HTTP proxy |
 | `--modules / --exclude-modules` | scope which modules run |

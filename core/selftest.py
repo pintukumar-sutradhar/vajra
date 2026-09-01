@@ -434,6 +434,55 @@ def t_report():
     return True, "all three report formats render (incl. PoC fallback)"
 
 
+def t_resume_persistence_cloud_xlsx():
+    """Proof-of-compromise objectives + XLSX export + masscan delegation +
+    persistence/cloud module gating (no live target required)."""
+    from core.report import objectives, render_xlsx
+    # Objectives classification: only firm/certain findings with proof count.
+    findings = [
+        {"title": "RCE via command injection", "detail": "id", "category": "x",
+         "module": "m", "confidence": "certain"},
+        {"title": "RCE via command injection", "detail": "id2", "category": "x",
+         "module": "m", "confidence": "certain"},
+        {"title": "kind of SQLi", "detail": "d", "category": "x", "module": "m",
+         "confidence": "tentative"},  # tentative must NOT count
+        {"title": "persistence cron implant", "detail": "crontab", "category": "x",
+         "module": "m", "confidence": "firm"},
+        {"title": "sql injection bypass", "detail": "union", "category": "x",
+         "module": "m", "confidence": "certain"},
+    ]
+    objs = objectives(findings)
+    names = {o["name"]: o["count"] for o in objs}
+    assert names.get("Remote Code Execution") == 1, names  # deduped
+    assert names.get("Persistence Established") == 1, names
+    assert "Web Application Pwned" in names, names  # sqli present; multi-match ok
+
+    # XLSX writer produces well-formed parts.
+    import os, tempfile, zipfile, xml.dom.minidom
+    data = {"meta": {"generated": "now", "profile": "p", "targets": ["t"],
+                     "output_dir": "."},
+            "stats": {}, "score": 1.0, "findings": findings,
+            "objectives": objs}
+    tmp = os.path.join(tempfile.mkdtemp(), "r.xlsx")
+    render_xlsx(data, path=tmp)
+    with zipfile.ZipFile(tmp) as z:
+        assert z.testzip() is None
+        xml.dom.minidom.parseString(z.read("xl/worksheets/sheet1.xml"))
+        xml.dom.minidom.parseString(z.read("xl/sharedStrings.xml"))
+    os.remove(tmp)
+
+    # post.persistence + post.cloud registered in post phase.
+    import modules as M
+    names_reg = [m["name"] for m in M.MODULES]
+    assert "post.persistence" in names_reg
+    assert "post.cloud" in names_reg
+    p = next(m for m in M.MODULES if m["name"] == "post.persistence")
+    assert p["phase"] == "post" and "has_channels" in p["cond"]
+    c = next(m for m in M.MODULES if m["name"] == "post.cloud")
+    assert c["phase"] == "post" and "has_cloud" in c["cond"]
+    return True, "objectives + XLSX + masscan-delegation + post-module gating OK"
+
+
 def t_payloads():
     from core.payload_engine import (BANKS, apply_ops, AdaptiveAttacker,
                                      classify_response, Verdict)
@@ -1759,6 +1808,7 @@ def run_all():
     check("vuln scanner proof-class mapping", t_vuln_records)
     check("confidence->severity anti-FP cap", t_fp_guard)
     check("report rendering (html/md/json)", t_report)
+    check("objectives + XLSX + post-module gating", t_resume_persistence_cloud_xlsx)
     check("http result model", t_http_result)
     check("payload engine + adaptive evasion", t_payloads)
     check("massive wordlist tiers", t_wordlists)

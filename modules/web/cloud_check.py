@@ -163,3 +163,7 @@ def run(engine):
     if public:
         engine.state.setdefault("cloud_buckets", []).extend(
             [p[1] for p in public])
+        engine.state.setdefault("cloud_bucket_urls", []).extend(
+            [u for _p, _n, u in public if not u.endswith("/?comp=list")])
+        engine.state.setdefault("cloud_bucket_urls", []).extend(
+            [u for _p, _n, u in public if _p == "azure"])
