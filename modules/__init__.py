@@ -190,6 +190,12 @@ register("exploit.form_brute", "exploit", "modules.exploit.form_brute",
 "Web login-form brute-force against app auth systems (aggressive)",
           cond=["has_forms"], profile_skip=[])
 
+register("exploit.cve_runner", "exploit", "modules.exploit.cve_runner",
+         "ACTIVE exploitation of correlated critical CVEs: fire the RCE "
+         "payload and capture live command output as PoC (curated PC set, "
+         "aggressive-gated)",
+         cond=["has_web_or_services"], profile_skip=["recon"])
+
 register("ad.discovery", "ad", "modules.ad.discovery",
          "DC discovery via DNS SRV + LDAP/SMB surface",
          cond=["always"], profile_skip=["webonly"])
@@ -229,6 +235,11 @@ register("ad.power", "ad", "modules.ad.power",
          "cross-realm trust-jump notes",
          cond=["has_ad"], profile_skip=["webonly"])
 
+register("ad.escalation", "ad", "modules.ad.escalation",
+         "ADCS ESC1-8 + forest-trust escalation chain: active certipy find "
+         "if installed (else ready-to-run playbook), cross-forest jump map",
+         cond=["has_ad"], profile_skip=["webonly"])
+
 register("post.loot", "post", "modules.post.loot",
          "Post-compromise loot survey: high-value secret file check over "
          "an established SSH credential (read-only)",
@@ -249,6 +260,19 @@ register("post.cloud", "post", "modules.post.cloud_postex",
          "(STS/IAM), enumerates public buckets + flags secrets (only when the "
          "target is cloud-backed)",
          cond=["has_cloud"], profile_skip=[])
+
+register("post.lateral", "post", "modules.post.lateral",
+         "ACTIVE cross-host lateral movement: map the internal network "
+         "through a live channel, probe SMB/WinRM/SSH, spray harvested "
+         "creds and pivot into reachable internal hosts — intrusive, "
+         "aggressive-gated",
+         cond=["has_channels"], profile_skip=["webonly", "quick"])
+
+register("post.exfil", "post", "modules.post.exfil",
+         "ACTIVE covert exfiltration: stage sensitive loot into an "
+         "obfuscated blob + emit HTTP/DNS/TOR exfil recipes to the callback "
+         "endpoint, with beacon proof — intrusive, aggressive-gated",
+         cond=["has_channels"], profile_skip=["webonly", "quick"])
 
 
 register("web.ai_assist", "post", "modules.web.ai_assist",

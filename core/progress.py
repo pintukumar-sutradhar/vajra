@@ -54,6 +54,7 @@ class ProgressMeter:
         self.done = 0
         self.start = time.time()
         self._smooth_rate = None        # exponential moving average work/s
+        self._last_eta = None           # monotonic countdown (never grows)
         self._detail = ""
         self._last_draw = -1.0
         self._tty = bool(sys.stdout.isatty())
@@ -132,7 +133,19 @@ class ProgressMeter:
         return min(100.0, 100.0 * self.done / self.total)
 
     def _eta(self):
-        """Stable remaining time from a smoothed (EMA) work-rate."""
+        """Stable remaining time from a smoothed (EMA) work-rate.
+
+        The ETA is explicitly NON-EXACT and monotonic: it is a best-effort
+        estimate that only ever trends down towards completion. This matters
+        because early, slow steps (e.g. the first port of a sweep) can make a
+        naive rate-based estimate balloon — shown live, a climbing remaining
+        time reads as a bug. So:
+
+          * the raw estimate is capped to a sane upper bound, and
+          * the displayed value is never allowed to grow once shown.
+
+        The result is a stable countdown that reassures the operator work is
+        progressing without pretending to predict the future precisely."""
         el = time.time() - self.start
         if self.done <= 0 or el <= 0.001:
             return "--:--"
@@ -143,7 +156,15 @@ class ProgressMeter:
             alpha = 0.2
             self._smooth_rate = alpha * rate + (1 - alpha) * self._smooth_rate
         sps = max(1e-6, self._smooth_rate)
-        remain = max(0.0, (self.total - self.done) / sps)
+        remain = (self.total - self.done) / sps
+        # Round to 5s granularity, clamp to a non-alarming ceiling (10 min).
+        remain = min(600.0, max(0.0, round(remain / 5.0) * 5.0))
+        # Monotonic non-increasing: never let the shown ETA climb.
+        if self._last_eta is not None:
+            remain = min(remain, self._last_eta)
+        if remain <= 0:
+            remain = 0.0
+        self._last_eta = remain
         m, s = divmod(int(remain), 60)
         h, m = divmod(m, 60)
         if h:

@@ -86,6 +86,19 @@ Reads `config/tooling.json` and reports which external tools the framework
 can orchestrate (nmap, ffuf, impacket suite, hashcat, crackmapexec, …) and
 which are missing.
 
+## tools/depcheck.py — dependency / capability matrix
+
+```
+depcheck.py              # which optional deps + binaries unlock which modules here
+```
+
+Setup is a single `setup.sh` (venv + symlink `vajra` globally — no
+`pip install .` needed). `depcheck` goes one step further and tells you, for
+the current environment, exactly which intrusive modules have their optional
+backends (scapy/paramiko/impacket/certipy/cloud CLIs/masscan/nmap) available
+and which fall back to stdlib — so a module never silently under-delivers on
+an engagement.
+
 ## tools/pocgen.py — reviewable PoC evidence
 
 ```

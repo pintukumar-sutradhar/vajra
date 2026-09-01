@@ -697,11 +697,14 @@ class Engine:
         "web.cloud": 3,
         "exploit.creds": 4, "exploit.exploit": 5, "exploit.spray": 4,
         "exploit.verify": 2, "exploit.coverage": 4, "exploit.form_brute": 8,
+        "exploit.cve_runner": 6,
         "ad.discovery": 3, "ad.smb_recon": 3, "ad.kerberos": 4,
         "ad.ldap_enum": 4, "ad.spray": 3, "ad.movement": 4,
         "ad.privesc_ops": 4, "ad.power": 4,
+        "ad.escalation": 4,
         "post.loot": 2, "post.recon": 3, "post.persistence": 6,
-        "post.cloud": 4, "web.ai_assist": 5,
+        "post.cloud": 4, "post.lateral": 6, "post.exfil": 5,
+        "web.ai_assist": 5,
     }
 
     def _module_weight(self, m):

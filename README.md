@@ -345,6 +345,26 @@ keys, and re-hydrates the provider CLI — with each identity/read captured as
 the PoC. It is intentionally inert-safe: it reads/validates, and only probes
 ACL capability behind `--aggressive`; it never changes cloud data silently.
 
+`post.lateral` is **cross-host lateral movement**: through a live channel it
+discovers the internal subnet, probes internal hosts for SMB/WinRM/SSH, sprays
+every harvested/validated credential set, and on a hit opens a real execution
+channel into that internal host (`channels` grows) so loot/recon/persistence
+run on it next. Strictly `--aggressive` gated.
+
+`post.exfil` stages sensitive loot (cloud creds, keys, hashes, hidden files)
+into a single obfuscated (XOR+base64 — **not strong crypto**, pair with
+HTTPS/TOR) blob and emits ready-to-run HTTP/DNS-TXT/TOR exfil recipes aimed
+back at your `--lhost/--lport` callback, with an active beacon proof when a
+listener is reachable. `--aggressive` gated.
+
+`ad.escalation` and `exploit.cve_runner` complete the chain: the former audits
+**AD Certificate Services ESC1–ESC8** (active `certipy find` when installed,
+else a ready-to-run playbook) plus cross-forest trust-jump maps; the latter
+turns correlated critical **CVEs into active exploitation** — firing the real
+RCE payload and capturing live command output as PoC (curated, sound PC set),
+and honestly reports when a correlated CVE has no embedded PC instead of
+faking it. Both are `--aggressive` gated.
+
 ---
 
 ## Adaptive evasion
@@ -395,6 +415,8 @@ direct ──blocked?──► fingerprint guard (Cloudflare · Akamai · Imperv
 `pivot` (SOCKS5 servers, reverse/direct tunnels, hop-chain probing) ·
 `envcheck` (read-only tooling
 matrix vs `config/tooling.json`) · `pocgen` (inert PoC evidence templates) ·
+`depcheck` (honest capability matrix: which optional deps / binaries unlock
+which intrusive modules here, so nothing silently under-delivers) ·
 `rawhttp` (raw request builder + `--connect-proxy`) ·
 `wordlists` (inspect/filter/merge).
 
@@ -435,6 +457,12 @@ On a TTY it renders as a self-refreshing percentage bar (`█`/`░`) with
 redirected (no TTY) it degrades to a plain one-line log message per step so
 nothing is lost. This lets you judge how long a port/word/dir sweep will take
 before it finishes.
+
+The ETA is deliberately **non-exact and monotonic**: it is rounded to 5s
+granularity, capped, and never allowed to climb once shown — early slow steps
+(say the first port of a sweep) can't make the "time remaining" balloon and
+read as a bug. It's a stable, reassuring countdown that trends toward the
+finish rather than a precise prediction.
 
 ---
 

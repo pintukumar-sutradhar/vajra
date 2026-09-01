@@ -45,7 +45,7 @@ OBJECTIVE_RULES = [
       "backup", "dump"]),
     ("Web Application Pwned",
      ["sqli", "xss", "xxe", "ssti", "authentication bypass", "sql injection",
-      "injection", "csrf", "idor", "bola", "upload", "open redirect"]),
+      "csrf", "idor", "bola", "upload", "open redirect"]),
     ("Network Pivot / Egress",
      ["pivot", "socks5", "tunnel", "connect-proxy", "egress", "port scan",
       "ssrf_pivot"]),

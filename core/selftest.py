@@ -455,7 +455,12 @@ def t_resume_persistence_cloud_xlsx():
     names = {o["name"]: o["count"] for o in objs}
     assert names.get("Remote Code Execution") == 1, names  # deduped
     assert names.get("Persistence Established") == 1, names
-    assert "Web Application Pwned" in names, names  # sqli present; multi-match ok
+    assert "Web Application Pwned" in names, names  # sql injection present
+    # FP guard: the command-injection finding must NOT be double-counted as a
+    # generic web-app pwn (it is an RCE), i.e. no bare "injection" rule.
+    wa = next((o for o in objs if o["name"] == "Web Application Pwned"), None)
+    assert wa is None or "RCE via command injection" not in wa["examples"], wa
+    assert "Persistence Established" in names
 
     # XLSX writer produces well-formed parts.
     import os, tempfile, zipfile, xml.dom.minidom
@@ -471,16 +476,42 @@ def t_resume_persistence_cloud_xlsx():
         xml.dom.minidom.parseString(z.read("xl/sharedStrings.xml"))
     os.remove(tmp)
 
-    # post.persistence + post.cloud registered in post phase.
+    # post/lateral/exfil + ad.escalation + exploit.cve_runner registered with
+    # the right phase + gating conditions.
     import modules as M
     names_reg = [m["name"] for m in M.MODULES]
-    assert "post.persistence" in names_reg
-    assert "post.cloud" in names_reg
+    for n in ("post.persistence", "post.cloud", "post.lateral", "post.exfil",
+              "ad.escalation", "exploit.cve_runner"):
+        assert n in names_reg, n
     p = next(m for m in M.MODULES if m["name"] == "post.persistence")
     assert p["phase"] == "post" and "has_channels" in p["cond"]
     c = next(m for m in M.MODULES if m["name"] == "post.cloud")
     assert c["phase"] == "post" and "has_cloud" in c["cond"]
-    return True, "objectives + XLSX + masscan-delegation + post-module gating OK"
+    lat = next(m for m in M.MODULES if m["name"] == "post.lateral")
+    assert lat["phase"] == "post" and "has_channels" in lat["cond"]
+    ex = next(m for m in M.MODULES if m["name"] == "post.exfil")
+    assert ex["phase"] == "post" and "has_channels" in ex["cond"]
+    esc = next(m for m in M.MODULES if m["name"] == "ad.escalation")
+    assert esc["phase"] == "ad" and "has_ad" in esc["cond"]
+    cv = next(m for m in M.MODULES if m["name"] == "exploit.cve_runner")
+    assert cv["phase"] == "exploit"
+
+    # lateral movement pure logic (internal subnet enumeration).
+    from modules.post.lateral import parse_subnet
+    sub = parse_subnet("eth0 10.0.3.5\n10.0.3.1 gw\n10.0.3.0\n10.0.3.255\n"
+                       "172.16.9.17 route")
+    assert "10.0.3.5" in sub and "172.16.9.17" in sub, sub
+    assert "10.0.3.0" not in sub and "10.0.3.255" not in sub, sub
+
+    # exfil obfuscation round-trips.
+    from modules.post.exfil import _obfuscate, XOR_KEY
+    import base64
+    _b = _obfuscate(b"secret stash")
+    _raw = base64.b64decode(_b)
+    _dec = bytes(_c ^ XOR_KEY[_i % len(XOR_KEY)]
+                 for _i, _c in enumerate(_raw))
+    assert _dec == b"secret stash"
+    return True, "objectives (FP-omitted) + XLSX + new module gating + lateral/exfil logic OK"
 
 
 def t_payloads():
