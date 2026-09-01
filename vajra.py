@@ -154,29 +154,42 @@ def parse_args():
   python3 vajra.py --update                       # self-update from GitHub
 outputs:  Outputs/vajra_<run>/<target>/  → report.html/json/md · sqlite ·
           vajra.log · evidence/
-profiles: quick | full | vast | stealth | webonly | recon
-  vast      = everything everywhere: all 65535 TCP ports, UDP probes, deep
-              wordlists (>100k), 400-page crawl, full exploitation scope.
-  full      = all TCP ports + deep wordlists + time-based SQLi (RECOMMENDED
-              for engagement depth; quick is for triage only).
-  quick     = top-100 ports, shallow but fast (default).
-  stealth   = low-noise: throttled requests, rotating UA, fewer probes.
+profiles: quick | full | deep | stealth | aggressive | webonly | recon
+  deep       = everything everywhere: all 65535 TCP ports, UDP probes, deep
+               wordlists (>100k), 400-page crawl, full exploitation scope.
+  full       = all TCP ports + deep wordlists + time-based SQLi (RECOMMENDED
+               for engagement depth; quick is for triage only).
+  quick      = top-100 ports, shallow but fast (default).
+  stealth    = low-noise: throttled requests, rotating UA, fewer probes.
+  aggressive = full exploitation scope incl. reverse-session delivery +
+               deep wordlists (115k users / 148k passwords / 16k dirs).
+  webonly    = web-application only, no network/port phase.
+  recon      = passive/active recon only (no exploitation).
+
+modifiers:  --stealth  apply low-noise settings to ANY profile (e.g. full or
+                        webonly) if your scan is blocked / throttled.
+            --aggressive  deep wordlists + intrusive exploitation on any
+                        profile (already implied by the aggressive profile).
 
 wordlist tiers: fast lists always ship; deep tiers (115k users / 148k
-passwords / 16k dirs / 18k subs) activate on --profile full|vast or
---aggressive""")
+passwords / 16k dirs / 18k subs) activate on --profile full|deep|aggressive
+or --aggressive""")
     ap.add_argument("-t", "--target",
                     help="IP / CIDR / URL / comma list / @file")
     ap.add_argument("-p", "--ports",
                     help="port spec: 80 | 22-1000 | top100 | top1000 | extended | all")
     ap.add_argument("--profile", default="quick",
-                    choices=["quick", "full", "vast", "stealth", "webonly",
-                             "recon"],
-                    help="scan profile (default: quick; vast = full 65535-port"
+                    choices=["quick", "full", "deep", "stealth", "aggressive",
+                             "webonly", "recon"],
+                    help="scan profile (default: quick; deep = full 65535-port"
                          " sweep + UDP + deep wordlists)")
     ap.add_argument("--threads", type=int, help="worker threads override")
     ap.add_argument("--timeout", type=float, help="per-request timeout override")
     ap.add_argument("--delay", type=float, help="delay between HTTP requests (stealth)")
+    ap.add_argument("--stealth", action="store_true",
+                    help="low-noise modifier for ANY profile: throttles "
+                         "requests, reduces threads, rotates UA — use if "
+                         "your scan is blocked or rate-limited")
     ap.add_argument("-o", "--output", default="Outputs",
                     help="output root (default: Outputs/ — per-target bundles)")
     ap.add_argument("--format", default="all",
@@ -249,7 +262,7 @@ passwords / 16k dirs / 18k subs) activate on --profile full|vast or
                          "query the live CVE API (cached)" )
     ap.add_argument("--oob", action="store_true",
                     help="run an out-of-band HTTP callback listener for blind "
-                         "SSRF / RCE detection (auto in full/vast)")
+                         "SSRF / RCE detection (auto in full/deep)")
     ap.add_argument("--oob-port", dest="oob_port", type=int, default=None,
                     help="fixed local port for the OOB listener "
                          "(default: ephemeral)")

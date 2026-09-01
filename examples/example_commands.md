@@ -52,7 +52,7 @@ python3 vajra.py -t https://api.local --modules web.api,web.crawl,web.headers --
 ## OOB listener (blind detections)
 
 ```bash
-# Auto-on in full/vast; force it on any profile, fixed port:
+# Auto-on in full/deep; force it on any profile, fixed port:
 python3 vajra.py -t http://app.local --oob --oob-port 45678 --yes
 ```
 
@@ -87,7 +87,7 @@ Outputs/<run>/<target>/
 |---|---|
 | `-t/--target` | IP · CIDR · URL · comma list · `@file` |
 | `-p/--ports` | `80` · `22-1000` · `top100/top1000/extended/all` |
-| `--profile` | `quick`·`full`·`vast`·`stealth`·`webonly`·`recon` |
+| `--profile` | `quick`·`full`·`deep`·`stealth`·`aggressive`·`webonly`·`recon` |
 | `--aggressive` | intrusive: deep tiers, brute, exploitation, reverse stages |
 | `--lhost/--lport` | pre-set callback endpoint for reverse stages |
 | `--listener` | standalone multi-session handler |

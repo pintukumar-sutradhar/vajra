@@ -48,6 +48,7 @@
 - [Output](#output)
 - [Toolkit & knowledge base](#toolkit--knowledge-base)
 - [Wordlists](#wordlists)
+- [Live progress meter](#live-progress-meter)
 - [CLI reference](#cli-reference)
  - [AI & model selection](#ai--model-selection)
  - [AI-select mission mode](#ai-select-mission-mode)
@@ -154,10 +155,13 @@ python3 vajra.py -t <target> [options]
 
 | Example | What it does |
 |---|---|
-| `vajra -t 10.10.10.5 --profile full --aggressive --yes` | complete engagement: all ports, deep tiers, active exploitation |
+| `vajra -t 10.10.10.5 --profile full --yes` | complete engagement: all ports, deep tiers, active exploitation |
 | `vajra -t https://app.local --yes` | fast application triage |
 | `vajra -t 192.168.1.0/24 --udp --syn --yes` | subnet discovery incl. raw SYN + UDP |
 | `vajra -t @targets.txt --profile stealth --yes` | low-and-slow batch |
+| `vajra -t http://app.local --profile webonly --yes` | web-application only (no port scan) |
+| `vajra -t 10.0.0.5 --profile full --stealth --yes` | full coverage *but* throttled/UA-rotated (if the target blocks you) |
+| `vajra -t https://app.local --aggressive --yes` | deep wordlists + intrusive exploitation on the default profile |
 | `vajra -t http://app.local --proxy http://127.0.0.1:8080 --yes` | through Burp |
 | `vajra -t 10.0.0.5 --socks5 127.0.0.1:9050 --yes` | egress via SOCKS5 (Tor etc.) |
 | `vajra -t https://app.local --workspace app1 --yes` | named workspace for retest deltas |
@@ -167,9 +171,25 @@ python3 vajra.py -t <target> [options]
 
 Targets: IP · CIDR · URL · comma list · `@file`.
 
-Reverse stages (`--aggressive`) request your callback endpoint interactively
-at the moment they're needed — pre-fill via `--lhost <ip> --lport <n>` to skip
-the prompt.
+### Profile modifiers (`--stealth`, `--aggressive`)
+
+These are **flags** you can combine with *any* profile — you do not have to
+switch profiles just to change noise level or depth:
+
+- **`--stealth`** — low-noise modifier for any profile. Throttles requests
+  (0.4 s delay), cuts dir-buster / port-scan concurrency, and keeps per-request
+  User-Agent rotation on. Ideal when the target starts blocking or rate-limiting
+  a `full` / `aggressive` / `webonly` scan. Example: `--profile full --stealth`.
+- **`--aggressive`** — deep wordlists (115k users / 148k passwords / 16k dirs)
+  plus intrusive exploitation (reverse-session delivery, app-server code
+  deploy, ticketing). Already implied by the `aggressive` profile.
+
+Both can be combined, e.g. `--profile aggressive --stealth` for maximum depth
+that stays quiet.
+
+Reverse stages (intrusive exploitation) request your callback endpoint
+interactively at the moment they're needed — pre-fill via
+`--lhost <ip> --lport <n>` to skip the prompt.
 
 ---
 
@@ -179,10 +199,14 @@ the prompt.
 |---|---|---|---|---|
 | `quick` *(default)* | top-100 | fast tier | 60 / 10 | triage |
 | `full` | all 65535 | **complete tiers** | 160 / 28 | time-based blind SQLi |
-| `vast` | all 65535 + UDP | **complete tiers** | 320 / 48 | maximum coverage: 400-page crawl, heightened concurrency |
+| `deep` | all 65535 + UDP | **complete tiers** | 320 / 48 | maximum coverage: 400-page crawl, heightened concurrency |
 | `stealth` | top-100 | fast | reduced | delays + UA rotation |
+| `aggressive` | all 65535 + UDP | **complete tiers** | 300 / 42 | intrusive exploitation incl. reverse-session delivery; implies `--aggressive` |
 | `webonly` | context | fast | standard | application-focused |
 | `recon` | top-100 | – | – | intelligence only |
+
+Any of the above can be combined with the **`--stealth`** (lower-noise) or
+**`--aggressive`** (deeper) modifiers — see *Profile modifiers* above.
 
 ---
 
@@ -269,7 +293,7 @@ self-signed / SAN coverage** · DOM-XSS JS sink/source hunting · sitemap-consum
 crawling · JS secret hunting
 
 Blind detections (SSRF, RCE) use an embedded OOB callback listener — auto-on
-in `full`/`vast`, or `--oob`.
+in `full`/`deep`, or `--oob`.
 
 A **sensitive-file checklist** (`web.loot`, driven by `intel/loot_paths.json`)
 sweeps classic leak locations — `.git/HEAD`+config, `.env*`, backup archives,
@@ -380,6 +404,22 @@ Deterministically forged (~303k entries, regenerate:
 
 ---
 
+## Live progress meter
+
+As a scan runs you get a **live percentage + ETA** readout on the console —
+both at the per-module level and on the overall run:
+
+- Port scan: `port scan 127.0.0.1  100/100  100.0%  ETA 00:00`
+- Module / run level: `run 127.0.0.1  52/52  (100.0%)  ETA 00:00`
+
+On a TTY it renders as a self-refreshing percentage bar (`█`/`░`) with
+`done/total`, **ETA (remaining time)** and elapsed seconds; when output is
+redirected (no TTY) it degrades to a plain one-line log message per step so
+nothing is lost. This lets you judge how long a port/word/dir sweep will take
+before it finishes.
+
+---
+
 ## Output
 
 Results land in `Outputs/<run>/<target>/` — reports (HTML dashboard, JSON,
@@ -438,8 +478,10 @@ socket, with TLS stagers (`--tls`) and `--obfuscate` (packed payloads) —
 ```text
 -t, --target          IP | CIDR | URL | comma list | @file
 -p, --ports           80 | 22-1000 | top100 | top1000 | extended | all
-    --profile         quick | full | vast | stealth | webonly | recon
-    --aggressive      deep tiers + intrusive exploitation + reverse stages
+    --profile         quick | full | deep | stealth | aggressive | webonly | recon
+    --aggressive      modifier: deep tiers + intrusive exploitation on any profile
+    --stealth         modifier: low-noise (throttled, UA-rotated, fewer threads)
+                       on any profile — use if the target blocks/throttles you
     --lhost/--lport   pre-set callback endpoint for reverse stages
     --listener        standalone multi-session handler
     --ai              enable local Ollama AI (model set in config/config.json)
@@ -630,7 +672,7 @@ pull any Ollama tag, then set the *exact* tag name as `ai_model` in
 `config/config.json`. Default is `qwen3:8b` with nothing to change.
 
 **Slow with big wordlists?** Complete tiers only engage under
-`full`/`vast`/`--aggressive`, HTTP attacks are threaded with stop-on-success.
+`full`/`deep`/`--aggressive`, HTTP attacks are threaded with stop-on-success.
 
 ---
 

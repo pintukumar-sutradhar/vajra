@@ -2,7 +2,7 @@
 
 Pure-stdlib BER encoder for an SNMPv1 GET (sysDescr .1.1.0, sysName .5.0,
 sysUpTime .3.0). Runs only when the UDP probe already responded on 161/udp
-(cond udp:161, which itself requires --udp or the vast profile). Each
+(cond udp:161, which itself requires --udp or the deep profile). Each
 candidate community is tried with a short timeout, so a closed/filtered
 stack costs seconds; a live one answers on the first default strings.
 

@@ -43,7 +43,7 @@ PROFILES = {
              "phases": ["recon", "net", "web", "exploit", "ad", "post"],
              "description": "full-stack engagement: wide ports, deep "
                             "crawling, OOB detections (recommended for depth)"},
-    "vast": {"label": "Exhaustive",
+    "deep": {"label": "Deep / exhaustive",
              "ports": "all", "port_count": 65535,
              "crawl_max_pages": 400, "crawl_max_depth": 6,
              "dir_threads": 64, "max_injection_points": 300,
@@ -60,6 +60,17 @@ PROFILES = {
                 "phases": ["recon", "net", "web"],
                 "description": "low-noise: throttled, rotating UA, shallow "
                                "payloads"},
+    "aggressive": {"label": "Aggressive",
+                   "ports": "all", "port_count": 65535,
+                   "crawl_max_pages": 200, "crawl_max_depth": 5,
+                   "dir_threads": 60, "max_injection_points": 200,
+                   "time_based_sqli": True, "oob_enabled": True,
+                   "max_payloads_direct": 300, "max_mutants": 42,
+                   "scan_concurrency": 900, "intrusive": True,
+                   "phases": ["recon", "net", "web", "exploit", "ad", "post"],
+                   "description": "aggressive: wide ports, deep wordlists and "
+                                  "intrusive exploitation incl. reverse-session "
+                                  "delivery"},
     "webonly": {"label": "Web application only",
                 "ports": None, "port_count": 0,
                 "crawl_max_pages": 200, "crawl_max_depth": 5,
@@ -90,8 +101,35 @@ class Engine:
         self.profile = args.profile
         self.config = config or {}
         self.pconf = dict(PROFILES.get(self.profile, {}))
+        # --stealth is a cross-profile modifier: overlay low-noise settings on
+        # top of whichever profile was selected (incl. full/deep/webonly) so a
+        # throttled/blocking scan can be toned down without switching profile.
+        # --stealth is a cross-profile modifier: overlay low-noise settings on
+        # top of whichever profile was selected (incl. full/deep/webonly) so a
+        # throttled/blocking scan can be toned down without switching profile.
+        self._stealthed = bool(getattr(args, "stealth", False))
+        if self._stealthed:
+            stealth = PROFILES.get("stealth", {})
+            for k in ("delay", "brute_delay", "scan_concurrency",
+                      "dir_threads", "rotate_ua"):
+                if k in stealth:
+                    self.pconf[k] = stealth[k]
+        # The 'aggressive' profile implies intrusive exploitation the same way
+        # --aggressive does: many modules gate on args.aggressive, so elevate
+        # it when the profile itself is aggressive.
+        self._aggressive_profile = (self.profile == "aggressive" and
+                                    not getattr(args, "aggressive", False))
+        if self._aggressive_profile:
+            args.aggressive = True
         self.outroot = self._make_outroot(args.output)
         self.log = LoggerProxy(args.verbose, color=not args.no_color)
+        if self._stealthed:
+            self.log.info("[stealth] low-noise modifier applied to profile "
+                          "'%s' (%s delay)" %
+                          (self.profile, self.pconf.get("delay")))
+        if self._aggressive_profile:
+            self.log.info("[aggressive] profile implies intrusive "
+                          "exploitation scope")
         self.db = None
         self.dbs = []
         self.target_dirs = {}
@@ -110,6 +148,9 @@ class Engine:
                                proxy=args.proxy or None,
                                socks=self.socks,
                                follow=True)
+        # Honour per-profile / --stealth request pacing on the HTTP client
+        # (HttpClient.delay decides this; redirect chases are paced too).
+        self.http.delay = float(self.cfg("delay", 0.0) or 0.0)
         self.threads = args.threads or int(self.cfg("threads", 40))
         self.tooling = {}
         try:
@@ -163,7 +204,7 @@ class Engine:
             bool(getattr(args, "ad_user", None)) or \
             bool(self.config.get("ad_enabled", False))
         self.oob = None
-        if getattr(args, "oob", False) or self.profile in ("full", "vast") \
+        if getattr(args, "oob", False) or self.profile in ("full", "deep") \
                 or bool(self.cfg("oob_enabled", False)):
             try:
                 from core.oob import OobListener
@@ -206,7 +247,7 @@ class Engine:
 
     @property
     def deep(self):
-        return self.profile in ("full", "vast") or \
+        return self.profile in ("full", "deep", "aggressive") or \
             getattr(self.args, "aggressive", False)
 
     def _wl(self, name):

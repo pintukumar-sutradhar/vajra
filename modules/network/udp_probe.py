@@ -64,7 +64,7 @@ PROBES = [(53, probe_dns_version), (123, probe_ntp), (161, probe_snmp)]
 
 def run(engine):
     t = engine.target
-    if not getattr(engine.args, "udp", False) and engine.profile != "vast":
+    if not getattr(engine.args, "udp", False) and engine.profile != "deep":
         return
     host = t.scan_host()
     notes = []

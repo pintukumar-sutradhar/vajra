@@ -233,7 +233,7 @@ def run(engine):
     waf = engine.state.get("waf") or None
     direct_cap = int(engine.cfg("max_payloads_direct", 60))
     mutant_cap = int(engine.cfg("max_mutants", 12))
-    deep = bool(engine.cfg("deep", False)) or engine.profile in ("full", "vast")
+    deep = bool(engine.cfg("deep", False)) or engine.profile in ("full", "deep")
     points = build_points(engine)
     tested = set()
     blocked_stats = {}
