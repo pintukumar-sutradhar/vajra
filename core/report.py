@@ -598,63 +598,6 @@ def render_markdown(data):
     lines.append("*Automated tool output. Validate all findings manually. "
                   "Unauthorized testing is illegal.")
     return "\n".join(lines)
-    lines.append("| Field | Value |")
-    lines.append("|---|---|")
-    lines.append("| Generated | %s |" % data["meta"]["generated"])
-    lines.append("| Profile | %s |" % data["meta"]["profile"])
-    lines.append("| Targets | %s |" % ", ".join(data["meta"]["targets"]))
-    lines.append("| Risk Score | %.1f/100 |" % data["score"])
-    ev = data.get("evasion") or []
-    if ev:
-        passed = sum(1 for e in ev if e.get("result") == "passed")
-        lines.append("| Evasion Ops | %d attempted / %d passed filters |" %
-                     (len(ev), passed))
-    lines.append("| Findings | %d critical / %d high / %d medium / %d low / %d info |"
-                 % tuple(stats.get(s, 0) for s in SEV_ORDER))
-    lines.append("")
-    lines.append("## Executive Summary")
-    lines.append("")
-    lines.append(data["narrative"])
-    lines.append("")
-    lines.append("## Services")
-    lines.append("")
-    lines.append("| Target | Port | Service | Product | Version | TLS |")
-    lines.append("|---|---|---|---|---|---|")
-    for s in data.get("services", []):
-        lines.append("| %s | %s | %s | %s | %s | %s |" % (
-            s["target"], s["port"], s["service"], s.get("product") or "-",
-            s.get("version") or "-", "yes" if s.get("tls") else "no"))
-    lines.append("")
-    lines.append("## Detailed Findings")
-    lines.append("")
-    cur = None
-    for f in data["findings"]:
-        if f["severity"] != cur:
-            cur = f["severity"]
-            lines.append("### Severity: %s" % cur.upper())
-            lines.append("")
-        lines.append("#### [%s] %s" % (f["severity"].upper(), f["title"]))
-        lines.append("- **Module:** %s  **Category:** %s  **Confidence:** %s"
-                     % (f["module"], f["category"],
-                        (f["confidence"] or "-").title()))
-        if f.get("mitre"):
-            lines.append("- **ATT&CK:** %s" % f["mitre"])
-        if f.get("detail"):
-            lines.append("- **Detail:** %s" % f["detail"].replace("\n", " ")[:500])
-        if f.get("remediation"):
-            lines.append("- **Remediation:** %s" % f["remediation"])
-        poc = _poc_text(f)
-        if poc:
-            lines.append("- **Evidence / PoC:**")
-            lines.append("  ```")
-            for ln in poc.splitlines()[:15]:
-                lines.append("  " + ln[:300])
-            lines.append("  ```")
-        lines.append("")
-    lines.append("---")
-    lines.append("*Automated tool output. Validate all findings manually. "
-                 "Unauthorized testing is illegal.*")
-    return "\n".join(lines)
 
 
 def render_json(data):
@@ -899,9 +842,17 @@ def _xlsx_shared_strings(strings):
                                                       len(strings), si))
 
 
+class _XlsxStr:
+    """Marker for a cell that is a shared-string reference."""
+    __slots__ = ("idx",)
+
+    def __init__(self, idx):
+        self.idx = idx
+
+
 def _xlsx_sheet(name, rows, widths):
     """rows: list of lists where each cell is either a number (int/float) or
-    a string (indexed into shared strings). `widths` are in Excel chars."""
+    an _XlsxStr (a shared-string index). `widths` are in Excel chars."""
     cols = "".join('<col min="%d" max="%d" width="%s" customWidth="1"/>' %
                    (i + 1, i + 1, w) for i, w in enumerate(widths))
     sheet_data = []
@@ -909,10 +860,10 @@ def _xlsx_sheet(name, rows, widths):
         cells = []
         for c, val in enumerate(row):
             ref = "%s%d" % (_xlsx_col(c), r + 1)
-            if isinstance(val, (int, float)) and not isinstance(val, bool):
-                cells.append('<c r="%s"><v>%s</v></c>' % (ref, val))
+            if isinstance(val, _XlsxStr):
+                cells.append('<c r="%s" t="s"><v>%d</v></c>' % (ref, val.idx))
             else:
-                cells.append('<c r="%s" t="s"><v>%d</v></c>' % (ref, val))
+                cells.append('<c r="%s"><v>%s</v></c>' % (ref, val))
         sheet_data.append('<row r="%d">%s</row>' % (r + 1, "".join(cells)))
     return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
             '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
@@ -954,28 +905,27 @@ def render_xlsx(data, path="report.xlsx"):
     summary.append(["VAJRA Security Assessment", "", "", "", ""])
     summary.append(["Field", "Value", "", "", ""])
     meta = data.get("meta", {})
-    summary.append(["Generated", S(meta.get("generated", "")), "", "", ""])
-    summary.append(["Profile", S(meta.get("profile", "")), "", "", ""])
-    summary.append(["Targets", S(", ".join(meta.get("targets", []) or [])),
+    summary.append(["Generated", meta.get("generated", ""), "", "", ""])
+    summary.append(["Profile", meta.get("profile", ""), "", "", ""])
+    summary.append(["Targets", ", ".join(meta.get("targets", []) or []),
                     "", "", ""])
     stats = data.get("stats", {})
     summary.append(["Risk score", round(float(data.get("score", 0)), 1),
                     "", "", ""])
-    summary.append(["Findings",
-                    S("%d critical / %d high / %d medium / %d low / %d info" % (
-                        stats.get("critical", 0), stats.get("high", 0),
-                        stats.get("medium", 0), stats.get("low", 0),
-                        stats.get("info", 0))), "", "", ""])
+    summary.append(["Findings", "%d critical / %d high / %d medium / %d low / %d info" % (
+        stats.get("critical", 0), stats.get("high", 0),
+        stats.get("medium", 0), stats.get("low", 0),
+        stats.get("info", 0)), "", "", ""])
     summary.append(["", "", "", "", ""])
     summary.append(["Red-team objectives achieved", "", "", "", ""])
     objs = data.get("objectives") or []
     if not objs:
-        summary.append([S("No confirmed compromise objectives achieved"),
-                        "", "", "", ""])
+        summary.append(["No confirmed compromise objectives achieved",
+                        "", "", ""])
     else:
         summary.append(["Objective", "Supporting findings", "", "", ""])
         for o in objs:
-            summary.append([S(o["name"]), o["count"], "", "", ""])
+            summary.append([o["name"], o["count"], "", "", ""])
 
     # Findings sheet
     fhead = ["Severity", "Category", "Title", "Detail", "Module",
@@ -983,18 +933,24 @@ def render_xlsx(data, path="report.xlsx"):
     findings = [fhead]
     for f in data.get("findings", []):
         findings.append([
-            S(f.get("severity", "")), S(f.get("category", "")),
-            S(f.get("title", "")), S(f.get("detail", "")),
-            S(f.get("module", "")), S(f.get("confidence", "")),
-            S(f.get("mitre", "")), S(_poc_text(f)),
+            f.get("severity", ""), f.get("category", ""),
+            f.get("title", ""), f.get("detail", ""),
+            f.get("module", ""), f.get("confidence", ""),
+            f.get("mitre", ""), _poc_text(f),
         ])
 
-    # Build shared strings including all table string cells + headers.
-    # Since S() indexes strings, headers referenced in rows already added.
-    rows_sum = [[S(c) if not isinstance(c, (int, float)) else c
-                 for c in row] for row in summary]
-    rows_find = [[S(c) if not isinstance(c, (int, float)) else c
-                  for c in row] for row in findings]
+    # Build shared strings + rows. Strings are interned here and tagged with
+    # _XlsxStr so the sheet writer emits t="s" string cells (numbers stay
+    # numeric — this is what lost all text in the old writer).
+    def T(v):
+        if isinstance(v, _XlsxStr):
+            return v
+        if isinstance(v, str):
+            return _XlsxStr(S(v))
+        return v
+
+    rows_sum = [[T(c) for c in row] for row in summary]
+    rows_find = [[T(c) for c in row] for row in findings]
 
     sheet1 = _xlsx_sheet("Summary", rows_sum, [46, 70, 12, 12, 12])
     sheet2 = _xlsx_sheet("Findings", rows_find, [10, 14, 34, 40, 14, 12, 12, 50])

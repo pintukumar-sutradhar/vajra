@@ -3,3 +3,4 @@ paramiko>=3.0
 scapy>=2.5
 dnspython>=2.3
 ollama>=0.3
+playwright>=1.40

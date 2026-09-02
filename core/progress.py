@@ -21,6 +21,14 @@ import time
 import threading
 
 
+# ETA is only presented once the meter has enough signal to measure a
+# rate: a minimum wall-clock elapsed time AND a minimum amount of travelled
+# work (in percentage points). Up to then we print the honest "--:--".
+MIN_ESTIMATE_ELAPSED = 10.0
+MIN_ESTIMATE_DONE = 3
+ESTIMATE_ALPHA = 0.08
+
+
 class _State:
     _active = set()
 
@@ -141,6 +149,9 @@ class ProgressMeter:
         naive rate-based estimate balloon — shown live, a climbing remaining
         time reads as a bug. So:
 
+          * no numeric ETA is shown until there is real signal (some elapsed
+            time AND measurable progress) — a still-at-0% meter prints the
+            honest '--:--' rather than a fabricated countdown,
           * the raw estimate is capped to a sane upper bound, and
           * the displayed value is never allowed to grow once shown.
 
@@ -149,15 +160,22 @@ class ProgressMeter:
         el = time.time() - self.start
         if self.done <= 0 or el <= 0.001:
             return "--:--"
+        # Wait for meaningful momentum before trusting a rate: in the first
+        # seconds (or while progress is still ~0) any number we print would
+        # be a guess, so we keep it honest and blank.
+        if el < MIN_ESTIMATE_ELAPSED or self.done < MIN_ESTIMATE_DONE:
+            return "--:--"
         rate = self.done / el
         if self._smooth_rate is None:
             self._smooth_rate = rate
         else:
-            alpha = 0.2
-            self._smooth_rate = alpha * rate + (1 - alpha) * self._smooth_rate
+            # Slower EMA: discrete module completions register as spikes, so
+            # a fast alpha makes the estimate wobble. Decay gently instead.
+            self._smooth_rate = (ESTIMATE_ALPHA * rate +
+                                 (1 - ESTIMATE_ALPHA) * self._smooth_rate)
         sps = max(1e-6, self._smooth_rate)
         remain = (self.total - self.done) / sps
-        # Round to 5s granularity, clamp to a non-alarming ceiling (10 min).
+        # Round to 5s granularity, clamp to a non-alarming ceiling.
         remain = min(600.0, max(0.0, round(remain / 5.0) * 5.0))
         # Monotonic non-increasing: never let the shown ETA climb.
         if self._last_eta is not None:

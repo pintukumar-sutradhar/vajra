@@ -11,12 +11,14 @@ import sys
 from core.database import Database, Finding, SEV_ORDER
 from core.intelligence import Intelligence
 from core.ai import AIEngine
-from core.report import (build_data, render_html, render_json,
-                         render_markdown, render_pdf, render_sarif,
+from core.report import (build_data, render_html, render_markdown,
                          render_xlsx)
 from core.progress import ProgressMeter
 from core.utils import PROJECT_ROOT, is_ip, hosts_for_ip
 from modules import get_modules
+
+
+_MAX_EVIDENCE_SHOTS = 16
 
 
 def sanitize_target_name(display):
@@ -102,6 +104,14 @@ class Engine:
         self.profile = args.profile
         self.config = config or {}
         self.pconf = dict(PROFILES.get(self.profile, {}))
+        # Phase-skip control: --skip-phases=recon,net lets a user re-run web/
+        # exploit/post on an already-reconned target without redoing passive+
+        # active recon or network enumeration. Phases normalize to a known set
+        # so a typo never silently skips the wrong phase.
+        _known_phases = {"recon", "net", "web", "exploit", "ad", "post"}
+        _skip_raw = (getattr(args, "skip_phases", "") or "").split(",")
+        self._skipped_phases = {p.strip().lower() for p in _skip_raw
+                                if p.strip().lower() in _known_phases}
         # --stealth is a cross-profile modifier: overlay low-noise settings on
         # top of whichever profile was selected (incl. full/deep/webonly) so a
         # throttled/blocking scan can be toned down without switching profile.
@@ -124,6 +134,9 @@ class Engine:
             args.aggressive = True
         self.outroot = self._make_outroot(args.output)
         self.log = LoggerProxy(args.verbose, color=not args.no_color)
+        if self._skipped_phases:
+            self.log.info("[skip-phases] skipping: %s"
+                          % ", ".join(sorted(self._skipped_phases)))
         if self._stealthed:
             self.log.info("[stealth] low-noise modifier applied to profile "
                           "'%s' (%s delay)" %
@@ -294,36 +307,86 @@ class Engine:
         s = _re.sub(r"[^A-Za-z0-9]+", "_", s).strip("_")[:48]
         return s or "finding"
 
+    def save_screenshot(self, url, base_name):
+        """Best-effort headless-browser PNG of ``url`` written to the current
+        target's evidence folder. Returns the relative path, or "" if the
+        browser is unavailable / the render failed (text evidence is kept)."""
+        from core.screenshot import capture
+        evdir = self.state.get("evidence_dir")
+        if not url or not evdir:
+            return ""
+        out = os.path.join(evdir, base_name)
+        if not capture(url, out):
+            return ""
+        rel = os.path.relpath(out, self.outroot)
+        self.log.success("[evidence] screenshot -> %s" % rel)
+        return rel
+
+    def _screenshots_enabled(self):
+        if getattr(self.args, "no_screenshots", False):
+            return False
+        try:
+            from core.screenshot import available as _avail
+            return _avail()
+        except Exception:
+            return False
+
     def _dump_evidence(self):
-        """Write one raw-proof file under evidence/ for every substantive
-        finding (medium+ or any finding carrying proof text). This makes the
-        evidence folder the on-disk mirror of the report's 'PoC / Evidence'
-        column — it is never left empty just because a run was web-only."""
+        """Write one raw-proof file under evidence/ for EVERY finding (plus a
+        per-issue screenshot when a browser is available), so the evidence
+        folder is the on-disk mirror of the report's 'PoC / Evidence' column
+        and is never left empty after a scan with findings."""
         evdir = self.state.get("evidence_dir")
         if not evdir:
             return
         os.makedirs(evdir, exist_ok=True)
+        shots_on = self._screenshots_enabled()
+        first_url = None
+        if shots_on:
+            from core.screenshot import first_url
+        shot_urls = set()
+        shots = 0
         written = 0
+        base_url = (self.target.display if self.target.kind == "url" else "")
         for i, f in enumerate(self.db.findings(self.target.display)):
             sever = f.get("severity", "")
             poc = (f.get("evidence") or "").strip()
             if not poc:
                 poc = (f.get("detail") or f.get("title") or "").strip()
-            if not poc or (sever == "info" and not (f.get("evidence") or "")):
-                continue
-            fn = "f%03d_%s.txt" % (i + 1, self._slugify(f["title"]))
+            slug = self._slugify(f["title"])
+            fn = "f%03d_%s.txt" % (i + 1, slug)
             header = ("# VAJRA finding evidence dump\n"
                       "# [%s] %s\n# target: %s\n"
                       "# module: %s | category: %s | confidence: %s\n\n" %
                       (sever.upper(), f["title"], f["target"], f["module"],
                        f["category"], f["confidence"]))
+            body = poc[:50000] if poc else (
+                "No raw PoC captured for this finding — the module reported "
+                "it without injectable proof text. Confirm in the report's "
+                "Evidence column and validate manually.\n")
             try:
                 with open(os.path.join(evdir, fn), "w",
                           encoding="utf-8") as h:
-                    h.write(header + poc[:50000])
+                    h.write(header + body)
                 written += 1
             except Exception:
                 continue
+            # Per-issue screenshot (named by the same issue slug) when the
+            # run wants one, a URL is known, and the browser is usable.
+            if not shots_on or sever == "info":
+                continue
+            url = first_url(f.get("evidence") or f.get("detail") or "")
+            if not url and (f.get("target") or base_url):
+                url = (f.get("target") or base_url) \
+                    if (f.get("target") or base_url).startswith(("http://",
+                                                                 "https://")) \
+                    else ""
+            if not url or url in shot_urls or shots >= _MAX_EVIDENCE_SHOTS:
+                continue
+            shot_urls.add(url)
+            png = "f%03d_%s.png" % (i + 1, slug)
+            if self.save_screenshot(url, png):
+                shots += 1
         if written:
             self.log.success("[evidence] %d finding-proof file(s) -> "
                              "evidence/ (target %s)"
@@ -561,6 +624,10 @@ class Engine:
         for phase in ("recon", "net", "web", "exploit", "ad", "post"):
             if recon_only and phase not in ("recon",):
                 continue
+            if phase in self._skipped_phases:
+                self.log.info("[skip-phases] phase %s skipped (--skip-phases)"
+                              % phase)
+                continue
             if phase == "ad" and not self._ad_mode:
                 self.log.info("[ad] AD phase skipped — not enabled. Pass "
                               "--ad (or --ad-user) to scan Active Directory.")
@@ -727,6 +794,8 @@ class Engine:
         planned = []
         for phase in ("recon", "net", "web", "exploit", "ad", "post"):
             if recon_only and phase != "recon":
+                continue
+            if phase in self._skipped_phases:
                 continue
             if phase == "ad" and not self._ad_mode:
                 continue
@@ -1048,21 +1117,9 @@ class Engine:
                 p = os.path.join(tdir, "report.html")
                 open(p, "w", encoding="utf-8").write(render_html(data))
                 paths.append(p)
-            if formats in ("json", "all"):
-                p = os.path.join(tdir, "report.json")
-                open(p, "w", encoding="utf-8").write(render_json(data))
-                paths.append(p)
             if formats in ("md", "markdown", "all"):
                 p = os.path.join(tdir, "report.md")
                 open(p, "w", encoding="utf-8").write(render_markdown(data))
-                paths.append(p)
-            if formats in ("sarif", "all"):
-                p = os.path.join(tdir, "report.sarif")
-                open(p, "w", encoding="utf-8").write(render_sarif(data))
-                paths.append(p)
-            if formats in ("pdf", "all"):
-                p = os.path.join(tdir, "report.pdf")
-                render_pdf(data, path=p)
                 paths.append(p)
             if formats in ("xlsx", "excel", "all"):
                 p = os.path.join(tdir, "report.xlsx")

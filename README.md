@@ -136,7 +136,7 @@ workspaces that turn every re-run into a measurable retest.
 ```bash
 git clone https://github.com/pintukumar-sutradhar/vajra && cd vajra
 ./setup.sh                     # deps + wordlists + QA suite
-python3 vajra.py --selftest    # 50-point verification (49 core + attack-path & finding correlation)
+python3 vajra.py --selftest    # 52-point verification (51 core + attack-path & finding correlation)
 python3 vajra.py --version     # VAJRA v1.3-beta
 python3 vajra.py --update      # pull the latest build from GitHub
 ```
@@ -468,11 +468,17 @@ finish rather than a precise prediction.
 
 ## Output
 
-Results land in `Outputs/<run>/<target>/` — reports (HTML dashboard, JSON,
-Markdown, **PDF** — clean stdlib PDF writer, paginated + per-severity colour,
-**XLSX** — stdlib-only spreadsheet with Summary + Findings sheets), SQLite
-store, full transcript log and an `evidence/` folder of
-raw proof dumps per target, plus a run-wide `summary.json`.
+Results land in `Outputs/<run>/<target>/` — reports (**HTML dashboard**,
+**Markdown**, **Excel / XLSX** — stdlib-only spreadsheet with Summary +
+Findings sheets; default `--format all` emits exactly these three), SQLite
+store, full transcript log and an `evidence/` folder of raw proof material per
+target, plus a run-wide `summary.json`. Evidence is never left empty: every
+finding gets a `f###_<issue-slug>.txt` proof dump, and a headless-Chromium
+**screenshot** `f###_<issue-slug>.png` is captured per confirmed web issue
+(URL auto-derived from the finding's evidence) so the report is backed by a
+visual PoC named after the issue. Screenshots are best-effort — if Playwright
+or a browser is unavailable, or with `--no-screenshots`, text evidence is kept
+and the scan is never blocked.
 
 Each report now carries the full narrative stack: an auto-written **executive
 synthesis** (attack surface, priority signal, exposed web tier), a
@@ -524,7 +530,7 @@ actually collected**; it never invents a step that is not backed by evidence.
 - `--export-findings FILE -t <target>` merges every finding across that
   target's snapshots into one JSON file (finding fields, import-safe).
 - `--import-findings FILE -t <target>` ingests findings from a peer/JSON
-  export and renders complete reports (HTML/JSON/MD) without re-scanning —
+  export and renders complete reports (HTML/MD/XLSX) without re-scanning —
   handy for merging results from another operator or an earlier engagement.
 
 ## Pivoting & egress
@@ -566,6 +572,9 @@ socket, with TLS stagers (`--tls`) and `--obfuscate` (packed payloads) —
     --udp             UDP service probes (DNS/NTP/SNMP)
     --syn             raw SYN scanning (root)
     --no-brute        disable credential attacks
+    --skip-phases     comma list of phases to skip entirely (recon,net,web,exploit,ad,post)
+    --format          report formats: html | md | xlsx | all (default: all = the three above)
+    --no-screenshots  disable per-issue PoC screenshots (text-only evidence)
     --ad-user/--ad-pass/--nthash   AD creds → authenticated LDAP + real kerberoasting
     --web-user/--web-pass   webapp creds → AUTHENTICATED crawl/scan of the app
     --web-login       explicit login URL (form is auto-discovered otherwise)

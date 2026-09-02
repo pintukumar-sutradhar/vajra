@@ -54,8 +54,8 @@ def import_findings_and_report(findings_file, targets, output_root):
     import json
     import os
     from core.database import Database
-    from core.report import (build_data, render_html, render_json,
-                             render_markdown, render_sarif, render_xlsx)
+    from core.report import (build_data, render_html,
+                             render_markdown, render_xlsx)
     from core.intelligence import Intelligence
     from core.engine import sanitize_target_name
 
@@ -105,28 +105,21 @@ def import_findings_and_report(findings_file, targets, output_root):
 
         engine = MockEngine(db, t, "default", tdir)
 
-        # Build data and render reports
+        # Build data and render reports (HTML, Markdown, Excel)
         data = build_data(engine)
         html = render_html(data)
-        json_out = render_json(data)
         md = render_markdown(data)
 
         # Write reports
         with open(os.path.join(tdir, 'report.html'), 'w') as f:
             f.write(html)
-        with open(os.path.join(tdir, 'report.json'), 'w') as f:
-            f.write(json_out)
         with open(os.path.join(tdir, 'report.md'), 'w') as f:
             f.write(md)
-        with open(os.path.join(tdir, 'report.sarif'), 'w') as f:
-            f.write(render_sarif(data))
         render_xlsx(data, path=os.path.join(tdir, 'report.xlsx'))
 
         print(f"[+] Imported {len(findings_by_target.get(t_display, []))} findings for {t_display}")
         print(f"[+] Report written to {tdir}/report.html")
-        print(f"[+] Report written to {tdir}/report.json")
         print(f"[+] Report written to {tdir}/report.md")
-        print(f"[+] Report written to {tdir}/report.sarif")
         print(f"[+] Report written to {tdir}/report.xlsx")
 
 
@@ -195,12 +188,20 @@ or --aggressive""")
     ap.add_argument("-o", "--output", default="Outputs",
                     help="output root (default: Outputs/ — per-target bundles)")
     ap.add_argument("--format", default="all",
-                    choices=["html", "json", "md", "pdf", "sarif", "xlsx",
+                    choices=["html", "md", "markdown", "xlsx", "excel",
                              "all"],
-                    help="report format (sarif = SARIF 2.1.0 for CI)")
+                    help="report formats: html | md | xlsx | all "
+                         "(default: all = html + markdown + excel)")
     ap.add_argument("--modules", help="comma list of modules to run only")
     ap.add_argument("--exclude-modules", dest="exclude_modules", default="",
                     help="comma list of modules to skip")
+    ap.add_argument("--skip-phases", dest="skip_phases", default="",
+                    help="comma list of phases to skip entirely, e.g. "
+                         "recon,net (valid: recon,net,web,exploit,ad,post)")
+    ap.add_argument("--no-screenshots", dest="no_screenshots",
+                    action="store_true",
+                    help="disable per-issue PoC screenshots in the evidence "
+                         "folder (keeps text-only evidence)")
     ap.add_argument("--no-brute", action="store_true",
                     help="disable brute-force module")
     ap.add_argument("--aggressive", action="store_true",

@@ -1868,6 +1868,79 @@ def t_attack_paths():
     return True, ("correlation/dedup + evidence-grounded attack paths OK")
 
 
+def t_xlsx_text():
+    """XLSX renders text as shared-string cells, not bare numbers."""
+    import re
+    import tempfile
+    import zipfile
+    from core.report import render_xlsx
+    data = {"meta": {"generated": "2026-09-02", "profile": "quick",
+                     "targets": ["http://app.local"]},
+            "stats": {"critical": 1, "high": 0, "medium": 0, "low": 0,
+                      "info": 0},
+            "score": 41.5,
+            "objectives": [{"name": "rce", "count": 1}],
+            "findings": [{"severity": "critical", "category": "RCE",
+                          "title": "command injection", "detail": "id=1;id",
+                          "module": "exploit", "confidence": "firm",
+                          "mitre": "T1203", "evidence": "uid=0"},
+                         {"severity": "high", "category": "web",
+                          "title": "XSS in search", "detail": "reflect",
+                          "module": "web", "confidence": "tentative",
+                          "evidence": "<script>alert(1)</script>"}]}
+    p = tempfile.mktemp(suffix=".xlsx")
+    render_xlsx(data, path=p)
+    with zipfile.ZipFile(p) as z:
+        s1 = z.read("xl/worksheets/sheet1.xml").decode()
+        s2 = z.read("xl/worksheets/sheet2.xml").decode()
+        sst = z.read("xl/sharedStrings.xml").decode()
+    os.unlink(p)
+    # every text cell must be a shared-string reference...
+    assert 't="s"' in s2, "no shared-string cells in Findings"
+    assert 't="s"' in s1, "no shared-string cells in Summary"
+    allsi = re.findall(r"<si><t[^>]*>(.*?)</t></si>", sst)
+    # ...and the first finding's severity resolves to the real word
+    m = re.search(r'<c r="A2" t="s"><v>(\d+)</v></c>', s2)
+    assert m, "A2 is not a shared-string cell (text leaked into numbers)"
+    assert allsi[int(m.group(1))] == "critical", allsi[int(m.group(1))]
+    # a genuine number (risk score) must NOT be a string cell
+    assert re.search(r'<c r="B6"><v>41.5</v></c>', s1), \
+        "risk score should remain numeric"
+    return True, ("XLSX shared-strings: text preserved, numbers numeric OK")
+
+
+def t_screenshot():
+    """Per-issue PoC screenshots: capture a real PNG when a browser is
+    available, and degrade gracefully (no raise) when it is not."""
+    import threading
+    from http.server import HTTPServer, SimpleHTTPRequestHandler
+    from core import screenshot
+    if not screenshot.available():
+        assert screenshot.capture("http://127.0.0.1:1/", "/tmp/x.png",
+                                  timeout=3000) is False
+        return True, ("screenshot module degrades gracefully (no browser) OK")
+    d = tempfile.mkdtemp()
+    srv = HTTPServer(("127.0.0.1", 0), SimpleHTTPRequestHandler)
+    port = srv.server_address[1]
+    old = os.getcwd()
+    os.chdir(d)
+    with open("index.html", "w") as f:
+        f.write("<html><body><h1>VAJRA-SHOT</h1></body></html>")
+    th = threading.Thread(target=srv.serve_forever, daemon=True)
+    th.start()
+    out = os.path.join(d, "ev.png")
+    try:
+        ok = screenshot.capture("http://127.0.0.1:%d/" % port, out,
+                                timeout=8000)
+    finally:
+        srv.shutdown()
+        os.chdir(old)
+    assert ok, "screenshot capture failed with a usable browser"
+    assert out.endswith(".png") and os.path.getsize(out) > 0, "empty PNG"
+    assert os.path.exists(out)
+    return True, ("headless PoC screenshot captured (Playwright/Chromium) OK")
+
+
 def run_all():
     print("\nVAJRA self-test")
     print("-" * 60)
@@ -1921,6 +1994,8 @@ def run_all():
     check("post-exploit SSH loot survey", t_loot_survey)
     check("staged C2 stagers compile (plain/tls/obfuscated)", t_staged_c2)
     check("correlation/dedup + evidence-grounded attack paths", t_attack_paths)
+    check("XLSX shared-strings: text preserved, numbers numeric", t_xlsx_text)
+    check("headless PoC screenshot (or graceful fallback)", t_screenshot)
     fails = [r for r in RESULTS if not r[1]]
     print("-" * 60)
     print(" %d/%d checks passed%s" % (len(RESULTS) - len(fails), len(RESULTS),
