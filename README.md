@@ -136,7 +136,7 @@ workspaces that turn every re-run into a measurable retest.
 ```bash
 git clone https://github.com/pintukumar-sutradhar/vajra && cd vajra
 ./setup.sh                     # deps + wordlists + QA suite
-python3 vajra.py --selftest    # 54-point verification (53 core + attack-path & finding correlation)
+python3 vajra.py --selftest    # 55-point verification (54 core + attack-path/finding correlation + DNS concurrency)
 python3 vajra.py --version     # VAJRA v1.3-beta
 python3 vajra.py --update      # pull the latest build from GitHub
 ```
@@ -213,8 +213,10 @@ Any of the above can be combined with the **`--stealth`** (lower-noise) or
 ## Modules
 
 **Recon** — DNS records (+ **AXFR zone-transfer attempt** from authoritative
-NS via dig or raw DNS-over-TCP) · WHOIS (raw protocol fallback) · subdomain
-enum · email harvest
+ NS via dig or raw DNS-over-TCP) · WHOIS (raw protocol fallback) · subdomain
+ enum (dedicated high-concurrency DNS pool, incl. Certificate-Transparency
+ log harvesting, fast-fail lookups, wildcard detection — see
+ `dns_threads` under Tuning) · email harvest
 
 **Network** — async/SYN port scanner · service & version detection · deep
 handshake probes · LDAP rootDSE · **SMTP audit** (open-relay envelope check

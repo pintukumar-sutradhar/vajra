@@ -5,6 +5,7 @@
     "units": "seconds | integer counts | bool"
   },
   "threads": 40,
+  "dns_threads": 160,
   "scan_timeout": 2.5,
   "scan_concurrency": 600,
   "connect_timeout": 2.0,

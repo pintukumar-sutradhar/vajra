@@ -1209,6 +1209,38 @@ def t_web_auth():
                   "cookie-jar adoption OK")
 
 
+def t_subdomain_enum():
+    """recon.subdomains: dedicated high DNS concurrency (backpressure +
+    resolver saturation), CT-log candidate filtering, and apex/wildcard
+    detection logic hold their contracts."""
+    from types import SimpleNamespace
+    from modules.recon.subdomain_enum import _dns_workers, _resolve
+
+    def eng(threads=0, stealth=False):
+        return SimpleNamespace(
+            dns_threads=0,
+            args=SimpleNamespace(threads=threads, stealth=stealth),
+            cfg=lambda k, d=0: 0, _stealthed=stealth)
+
+    # default (general threads 40) -> dedicated 160 DNS workers, not 40
+    assert _dns_workers(eng()) == 160, _dns_workers(eng())
+    # stealth stays low-noise (<= base, clamped 16..64)
+    assert _dns_workers(eng(threads=40, stealth=True)) == 40
+    # explicit --threads raises it, capped at 400
+    assert _dns_workers(eng(threads=200)) == 400
+    # an explicit dns_threads key wins
+    e = eng()
+    e.dns_threads = 96
+    assert _dns_workers(e) == 96
+    # high default never falls below a useful floor
+    assert _dns_workers(eng(threads=1)) >= 64
+    # resolver: localhost resolves, a nonsense name fails fast (returns None)
+    assert _resolve("localhost")[1] in ("127.0.0.1", "::1")
+    assert _resolve("%s.invalid" % ("vjr-" + "x" * 8))[1] is None
+    return True, ("recon.subdomains: bounded resolver workers + fast-fail "
+                  "lookups OK")
+
+
 def t_autoreg_idor():
     """Auto-register two throwaway accounts, adopt sessions, then run
     web.escalate against a local app: /me identity discovery, confirmed
@@ -2224,6 +2256,7 @@ def run_all():
     check("SMBv1 / MS17-010 packet core", t_smbv1_packets)
     check("AI-select mission agent", t_agent_mission)
     check("web auth login + OTP/TOTP + cookie jar", t_web_auth)
+    check("recon.subdomains bounded DNS concurrency", t_subdomain_enum)
     check("web autoreg + cross-user IDOR escalate", t_autoreg_idor)
     check("AD chain core (tools/NTDS/channel)", t_ad_chain_core)
     check("web api + cloud bucket builders", t_cloud_api)
