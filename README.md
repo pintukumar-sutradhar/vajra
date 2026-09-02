@@ -136,7 +136,7 @@ workspaces that turn every re-run into a measurable retest.
 ```bash
 git clone https://github.com/pintukumar-sutradhar/vajra && cd vajra
 ./setup.sh                     # deps + wordlists + QA suite
-python3 vajra.py --selftest    # 52-point verification (51 core + attack-path & finding correlation)
+python3 vajra.py --selftest    # 54-point verification (53 core + attack-path & finding correlation)
 python3 vajra.py --version     # VAJRA v1.3-beta
 python3 vajra.py --update      # pull the latest build from GitHub
 ```
@@ -575,6 +575,7 @@ socket, with TLS stagers (`--tls`) and `--obfuscate` (packed payloads) —
     --skip-phases     comma list of phases to skip entirely (recon,net,web,exploit,ad,post)
     --format          report formats: html | md | xlsx | all (default: all = the three above)
     --no-screenshots  disable per-issue PoC screenshots (text-only evidence)
+    --no-autoreg      don't auto-register/auto-login on sites with a signup form
     --ad-user/--ad-pass/--nthash   AD creds → authenticated LDAP + real kerberoasting
     --web-user/--web-pass   webapp creds → AUTHENTICATED crawl/scan of the app
     --web-login       explicit login URL (form is auto-discovered otherwise)
@@ -737,11 +738,54 @@ crawler: it auto-discovers the login form (or uses your explicit URL), pulls a
 CSRF token, supplies the OTP/TOTP along with credentials, adopts the returned
 session cookie into the HTTP client, and only then hands the site to the crawl
 and module stack — so every module (dirbuster, injections, JWT, SSRF…) exercises
-the authenticated surface. Without credentials, the site is scanned
-unauthenticated and the exploit layer still attacks whatever auth systems it
-finds: the full 25-pair auth-bypass family plus OTP tricks and aggressive-gated
-login brute-force (cap/delay/stop-on-success) that also reports leaks against
-OTP-protected forms.
+the authenticated surface.
+
+### Auto-registration (no credentials needed)
+
+When the app publishes a **registration/signup form** and you do *not* pass
+`--web-user`, Vajra **auto-registers a throwaway account** (random
+`vjr_…` username, e-mail on the `.local` domain, strong generated password),
+fills every field it can recognise on the form — username, e-mail, password +
+confirm-password, CSRF token (from `<meta>` or the hidden input) and the terms
+checkbox — and adopts whatever session the site grants. If the site still
+requires an explicit login after signup, it logs in with the generated
+identity. The credential row is written into the finding's detail so an
+authorized operator can re-use it. The crawler then runs *authenticated*, so
+membership/account pages, user-specific endpoints and all of their parameters
+are exercised in context. Disable this with `--no-autoreg` (e.g. when you must
+not create accounts, or you prefer to pass real creds).
+
+### Post-auth escalation (`web.escalate`)
+
+Runs automatically once an authenticated session exists (auto-registered or
+`--web-user`):
+
+- **Horizontal / IDOR:** mints a *second* throwaway identity, discovers the
+  object id the app assigns it (via `.local`/`/me`-style endpoints), then
+  requests that resource with the first account's session. A cross-user read is
+  reported **only** when the response carries the second user's private marker
+  (e-mail/username) *and* an anonymous baseline does **not** leak it — public
+  data can never trigger a false positive. Screenshot + raw response are saved
+  to `evidence/`.
+- **Vertical / admin surface:** probes administrative routes with the low-priv
+  session and diffs against the anonymous baseline. Reported as info-grade
+  *recon only* (never claimed as a confirmed escalation without a role oracle),
+  keeping the report free of false positives.
+
+Everything after auth — crawl, injections, JWT, SSRF, loot sweeps — runs
+against the authenticated surface, and all form/query/JSON/XML parameters are
+tested in that context. **Registration/login discovery crawls seed pages AND
+same-host pages reached by following links** (a sign-up form often lives only
+behind a navigation link, not inline on the seed page). The injection suite is
+**coverage-first**: it builds one attack point per form carrying *all* of that
+form's fields, so **every form on every crawled endpoint has every parameter
+tested**; the `max_injection_points` budget only trims additional API/query
+surfaces, never whole forms or form parameters.
+
+Without any of the above, the site is scanned unauthenticated and the exploit
+layer still attacks whatever auth systems it finds: the full auth-bypass family
+plus OTP tricks and aggressive-gated login brute-force (cap/delay/stop-on-
+success) that also reports leaks against OTP-protected forms.
 
 ---
 

@@ -78,30 +78,42 @@ _SECRET_BUMP = "\x00"
 
 
 def build_points(engine):
-    pts = []
-    seen = set()
+    """Every injection point the suite will attack.
+
+    Coverage-first: the mandatory pass adds exactly one point per GET-query
+    endpoint and one point per FORM (a form point carries ALL of that form's
+    fields and the run loop attacks every field of it), so no form on any
+    crawled endpoint can be silently dropped by the attack budget. The
+    ``max_injection_points`` budget then only trims the *extra* API/query
+    endpoints, never whole forms or form parameters."""
+    pts, seen = [], set()
     limit = int(engine.cfg("max_injection_points", 60))
+    mandatory = []
     for page in engine.state.get("pages", []):
         u = page["url"]
         parsed = urlparse(u)
         qs = parse_qsl(parsed.query)
-        for name, val in qs:
-            key = ("get", parsed.path, name)
+        if qs:
+            key = ("get", parsed.path)
             if key not in seen:
                 seen.add(key)
-                pts.append(Point(u, "GET", [(name, val)], page["url"], "form"))
+                mandatory.append(Point(u, "GET", qs, page["url"], "form"))
         for f in page.get("forms", []):
-            for fd in f.get("fields", []):
-                if fd["type"] in ("submit", "button"):
-                    continue
-                key = (f["method"], f["action"], fd["name"])
-                if key not in seen:
-                    seen.add(key)
-                    pts.append(Point(f["action"], f["method"],
-                                     [(x["name"], x.get("value", ""))
-                                      for x in f["fields"]], f["page"], "form"))
+            fields = [fd for fd in f.get("fields", [])
+                      if fd["type"] in ("submit", "button")]
+            if len(fields) == len(f.get("fields", [])):
+                continue  # a form with ONLY button/submit inputs has nothing
+            key = (f["method"], f["action"])
+            if key in seen:
+                continue
+            seen.add(key)
+            mandatory.append(Point(f["action"], f["method"],
+                                   [(x["name"], x.get("value", ""))
+                                    for x in f["fields"]],
+                                   f.get("page") or page["url"], "form"))
     api = engine.state.get("api") or {}
-    for ep in api.get("endpoints", [])[:limit]:
+    extras = []
+    for ep in api.get("endpoints", []):
         meth = (ep.get("method") or "GET").upper()
         if meth in ("OPTIONS", "HEAD"):
             continue
@@ -112,16 +124,24 @@ def build_points(engine):
         kind = "json" if "xml" not in ct else "xml"
         if meth == "GET":
             qs = parse_qsl(urlparse(url).query)
-            for n, _, _v in qs:
+            for n, _v in qs:
                 fields.append((n, _v))
-        elif not fields and kind == "json":
-            pass
         key = ("api", meth, path, kind)
-        if key not in seen:
-            seen.add(key)
-            pts.append(Point(url, meth, fields, "api:%s %s" % (meth, path),
-                             kind))
-    return pts[:limit]
+        if key in seen:
+            continue
+        seen.add(key)
+        extras.append(Point(url, meth, fields, "api:%s %s" % (meth, path),
+                            kind))
+    room = max(0, limit - len(mandatory))
+    pts.extend(mandatory)
+    pts.extend(extras[:room])
+    if len(mandatory) > limit:
+        engine.log.warn(
+            "[vulnscan] %d endpoints+forms exceed the %d-point budget; "
+            "coverage-first ordering still tests every form, only the "
+            "API/query extras beyond the budget are trimmed" %
+            (len(mandatory), limit))
+    return pts
 
 
 def ai_second_pass(engine, sender, motive, cls, waf, blocked_sample, context):

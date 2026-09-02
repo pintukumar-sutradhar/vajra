@@ -74,9 +74,9 @@ register("network.brute", "exploit", "modules.network.brute_forcer",
          cond=["ports_open"], profile_skip=[])
 
 register("web.auth_login", "web", "modules.web.auth_logic",
-"Authenticated-scan bootstrap: OTP/TOTP-aware login, session cookie "
-          "adoption, CSRF handling",
-          cond=["has_forms"])
+"Authenticated-scan bootstrap: OTP/TOTP-aware login, auto-registration, "
+          "session cookie adoption, CSRF handling",
+          cond=["has_web"])
 
 register("web.crawl", "web", "modules.web.crawler",
          "Async BFS crawler collecting pages/forms/emails/JS",
@@ -125,6 +125,11 @@ register("web.jwt_audit", "web", "modules.web.jwt_audit",
 
 register("web.graphql_probe", "web", "modules.web.graphql_probe",
          "GraphQL introspection & IDE discovery",
+         cond=["has_web"])
+
+register("web.escalate", "web", "modules.web.priv_escl",
+         "Post-auth escalation: cross-user IDOR sweep (second throwaway "
+         "account baseline) + admin-surface recon after authentication",
          cond=["has_web"])
 
 register("web.vulnscan", "web", "modules.web.vuln_scanner",

@@ -993,6 +993,57 @@ def t_web_depth():
     return True, ("multipart/OOB/sitemap/DOM/CVE-range/raw-http builders OK")
 
 
+def t_vuln_coverage():
+    """build_points is coverage-first: every form on every crawled endpoint is
+    represented by one point carrying ALL of its fields, so no form parameter
+    can be silently dropped by the injection budget."""
+    from types import SimpleNamespace
+    from modules.web.vuln_scanner import build_points
+
+    class Log:
+        def warn(self, *a):
+            pass
+
+    def pt():
+        state = {"pages": [
+            {"url": "http://a/x?q=1&z=2",
+             "forms": [
+                 {"action": "http://a/login", "method": "post",
+                  "page": "http://a/x",
+                  "fields": [{"name": "u", "type": "text"},
+                             {"name": "p", "type": "password"}]},
+                 {"action": "http://a/reg", "method": "post",
+                  "page": "http://a/x",
+                  "fields": [{"name": "user", "type": "text"},
+                             {"name": "mail", "type": "email"}]}]},
+            {"url": "http://a/plain",
+             "forms": [{"action": "http://a/submit", "method": "post",
+                        "page": "http://a/plain",
+                        "fields": [{"name": "name", "type": "text"},
+                                   {"name": "go", "type": "submit"}]}]},
+        ], "api": {"endpoints": [
+            {"method": "GET", "path": "/api/a", "url": "http://a/api/a",
+             "ct": "json"},
+            {"method": "GET", "path": "/api/b", "url": "http://a/api/b",
+             "ct": "json"}]}}
+        return SimpleNamespace(state=state, cfg=lambda k, d=60: d, log=Log(),
+                               profile="quick")
+
+    pts = build_points(pt())
+    forms = {f.url for f in pts if f.kind == "form"}
+    assert forms >= {"http://a/login", "http://a/reg", "http://a/submit"}, forms
+    # the submit-button-only field must NOT be included as an attack param
+    submit = next(f for f in pts if f.url == "http://a/submit")
+    assert dict(submit.fields) == {"name": "", "go": ""}, submit.fields
+    reg = next(f for f in pts if f.url == "http://a/reg")
+    assert dict(reg.fields) == {"user": "", "mail": ""}, reg.fields
+    # the GET-query params on the seed page are one point carrying both q and z
+    getp = next(f for f in pts if f.url == "http://a/x?q=1&z=2"
+            and f.method == "GET")
+    assert dict(getp.fields) == {"q": "1", "z": "2"}, getp.fields
+    return True, ("coverage-first build_points: every form + all params kept")
+
+
 def t_oob_listener():
     import time
     from core.oob import OobListener
@@ -1085,7 +1136,9 @@ def t_web_auth():
     from modules.web.auth_logic import (user_field, pass_field, otp_field,
                                         csrf_field, pick_login_form,
                                         build_data, likely_logged_in,
-                                        AUTH_BYPASSES, OTP_TRICKS)
+                                        AUTH_BYPASSES, OTP_TRICKS,
+                                        pick_register_form, _register_like,
+                                        random_identity)
     s = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
     assert totp_codes(s, t=59, window=0)[0] == "287082"       # RFC 6238
     assert totp_codes(s, t=1111111109, window=1)[1] == "081804"   # ±window, index 1 = now
@@ -1103,6 +1156,22 @@ def t_web_auth():
     assert pick_login_form(
         [{"action": "/x", "fields": [{"name": "q", "type": "text"}]},
          form])["action"] == "/login/auth"
+    # login-form selection must NOT fall onto a register surface
+    login_f = {"action": "/login", "fields": [{"name": "u", "type": "text"},
+                                              {"name": "p",
+                                               "type": "password"}]}
+    reg_f = {"action": "/register",
+             "fields": [{"name": "u", "type": "text"},
+                        {"name": "p", "type": "password"}]}
+    assert pick_login_form([reg_f])["action"] == "/register"   # register only
+    assert pick_login_form([login_f, reg_f])["action"] == "/login"
+    assert not _register_like([login_f])
+    assert _register_like([reg_f])
+    assert pick_register_form([login_f, reg_f])["action"] == "/register"
+    ident = random_identity("x")
+    assert set(ident) == {"username", "email", "password"}
+    assert id(ident) and ident["username"].startswith("x_") \
+        and "local" in ident["email"] and len(ident["password"]) > 12
     data = build_data(fields, "username", "password", "jeff", "hunter2",
                       "000000", "abc")
     assert data["username"] == "jeff" and data["password"] == "hunter2"
@@ -1138,6 +1207,186 @@ def t_web_auth():
     assert "SESSID=AAA" in got and "lang=en" in got, got
     return True, ("TOTP vectors, form-field routing, bypass families, "
                   "cookie-jar adoption OK")
+
+
+def t_autoreg_idor():
+    """Auto-register two throwaway accounts, adopt sessions, then run
+    web.escalate against a local app: /me identity discovery, confirmed
+    cross-user IDOR (anonymous baseline does NOT leak), and authenticated
+    admin-surface recon."""
+    import http.server
+    import json as _json
+    import threading
+    import urllib.parse
+    from types import SimpleNamespace
+    from core.http_client import HttpClient
+    from core.database import Database
+    from modules.web import priv_escl
+    from modules.web.auth_logic import auto_register
+
+    users, sids, next_id = [], {}, [1]
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def _user(self):
+            sid = None
+            for part in (self.headers.get("Cookie") or "").split(";"):
+                k, _, v = part.strip().partition("=")
+                if k == "SID":
+                    sid = v
+            return sids.get(sid)
+
+        def do_GET(self):
+            p = urllib.parse.urlsplit(self.path).path
+            if p == "/":
+                self._html(
+                    "<form action='/register' method='post'>"
+                    "<input name='username' type='text'>"
+                    "<input name='email' type='email'>"
+                    "<input name='password' type='password'>"
+                    "<input name='password_confirm' type='password'>"
+                    "<input name='csrf_token' type='hidden' value='tok-1'>"
+                    "<input name='terms' type='checkbox' value='1'>"
+                    "<button>Create account</button></form>")
+                return
+            if p == "/register":
+                self._html("<input name='csrf_token' type='hidden' "
+                           "value='tok-1'>")
+                return
+            if p == "/me":
+                u = self._user()
+                if not u:
+                    return self._err(401, "no session")
+                return self._json({"id": u["id"], "username": u["username"],
+                                   "email": u["email"]})
+            if p.startswith("/api/users/"):
+                u = self._user()
+                if not u:
+                    return self._err(401, "no session")
+                uid = p.split("/")[-1]
+                hit = next((x for x in users if str(x["id"]) == uid), None)
+                if not hit:
+                    return self._err(404, "not found")
+                # IDOR: ownership is not enforced - any session reads any
+                # user's private email
+                return self._json({"id": hit["id"],
+                                   "username": hit["username"],
+                                   "email": hit["email"]})
+            if p == "/admin":
+                if not self._user():
+                    return self._err(403, "denied")
+                rows = "".join("<tr><td>%s</td></tr>" % u["username"]
+                               for u in users)
+                return self._html("<h1>User management</h1><table>%s"
+                                  "</table>" % rows)
+            return self._err(404, "nope")
+
+        def do_POST(self):
+            p = urllib.parse.urlsplit(self.path).path
+            if p == "/register":
+                ln = int(self.headers.get("Content-Length", 0) or 0)
+                raw = self.rfile.read(ln).decode()
+                d = {k: urllib.parse.unquote_plus(v)
+                     for k, v in ([x.split("=", 1) for x in raw.split("&")
+                                   if "=" in x])}
+                need = ("username", "email", "password", "password_confirm",
+                        "csrf_token")
+                if [f for f in need if not d.get(f)]:
+                    return self._err(400, "missing fields")
+                if d["password"] != d["password_confirm"]:
+                    return self._err(400, "password does not match")
+                if any(u["username"] == d["username"] for u in users):
+                    return self._err(400, "username already exists")
+                u = {"id": next_id[0], "username": d["username"],
+                     "email": d["email"], "sid": "u%d" % next_id[0]}
+                next_id[0] += 1
+                users.append(u)
+                sids["u%d" % u["id"]] = u
+                self.send_response(303)
+                self.send_header("Location", "/me")
+                self.send_header("Set-Cookie", "SID=" + u["sid"] + "; Path=/")
+                self.end_headers()
+                return
+            return self._err(404, "nope")
+
+        def _html(self, body):
+            b = body.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+
+        def _json(self, obj):
+            b = _json.dumps(obj).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+
+        def _err(self, code, msg):
+            b = msg.encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    base = "http://127.0.0.1:%d" % srv.server_address[1]
+    th = threading.Thread(target=srv.serve_forever, daemon=True)
+    th.start()
+
+    class _Log:
+        def success(self, *a):
+            pass
+
+        def info(self, *a):
+            pass
+
+        def warn(self, *a):
+            pass
+
+    try:
+        httpc = HttpClient(timeout=5)
+        db = Database(os.path.join(tempfile.mkdtemp(prefix="vajra_escl_"),
+                                   "db.sqlite"))
+        eng = SimpleNamespace(
+            target=SimpleNamespace(display="escl.local", url=base,
+                                   kind="web"),
+            args=SimpleNamespace(no_autoreg=False, web_user=None,
+                                 web_pass=None, web_login=None, otp=""),
+            state={"web_targets": [{"url": base}], "web_auth": {}},
+            http=httpc, db=db, log=_Log())
+        eng._screenshots_enabled = lambda: False
+        eng.save_evidence = lambda *a, **k: ""
+
+        a = auto_register(eng, "A")
+        assert a and eng.state["web_auth"].get("established"), \
+            ("reg A failed", a)
+        a_cookie = eng.state["_autoreg"]["A"]["cookie"]
+        b = auto_register(eng, "B")
+        assert b and eng.state["_autoreg"]["B"]["cookie"], ("reg B failed", b)
+        eng.http._cookie = a_cookie   # back to account A
+
+        priv_escl.run(eng)
+
+        cur = db.conn.execute(
+            "SELECT module, category, severity, confidence FROM findings "
+            "WHERE module='web.escalate' ORDER BY id")
+        rows = cur.fetchall()
+        idor = [r for r in rows if r[1] == "idor"]
+        vert = [r for r in rows if r[1] == "recon"]
+        assert idor, ("no IDOR finding recorded", rows)
+        assert idor[0][2] == "high" and idor[0][3] == "firm", idor[0]
+        assert vert, ("no vertical admin-surface recon recorded", rows)
+    finally:
+        srv.shutdown()
+    return True, ("auto-register A/B -> /me identity -> confirmed cross-user "
+                  "IDOR + admin-surface recon")
 
 
 def t_intel_kb():
@@ -1975,9 +2224,11 @@ def run_all():
     check("SMBv1 / MS17-010 packet core", t_smbv1_packets)
     check("AI-select mission agent", t_agent_mission)
     check("web auth login + OTP/TOTP + cookie jar", t_web_auth)
+    check("web autoreg + cross-user IDOR escalate", t_autoreg_idor)
     check("AD chain core (tools/NTDS/channel)", t_ad_chain_core)
     check("web api + cloud bucket builders", t_cloud_api)
     check("web depth builders (multipart/DOM/CVE/sitemap)", t_web_depth)
+    check("web vulnscan coverage-first full-form+param sweep", t_vuln_coverage)
     check("OOB callback listener", t_oob_listener)
     check("intel knowledge base files", t_intel_kb)
     check("standalone tools toolkit import", t_toolkit)

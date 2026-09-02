@@ -202,6 +202,10 @@ or --aggressive""")
                     action="store_true",
                     help="disable per-issue PoC screenshots in the evidence "
                          "folder (keeps text-only evidence)")
+    ap.add_argument("--no-autoreg", dest="no_autoreg", action="store_true",
+                    help="disable auto-registration + auto-login on sites "
+                         "with a registration form (pass --web-user/--web-"
+                         "pass instead)")
     ap.add_argument("--no-brute", action="store_true",
                     help="disable brute-force module")
     ap.add_argument("--aggressive", action="store_true",
