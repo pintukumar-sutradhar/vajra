@@ -1214,7 +1214,9 @@ def t_subdomain_enum():
     resolver saturation), CT-log candidate filtering, and apex/wildcard
     detection logic hold their contracts."""
     from types import SimpleNamespace
-    from modules.recon.subdomain_enum import _dns_workers, _resolve
+    from modules.recon.subdomain_enum import (
+        _dns_workers, _resolve, _build_query, _parse_a)
+    import socket as _sock
 
     def eng(threads=0, stealth=False):
         return SimpleNamespace(
@@ -1234,8 +1236,30 @@ def t_subdomain_enum():
     assert _dns_workers(e) == 96
     # high default never falls below a useful floor
     assert _dns_workers(eng(threads=1)) >= 64
-    # resolver: localhost resolves, a nonsense name fails fast (returns None)
-    assert _resolve("localhost")[1] in ("127.0.0.1", "::1")
+    # resolver: check the raw DNS packet builder/parser are byte-correct
+    # (network-independent), then confirm the high-level path degrades safely.
+    q = _build_query("www.example.com", 0x7788)
+    assert q.startswith(b"\x77\x88\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00")
+    assert b"\x03www\x07example\x03com\x00\x00\x01\x00\x01" in q, q
+    # an A-answer packet decodes to the expected IPv4 (type 1, rdlen 4).
+    # structure: header(12) + question(compressed name ptr + type/class)
+    #          + answer RR (compressed name, A, TTL, rdlen 4, IPv4)
+    import struct as _s
+    qname = b"\xc0\x0c"                      # compression ptr to offset 12
+    question = qname + _s.pack(">HH", 1, 1)  # A, IN
+    answer = qname + _s.pack(">HHIH", 1, 1, 60, 4) + _sock.inet_aton("10.1.2.3")
+    ans_off = 12 + len(question)
+    # header qdcount=1, ancount=1
+    hdr = _s.pack(">HHHHHH", 0x7788, 0x8180, 1, 1, 0, 0)
+    ans = hdr + question + answer
+    ip, definitive = _parse_a(ans, 0x7788)
+    assert ip == "10.1.2.3" and definitive is True, (ip, definitive)
+    # NXDOMAIN rcode(3) is a definitive negative (fast path, no fallback burn)
+    nx = bytearray(12)          # qid 0 -> must match? no: want_qid mismatch also fine
+    nx[3] = 0x83                # rcode=3 in low nibble of flags byte
+    ip2, def2 = _parse_a(bytes(nx), 0x0000)
+    assert ip2 is None and def2 is True, (ip2, def2)
+    # resolver returns None (not an exception) for garbage
     assert _resolve("%s.invalid" % ("vjr-" + "x" * 8))[1] is None
     return True, ("recon.subdomains: bounded resolver workers + fast-fail "
                   "lookups OK")

@@ -161,9 +161,14 @@ register("web.loot", "web", "modules.web.sensitive_files",
          cond=["has_web"])
 
 register("web.api", "web", "modules.web.api_module",
-         "OpenAPI/Swagger discovery, endpoint inventory + IDOR/CSRF sweep, "
-         "JWKS algo-confusion, OAuth/OIDC metadata audit",
-         cond=["has_web"], profile_skip=[])
+          "OpenAPI/Swagger discovery, endpoint inventory + IDOR/CSRF sweep, "
+          "JWKS algo-confusion, OAuth/OIDC metadata audit",
+          cond=["has_web"], profile_skip=[])
+
+register("web.saml", "web", "modules.web.saml_audit",
+          "SAML SSO surface audit: endpoint discovery, metadata XML parsing, "
+          "XXE-in-SAMLResponse probes, signature-validation review flags",
+          cond=["has_web"], profile_skip=[])
 
 register("web.cloud", "web", "modules.web.cloud_check",
          "Public bucket exposure scan (S3 / GCS / Azure Blob) via read-only "
@@ -225,9 +230,14 @@ register("ad.spray", "ad", "modules.ad.spray",
          cond=["has_ad"], profile_skip=["webonly", "quick", "stealth"])
 
 register("ad.movement", "ad", "modules.ad.movement",
-         "Lateral movement: validated creds -> psexec/wmiexec/smbexec/atexec "
-         "command channel (unlocks post.recon); NTLM-relay + potato guidance",
-         cond=["has_ad"], profile_skip=["webonly"])
+          "Lateral movement: validated creds -> psexec/wmiexec/smbexec/atexec "
+          "command channel (unlocks post.recon); NTLM-relay + potato guidance",
+          cond=["has_ad"], profile_skip=["webonly"])
+
+register("ad.ntlm_relay", "ad", "modules.ad.ntlm_relay",
+          "NTLM-relay surface detection: SMB signing not-required (via nmap "
+          "smb2-security-mode) + relay-worthy target resource emission",
+          cond=["ports:445"], profile_skip=["webonly", "recon"])
 
 register("ad.privesc_ops", "ad", "modules.ad.privesc_ops",
          "Privilege-scalation ops: SYSVOL/GPP cred theft, ZeroLogon probe, "
@@ -241,9 +251,15 @@ register("ad.power", "ad", "modules.ad.power",
          cond=["has_ad"], profile_skip=["webonly"])
 
 register("ad.escalation", "ad", "modules.ad.escalation",
-         "ADCS ESC1-8 + forest-trust escalation chain: active certipy find "
-         "if installed (else ready-to-run playbook), cross-forest jump map",
-         cond=["has_ad"], profile_skip=["webonly"])
+          "ADCS ESC1-8 + forest-trust escalation chain: active certipy find "
+          "if installed (else ready-to-run playbook), cross-forest jump map",
+          cond=["has_ad"], profile_skip=["webonly"])
+
+register("ad.rbcd_exploit", "ad", "modules.ad.rbcd_exploit",
+          "Active RBCD/s4u2self delegation abuse: write msDS-AllowedToActOnBehalfOfOtherIdentity "
+          "or exploit existing unconstrained delegation to impersonate any user "
+          "(requires --aggressive + valid domain creds)",
+          cond=["has_ad"], profile_skip=["webonly", "quick", "stealth", "recon"])
 
 register("post.loot", "post", "modules.post.loot",
          "Post-compromise loot survey: high-value secret file check over "
@@ -251,8 +267,14 @@ register("post.loot", "post", "modules.post.loot",
          cond=["ports:22"], profile_skip=["webonly", "quick"])
 
 register("post.recon", "post", "modules.post.system_recon",
-         "Post-exploitation system recon through established channels",
-         cond=["has_channels"])
+          "Post-exploitation system recon through established channels",
+          cond=["has_channels"])
+
+register("post.k8s", "post", "modules.post.k8s_escape",
+          "K8s RBAC enumeration + container escape probes through an "
+          "established channel: crictl/nsenter/runc paths, privileged "
+          "capabilities, hostPath mounts, docker.sock, service-account token",
+          cond=["has_channels"], profile_skip=["webonly", "quick"])
 
 register("post.persistence", "post", "modules.post.persistence",
          "ACTIVE persistence deployment over an established channel "

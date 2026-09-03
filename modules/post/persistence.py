@@ -111,6 +111,7 @@ def run(engine):
     marker = "vjr" + engine.nonce(6)
     cmd = "id" if channels[0].kind in ("unix", "ssh") else "whoami"
     deployed = 0
+    deployed_records = engine.state.setdefault("deployed_persistence", [])
     for idx, chan in enumerate(channels):
         kind = chan.kind
         unix = kind in ("unix", "ssh")
@@ -148,6 +149,17 @@ def run(engine):
                      ctext]
             if confirmed:
                 deployed += 1
+                # Track a reversibility record so OPSEC teardown can undo this
+                # exact implant on scan end.
+                rec = {
+                    "marker": marker,
+                    "chan_id": idx,
+                    "primitive": name,
+                    "cleanup": ctext,
+                    "chan": chan,
+                }
+                deployed_records.append(rec)
+                engine._deployed_persistence.append(rec)
             results.append(entry)
             if confirmed and name in ("cron-user", "cron-root", "schtasks",
                                       "registry-run", "systemd-unit"):

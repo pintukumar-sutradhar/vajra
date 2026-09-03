@@ -1,6 +1,7 @@
 """Vajra - target model supporting IPs, CIDR ranges and URLs."""
 import socket
 import ipaddress
+import re
 from urllib.parse import urlparse
 
 from core.utils import is_ip, normalize_url
@@ -62,7 +63,8 @@ class Target:
         old = socket.getdefaulttimeout()
         try:
             socket.setdefaulttimeout(timeout)
-            infos = socket.getaddrinfo(self.hostname, None)
+            # Resolve both IPv4 and IPv6
+            infos = socket.getaddrinfo(self.hostname, None, socket.AF_UNSPEC)
             seen = []
             for fam, _typ, _proto, _canon, sockaddr in infos:
                 ip = sockaddr[0]
@@ -78,7 +80,15 @@ class Target:
             socket.setdefaulttimeout(old)
         return self.ips
 
+    @property
+    def has_ipv6(self):
+        return any(":" in ip and "." not in ip for ip in self.ips)
+
     def scan_host(self):
+        # Prefer IPv6 if available, else IPv4, else hostname
+        for ip in self.ips:
+            if ":" in ip and "." not in ip:
+                return ip
         return self.primary_ip or self.hostname
 
     def http_base(self):

@@ -180,10 +180,20 @@ def run(engine):
         blen = len(baseline.body)
         found = None
         attempts = 0
+        backoff_delay = float(engine.cfg("brute_delay", 0.0))
         for u in users[:10]:
             for p in pwds[:max(1, form_cap // 10)]:
                 data = _mkdata(form["fields"], user_field, pass_field, u, p)
                 r = engine.http.post(form["action"], data=data)
+                # Rate-limit / lockout-aware backoff: a 429 or a
+                # lockout-family message means we should widen our spacing.
+                if r.status in (429, 503):
+                    backoff_delay = min(30.0, max(1.0, backoff_delay * 2.0))
+                    engine.log.warn("[brute] rate-limited on %s (HTTP %d) "
+                                    "-> backing off to %.1fs"
+                                    % (form["action"], r.status, backoff_delay))
+                    time.sleep(backoff_delay)
+                    continue
                 success = (r.status != baseline.status) or \
                           (abs(len(r.body) - blen) > max(50, int(blen * 0.05))) or \
                           any(k in r.headers.get("location", "").lower()
@@ -194,6 +204,8 @@ def run(engine):
                 attempts += 1
                 if attempts >= form_cap:
                     break
+                if backoff_delay:
+                    time.sleep(backoff_delay)
             if found or attempts >= form_cap:
                 break
         if found:

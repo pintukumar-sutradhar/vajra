@@ -215,8 +215,8 @@ Any of the above can be combined with the **`--stealth`** (lower-noise) or
 **Recon** — DNS records (+ **AXFR zone-transfer attempt** from authoritative
  NS via dig or raw DNS-over-TCP) · WHOIS (raw protocol fallback) · subdomain
  enum (dedicated high-concurrency DNS pool, incl. Certificate-Transparency
- log harvesting, fast-fail lookups, wildcard detection — see
- `dns_threads` under Tuning) · email harvest
+ log harvesting, fast-fail lookups, wildcard detection — see `dns_threads` /
+ `dns_timeout` under config)
 
 **Network** — async/SYN port scanner · service & version detection · deep
 handshake probes · LDAP rootDSE · **SMTP audit** (open-relay envelope check

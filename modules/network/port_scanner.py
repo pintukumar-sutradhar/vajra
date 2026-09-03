@@ -8,6 +8,7 @@ import asyncio
 import os
 import re
 import shutil
+import socket
 import subprocess
 import tempfile
 import time
@@ -25,18 +26,21 @@ def _has_external():
 
 def _masscan_scan(host, ports, timeout=4.0):
     """Delegate a full-range sweep to masscan for raw speed. Returns
-    {port: latency_ms}. masscan must be run as root for raw SYN."""
+    {port: latency_ms}. masscan must be run as root for raw SYN.
+    Supports IPv6 via -6 flag."""
     if not shutil.which("masscan"):
         return None
+    is_ipv6 = ":" in host and "." not in host
     with tempfile.NamedTemporaryFile("w", suffix=".txt") as fw:
         fw.write(",".join(str(p) for p in ports))
         fw.flush()
         outfile = fw.name + ".out"
         try:
-            subprocess.run(
-                ["masscan", host, "-p", ",".join(str(p) for p in ports),
-                 "--rate", "10000", "--wait", "3", "-oG", outfile],
-                timeout=max(timeout, 8), capture_output=True)
+            cmd = ["masscan", host, "-p", ",".join(str(p) for p in ports),
+                   "--rate", "10000", "--wait", "3", "-oG", outfile]
+            if is_ipv6:
+                cmd.insert(1, "-6")
+            subprocess.run(cmd, timeout=max(timeout, 8), capture_output=True)
         except Exception:
             return None
         results = {}
@@ -55,17 +59,19 @@ def _masscan_scan(host, ports, timeout=4.0):
 
 def _nmap_scan(host, ports, timeout=4.0):
     """Delegate to nmap -sT (fast parallel connect) for large sets. Returns
-    {port: latency_ms} from XML output."""
+    {port: latency_ms} from XML output. Supports IPv6 via -6."""
     if not shutil.which("nmap"):
         return None
+    is_ipv6 = ":" in host and "." not in host
     with tempfile.NamedTemporaryFile("w", suffix=".xml") as fw:
         outfile = fw.name + ".xml"
         try:
-            subprocess.run(
-                ["nmap", "-sT", "-Pn", "--min-rate", "2000",
-                 "-p", ",".join(str(p) for p in ports),
-                 "-oX", outfile, host],
-                timeout=max(timeout, 15), capture_output=True)
+            cmd = ["nmap", "-sT", "-Pn", "--min-rate", "2000",
+                   "-p", ",".join(str(p) for p in ports),
+                   "-oX", outfile, host]
+            if is_ipv6:
+                cmd.insert(1, "-6")
+            subprocess.run(cmd, timeout=max(timeout, 15), capture_output=True)
         except Exception:
             return None
         results = {}
@@ -93,7 +99,9 @@ async def _probe(ip, port, timeout, sem):
     t0 = time.time()
     try:
         async with sem:
-            fut = asyncio.open_connection(ip, port)
+            # Detect IPv6 vs IPv4
+            family = socket.AF_INET6 if ":" in ip and "." not in ip else socket.AF_INET
+            fut = asyncio.open_connection(ip, port, family=family)
             reader, writer = await asyncio.wait_for(fut, timeout=timeout)
             latency = time.time() - t0
             writer.close()
@@ -123,22 +131,26 @@ async def scan_host(ip, ports, timeout=2.5, concurrency=600, progress=None):
 
 
 def _syn_scan(host, ports, timeout=2.0):
-    """Root-only raw SYN sweep via scapy. Returns {port: latency_ms}."""
-    from scapy.all import IP, TCP, sr1, conf
+    """Root-only raw SYN sweep via scapy. Returns {port: latency_ms}.
+    Supports both IPv4 and IPv6."""
+    from scapy.all import IP, IP6, TCP, sr1, conf
     conf.verb = 0
     results = {}
+    # Detect IPv6
+    is_ipv6 = ":" in host and "." not in host
+    IPLayer = IP6 if is_ipv6 else IP
     chunk = 512
     for i in range(0, len(ports), chunk):
         batch = ports[i:i + chunk]
         for p in batch:
             t0 = time.time()
-            pkt = sr1(IP(dst=host) / TCP(flags="S", dport=p),
+            pkt = sr1(IPLayer(dst=host) / TCP(flags="S", dport=p),
                       timeout=timeout, verbose=0)
             if pkt is None:
                 continue
             flags = int(pkt[TCP].flags) if pkt.haslayer(TCP) else 0
             if flags & 0x12:
-                rst = sr1(IP(dst=host) / TCP(flags="R",
+                rst = sr1(IPLayer(dst=host) / TCP(flags="R",
                                              dport=p, seq=pkt[TCP].ack + 1),
                           timeout=0.5, verbose=0)
                 del rst

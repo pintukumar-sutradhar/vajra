@@ -183,6 +183,7 @@ class Engine:
         self.cve_update = bool(getattr(args, "cve_update", False))
         self.targets = []
         self.state = {}
+        self._deployed_persistence = []
         self.target = None
         self.evasion_all = []
         self.sessions_all = []
@@ -507,6 +508,10 @@ class Engine:
                     self.log.error("reporting failed for %s: %r" %
                                    (t.display, e))
         finally:
+            try:
+                self._opsec_teardown()
+            except Exception as e:
+                self.log.debug("opsec teardown failed: %r" % e)
             for t in self.targets:
                 if t not in self.reported:
                     try:
@@ -726,6 +731,53 @@ class Engine:
                           "workspace_report.md" % len(per_target))
         except Exception as e:
             self.log.debug("workspace AI update failed: %r" % e)
+
+    def _opsec_teardown(self):
+        """OPSEC cleanup hook: undo any persistence implant that was deployed
+        this run, so we never leave a target permanently modified after an
+        assessment ends (or is interrupted). Runs cleanup commands through the
+        same channel objects that planted them. Only fires when implants were
+        actually recorded; otherwise it is a no-op."""
+        records = [r for r in getattr(self, "_deployed_persistence", [])
+                   if r and r.get("chan") is not None]
+        if not records:
+            return
+        undone = 0
+        attempts = []
+        for rec in records:
+            try:
+                out = rec["chan"].run(rec["cleanup"])
+                attempts.append((rec["primitive"], rec["marker"],
+                                 str(out)[:200]))
+                undone += 1
+                self.log.warn("[opsec] teardown %s (%s) -> %s" %
+                              (rec["primitive"], rec["marker"],
+                               str(out)[:60]))
+            except Exception as e:
+                self.log.warn("[opsec] teardown of %s failed: %r" %
+                              (rec["primitive"], e))
+        if undone:
+            try:
+                self._opsec_record(records, attempts)
+            except Exception as e:
+                self.log.debug("opsec finding failed: %r" % e)
+
+    def _opsec_record(self, records, attempts):
+        from core.database import Finding
+        disp = getattr(self.target, "display", "target")
+        body = "\n".join("## %s [%s]\n%s" % (r["primitive"], r["marker"],
+                                             a)
+                         for r, a in zip(records, attempts))
+        self.db.add_finding(Finding(
+            disp, "post.opsec", "cleanup", "info",
+            "OPSEC teardown: %d persistence implant(s) removed"
+            % len(attempts),
+            detail="Cleanup commands run through the assessment channels to "
+                   "remove the persistence marker(s) below before scan end.",
+            evidence=body or "no teardown output captured",
+            remediation="Verify no residual 'vjr*/vajra-*' artifacts exist on "
+                        "the targets.",
+            confidence="certain"))
 
     def run_mission(self):
         if not self.ai.enabled:
