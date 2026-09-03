@@ -7,6 +7,7 @@ import traceback
 import importlib
 import datetime
 import sys
+import threading
 
 from core.database import Database, Finding, SEV_ORDER
 from core.intelligence import Intelligence
@@ -165,6 +166,7 @@ class Engine:
         # Honour per-profile / --stealth request pacing on the HTTP client
         # (HttpClient.delay decides this; redirect chases are paced too).
         self.http.delay = float(self.cfg("delay", 0.0) or 0.0)
+        self._apply_rate_governor()
         self.threads = args.threads or int(self.cfg("threads", 40))
         self.tooling = {}
         try:
@@ -243,6 +245,29 @@ class Engine:
         root = os.path.join(base or "Outputs", "vajra_%s" % ts)
         os.makedirs(root, exist_ok=True)
         return os.path.abspath(root)
+
+    def _apply_rate_governor(self):
+        """Central ops/stealth rate governor.
+
+        Bounds the *global* HTTP request rate on the shared client so that even
+        when many parallel scanners (dir-buster, injection, crawl) share it, the
+        aggregate throughput cannot outrun the approved pace for the current
+        mode. This is what makes --stealth actually hold under concurrency:
+        the token bucket is in the client, so no single module can outshout the
+        others.
+
+        The default is NO cap for normal/aggressive scans (matches prior
+        behaviour). --stealth / the stealth profile applies a tight ceiling;
+        config rate_limit_rps overrides everything.
+        """
+        rps = float(self.cfg("rate_limit_rps", 0.0) or 0.0)
+        if rps <= 0 and self._stealthed:
+            # low-noise: default quiet ceiling (~6 rps) unless a profile delay
+            # already implies tighter pacing via HttpClient.delay
+            rps = float(self.pconf.get("rate_limit_rps", 6))
+        self.http.set_rate_limit(rps)
+        if rps > 0:
+            self.log.debug("[governor] shared HTTP rate capped at ~%d rps" % int(rps))
 
     def cfg(self, key, default=None):
         if hasattr(self.args, key) and getattr(self.args, key) is not None \
@@ -415,10 +440,14 @@ class Engine:
             entries = attacker.evasion_log
         except AttributeError:
             return
-        for e in entries[-40:]:
-            if len(self.evasion_all) < 400:
-                self.evasion_all.append(e)
-                self.state.setdefault("evasion_log", []).append(e)
+        lock = getattr(self, "_evasion_lock", None)
+        if lock is None:
+            lock = self._evasion_lock = threading.Lock()
+        with lock:
+            for e in entries[-40:]:
+                if len(self.evasion_all) < 400:
+                    self.evasion_all.append(e)
+                    self.state.setdefault("evasion_log", []).append(e)
 
     def nonce(self, n=8):
         import random, string
@@ -765,6 +794,18 @@ class Engine:
             ws.append_narrative(block)
             self.log.info("[workspace] snapshot persisted (%d target(s)) -> "
                           "workspace_report.md" % len(per_target))
+            # Read-only AI cross-chaining: advisory only, never mints findings.
+            adv = getattr(self.ai, "available", lambda: False)()
+            if adv:
+                try:
+                    from core.crosschain import run_crosschain
+                    adv_md = run_crosschain(
+                        self.ai, per_target, log=self.log,
+                        output_dir=os.path.dirname(self.workspace.report_path))
+                    if adv_md:
+                        ws.append_narrative(adv_md)
+                except Exception as ex:
+                    self.log.debug("AI cross-chain advisory skipped: %r" % ex)
         except Exception as e:
             self.log.debug("workspace AI update failed: %r" % e)
 

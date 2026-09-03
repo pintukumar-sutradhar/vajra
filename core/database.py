@@ -1,5 +1,6 @@
 """Vajra - findings storage (SQLite) and Finding model."""
 import os
+import re
 import sqlite3
 import threading
 import datetime
@@ -46,6 +47,68 @@ CONFIDENCE_CAP = {
 CONFIDENCE_ORDER = ["certain", "firm", "tentative"]
 
 
+# ---- Evidence-confidence ladder -------------------------------------------
+# The declared confidence is the module's claim, but it is merged with an
+# *evidence-derived* grade so the report reflects what the evidence actually
+# proves. Strong proof artifacts (krb5tgs hash, NTLM hash, minted cert, OOB
+# callback, confirmed command output, or a reproduced scripted exploit) let a
+# finding climb the ladder; heuristic-only signals can never.
+_EVID_FIRM = [
+    re.compile(r"\$krb5tgs\$", re.I),
+    re.compile(r"\bNTDS|\ba[0-9a-f]{31}=\b|\b[a-f0-9]{32}(:[^#]{0,40}){3}\b", re.I),
+    re.compile(r"has password\b", re.I),
+    re.compile(r"\brc4-hmac\b|\brc4[_@]?hmac\b", re.I),
+    re.compile(r"\[VERIFIED\]", re.I),
+    re.compile(r"\.pfx\b|\.pem\b|\.crt\b|BEGIN CERTIFICATE", re.I),
+    re.compile(r"command output\b|exit code 0\b|# .*[Ss]uccess", re.I),
+    re.compile(r"session|smtp relay|relay", re.I),
+]
+_EVID_CERTAIN = [
+    re.compile(r"\$krb5tgs\$", re.I),
+    re.compile(r"\ba[0-9a-f]{31}=\b", re.I),
+    re.compile(r"\bNT hash\b|\bNTDS\b", re.I),
+    re.compile(r"\[VERIFIED\]", re.I),
+]
+
+
+def ladder_evidence(confidence, evidence="", category=""):
+    """Return the ladder-merged confidence ('certain'|'firm'|'tentative').
+
+    Takes the STRONGER of the declared confidence and the evidence-derived
+    grade. A module that forgets to claim proof still gets credit for proof
+    artifacts in its evidence; a module that over-claims with no proof stays
+    capped at whatever the evidence supports. Never returns something lower
+    than what the declared confidence already proves.
+    """
+    ev = (evidence or "") or ""
+    derived = "tentative"
+    if any(p.search(ev) for p in _EVID_CERTAIN) and \
+            str(category or "").startswith("exploit"):
+        derived = "certain"
+    elif any(p.search(ev) for p in _EVID_FIRM):
+        derived = "firm"
+    declared = CONFIDENCE_NORM.get((confidence or "tentative").lower(),
+                                   "tentative")
+    order = {"tentative": 0, "firm": 1, "certain": 2}
+    if order[derived] > order[declared]:
+        return derived
+    return declared
+
+
+def evidence_cap(evidence="", category=""):
+    """Sev-left cap awarded purely by evidence strength: 4 for a confirmed
+    exploit artifact, 3 for solid reproducible proof, else 0 (no elevation).
+    Confirm/graded from _EVID_* markers only; empty/heuristic evidence grants
+    nothing, so the declared claim's strictness (e.g. 'low') is preserved."""
+    ev = (evidence or "") or ""
+    if any(p.search(ev) for p in _EVID_CERTAIN) and \
+            str(category or "").startswith("exploit"):
+        return 4
+    if any(p.search(ev) for p in _EVID_FIRM):
+        return 3
+    return 0
+
+
 class Finding:
     def __init__(self, target, module, category, severity, title, detail="",
                  evidence="", remediation="", confidence="firm", mitre=None):
@@ -57,8 +120,12 @@ class Finding:
         self.category = category
         self.severity = severity.lower() if severity.lower() in SEV_RANK else "info"
         raw_conf = (confidence or "firm").lower()
-        self.confidence = CONFIDENCE_NORM.get(raw_conf, "tentative")
-        cap_rank = CONFIDENCE_CAP.get(raw_conf, CONFIDENCE_CAP["possible"])
+        # Evidence-confidence ladder: merge declared confidence with what the
+        # evidence string actually proves, then enforce the anti-FP severity cap
+        # from the strongest of the declared claim and the proof in the evidence.
+        self.confidence = ladder_evidence(raw_conf, evidence, category)
+        declared_cap = CONFIDENCE_CAP.get(raw_conf, CONFIDENCE_CAP["possible"])
+        cap_rank = max(declared_cap, evidence_cap(evidence, category))
         if SEV_RANK[self.severity] > cap_rank:
             bound_to = SEV_BY_RANK[cap_rank]
             if detail:

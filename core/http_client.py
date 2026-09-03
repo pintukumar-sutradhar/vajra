@@ -344,6 +344,12 @@ class HttpClient:
         self._cookie = ""
         self._ua_i = 0
         self._lock = threading.Lock()
+        # Global request-rate governor (token bucket). rps<=0 means unlimited,
+        # preserving prior behaviour unless an ops governor explicitly caps it.
+        self._rps = 0.0
+        self._tokens = 1.0
+        self._bucket_ts = time.time()
+        self._rps_lock = threading.Lock()
         if not self.ua:
             from core.utils import USER_AGENTS
             self.ua_pool = list(USER_AGENTS)
@@ -403,8 +409,40 @@ class HttpClient:
             self._ua_i += 1
         return ua
 
+    def set_rate_limit(self, rps):
+        """Cap the client's max throughput to `rps` requests/second (global,
+        shared across all worker threads). rps<=0 removes the cap."""
+        with self._rps_lock:
+            self._rps = float(rps) if rps and rps > 0 else 0.0
+            if self._rps:
+                # start with a fresh full bucket so an already-running burst is
+                # still first admitted, then conforms to the steady rate
+                self._tokens = self._rps
+                self._bucket_ts = time.time()
+
+    def _pacethrottle(self):
+        """Token-bucket admission gate: bounds GLOBAL request rate regardless of
+        how many parallel scanners (dir-buster/injection/crawl) are sharing this
+        client, so stealth/ops throttles actually hold under concurrency."""
+        if not self._rps:
+            return
+        interval = 1.0 / self._rps
+        while True:
+            with self._rps_lock:
+                now = time.time()
+                self._tokens = min(self._rps,
+                                   self._tokens + (now - self._bucket_ts) * self._rps)
+                self._bucket_ts = now
+                if self._tokens >= 1.0:
+                    self._tokens -= 1.0
+                    return
+                wait = (1.0 - self._tokens) / self._rps
+            if wait > 0:
+                time.sleep(wait)
+
     def request(self, method, url, params=None, data=None, json_body=None,
                 headers=None, auth=None, allow_redirects=None, timeout=None):
+        self._pacethrottle()
         t0 = time.time()
         hdrs = {"User-Agent": self.next_ua(), "Accept": "*/*",
                 "Accept-Language": "en-US,en;q=0.9",

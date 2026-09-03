@@ -261,6 +261,13 @@ register("ad.rbcd_exploit", "ad", "modules.ad.rbcd_exploit",
           "(requires --aggressive + valid domain creds)",
           cond=["has_ad"], profile_skip=["webonly", "quick", "stealth", "recon"])
 
+register("ad.adcs", "ad", "modules.ad.adcs_exploit",
+         "ADCS/PKI escalation: ESC1 template misconfig, ESC3 enrollment-agent "
+         "chain, and ESC8 NTLM-relayable web-enrollment surface (requires "
+         "--aggressive + certipy + valid domain creds). Any mutation is "
+         "reversible/evidence-gated",
+         cond=["has_ad"], profile_skip=["webonly", "quick", "stealth", "recon"])
+
 register("post.loot", "post", "modules.post.loot",
          "Post-compromise loot survey: high-value secret file check over "
          "an established SSH credential (read-only)",

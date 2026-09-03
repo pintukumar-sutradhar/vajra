@@ -9,6 +9,8 @@ that a form-only scanner would try are actually probed."""
 import json as _json
 import re
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse, parse_qsl, urlencode
 
 from core.database import Finding
@@ -280,215 +282,271 @@ def run(engine):
                            (cls.upper(), pt.origin.split("?")[0], k,
                             res.technique))
 
-    for pt in points:
-        pt_done += 1
-        engine.progress(min(pt_done, pt_total), pt_total,
-                        detail="inject %d/%d" % (min(pt_done, pt_total),
-                                                 pt_total))
+    # Parallel, bounded injection. Each (point, field) is an independent
+    # adaptive sequence (baseline + WAF-escalating payload bank), so fields can
+    # be probed concurrently while each field's adaptive chain stays serial
+    # (that preservation is what keeps false positives out). DB writes are
+    # serialized by Database.lock and evasion capture by engine._collect_evasion
+    # lock; cross-field dedup/structured state lives on this lock.
+    ips = threading.Lock()
+
+    def _attack_field(pt, k):
+        # returns (pkey, hit_classes) — hit_classes is the per-point set of
+        # classes already proven so other fields/points can skip redundant work.
         fields = [fd[0] for fd in pt.fields]
+        pkey = (pt.url.split("?")[0], pt.method, k)
+
+        def sender(payload, _pt=pt, _k=k):
+            return send_point(engine, _pt, _k, payload)
+
+        base_r = sender("vjrbase")
+        bbody = getattr(base_r, "body", "")[:60000]
+        blen, bstatus = len(bbody), base_r.status
+        low_base = bbody.lower()
+        origv = dict(pt.fields).get(k, "")
+
+        def not_blocked(r):
+            v, _why = classify_response(r)
+            return v != Verdict.BLOCKED
+
+        hits = set()
+
+        def wrecord(cls, p, kk, res, confidence="firm"):
+            record(cls, p, kk, res, confidence=confidence)
+            hits.add(cls)
+
+        # ---- XSS ----
+        att = AdaptiveAttacker(sender, motive_reflect, waf=waf,
+                               max_direct=direct_cap,
+                               max_mutants=mutant_cap)
+        rx = att.run(BANKS["xss"])
+        engine._collect_evasion(att)
+        if not rx.achieved and att.blocked >= 2:
+            rx = ai_second_pass(engine, sender, motive_reflect, "XSS",
+                                waf, att.evasion_log[-1]["original"]
+                                if att.evasion_log else "", pt.origin) or rx
+        if rx.achieved:
+            wrecord("xss", pt, k, rx)
+
+        cmd_param = any(h in k.lower() for h in CMD_HINTS)
+        # snapshot of cross-field dedup state (may miss concurrent in-flight
+        # additions; conservative, only ever causes a tiny bit of redundant work)
+        with ips:
+            class_hits_snap = {kk: set(v) for kk, v in class_hits.items()}
+
+        # ---- SQLi (error) ----
+        def sqli_motive(p, r):
+            return not_blocked(r) and \
+                bool(SQL_ERR_RE.search(getattr(r, "body", "")[:60000]))
+
+        att = AdaptiveAttacker(sender, sqli_motive, waf=waf,
+                               max_direct=direct_cap,
+                               max_mutants=mutant_cap)
+        rs = att.run(SQLI_BANK)
+        engine._collect_evasion(att)
+        if not rs.achieved and att.blocked >= 2:
+            rs = ai_second_pass(engine, sender, sqli_motive, "SQLi",
+                                waf, att.evasion_log[-1]["original"]
+                                if att.evasion_log else "", pt.origin) or rs
+        if rs.achieved:
+            wrecord("sqli", pt, k, rs)
+
+        # ---- SQLi (boolean-blind differential) ----
+        ch = class_hits_snap.get(pkey, set())
+        if not (rs.achieved or ch) and deep and \
+                not REFLECT_MARKER.search(bbody) and \
+                len(str(origv)) <= 80:
+            bolt = _blind_sqli(engine, sender, k, origv, base_r,
+                               bstatus, blen)
+            if bolt:
+                wrecord("sqli_blind", pt, k, bolt, confidence="possible")
+
+        # ---- LFI ----
+        pathy = "rce" not in ch
+        if pathy and any(h in k.lower() for h in
+                         PATHY_HINTS + ("name", "id", "file", "page")):
+            att = AdaptiveAttacker(sender, motive_lfi, waf=waf,
+                                   max_direct=direct_cap,
+                                   max_mutants=mutant_cap)
+            rl = att.run(BANKS["lfi"])
+            engine._collect_evasion(att)
+            if not rl.achieved and att.blocked >= 2:
+                rl = ai_second_pass(engine, sender, motive_lfi, "LFI",
+                                    waf, att.evasion_log[-1]["original"]
+                                    if att.evasion_log else "",
+                                    pt.origin) or rl
+            if rl.achieved:
+                wrecord("lfi", pt, k, rl)
+
+        # ---- RCE (reflected echo) ----
+        if cmd_param or len(fields) <= 3:
+            att = AdaptiveAttacker(sender, motive_rce, waf=waf,
+                                   max_direct=min(direct_cap, 120),
+                                   max_mutants=mutant_cap)
+            rr = att.run(BANKS["rce"])
+            engine._collect_evasion(att)
+            if not rr.achieved and att.blocked >= 2:
+                rr = ai_second_pass(engine, sender, motive_rce, "RCE",
+                                    waf, att.evasion_log[-1]["original"]
+                                    if att.evasion_log else "",
+                                    pt.origin) or rr
+            if rr.achieved:
+                wrecord("rce", pt, k, rr)
+
+        # ---- blind RCE via OOB (aggressive/interactive) ----
+        oob = getattr(engine, "oob", None)
+        if oob and rr is not None and not rr.achieved and \
+                (cmd_param or len(fields) <= 3):
+            br = _blind_rce_oob(engine, sender, pt, k, oob)
+            if br:
+                wrecord("rce_blind", pt, k, br)
+
+        # ---- SSTI ----
+        if any(h in k.lower() for h in SSTI_HINTS):
+            for marker_expr, marker_val in (("{{7*'7'}}", "7777777"),
+                                            ("{{7*7}}", "49")):
+                if marker_val in low_base:
+                    continue
+                att = AdaptiveAttacker(sender, motive_ssti(marker_val),
+                                       waf=waf, max_direct=6,
+                                       max_mutants=mutant_cap)
+                rst = att.run([marker_expr])
+                engine._collect_evasion(att)
+                if rst.achieved:
+                    wrecord("ssti", pt, k, rst)
+                    # escalate with the full engine-agnostic SSTI_RCE bank
+                    att2 = AdaptiveAttacker(sender, motive_ssti_diff(blen),
+                                            waf=waf,
+                                            max_direct=min(direct_cap, 60),
+                                            max_mutants=mutant_cap)
+                    rese = att2.run(BANKS["ssti"])
+                    engine._collect_evasion(att2)
+                    if rese.achieved:
+                        rese.technique = "ssti:" + rese.technique
+                        wrecord("ssti", pt, k, rese)
+                    break
+
+        # ---- Open redirect ----
+        if any(h in k.lower() for h in URL_PARAM_HINTS):
+            att = AdaptiveAttacker(sender,
+                                   motive_redirect("vajra-oob.example"),
+                                   waf=waf, max_direct=25,
+                                   max_mutants=mutant_cap)
+            rd = att.run(BANKS["redirect"])
+            engine._collect_evasion(att)
+            if rd.achieved:
+                wrecord("redirect", pt, k, rd)
+
+        # ---- NoSQL ----
+        if any(h in k.lower() for h in ("user", "login", "pass", "email",
+                                        "auth")):
+            def nosql_motive(p, r):
+                body = getattr(r, "body", "")
+                return r.status != bstatus and 200 <= r.status < 400 or \
+                    (abs(len(body) - blen) > max(60, int(blen * 0.06)))
+            att = AdaptiveAttacker(sender, nosql_motive, waf=waf,
+                                   max_direct=14, max_mutants=6)
+            rn = att.run(BANKS["nosql"])
+            engine._collect_evasion(att)
+            if rn.achieved:
+                wrecord("nosql", pt, k, rn)
+
+        # ---- LDAP / XPath ----
+        if any(h in k.lower() for h in ("user", "login", "auth", "uid",
+                                        "dn", "filter", "search", "name",
+                                        "email")):
+            for cls, bank, emark in (("ldap", "ldap", LDAP_ERR_RE),
+                                     ("xpath", "xpath", XPATH_ERR_RE)):
+                def diff_motive(p, r):
+                    return not_blocked(r) and \
+                        (bool(emark.search(r.body[:60000])) or
+                         abs(len(r.body) - blen) >
+                         max(90, int(blen * 0.1)))
+                att = AdaptiveAttacker(sender, diff_motive, waf=waf,
+                                       max_direct=12, max_mutants=4)
+                rd = att.run(BANKS[cls])
+                engine._collect_evasion(att)
+                if rd.achieved:
+                    wrecord(cls, pt, k, rd)
+
+        # ---- HPP (duplicate-param) ----
+        if pt.kind in ("form", "json") and \
+                "submit" not in k.lower():
+            _hpp_test(engine, pt, k, sender, bstatus, blen, record)
+
+        # ---- CRLF ----
+        crlf_probe = "vjr%0d%0aX-Vajra-Probe: 1"
+        rc_ = sender(crlf_probe)
+        if "x-vajra-probe" in {h.lower() for h in rc_.headers}:
+            att_fake = AdaptiveAttacker(sender, motive_header("x-vajra-probe"),
+                                        waf=waf, max_direct=1,
+                                        max_mutants=4)
+            rcx = att_fake.run([crlf_probe])
+            engine._collect_evasion(att_fake)
+            if rcx.achieved:
+                wrecord("crlf", pt, k, rcx)
+
+        # ---- time-based blind SQLi (deep profiles) ----
+        if deep and len(str(origv)) <= 40 and not origv.isdigit() or \
+                (deep and re.match(r"^\d+$|^[a-z_]+$", str(origv))):
+            for tp in TIME_SQLI[:5]:
+                t0 = time.time()
+                rt = sender(str(origv) + " " + tp)
+                took = time.time() - t0
+                if took > 5.0 and rt.status == bstatus:
+                    fake_res = _mk_result(tp, "delay %.1fs" % took)
+                    wrecord("sqli_time", pt, k, fake_res)
+                    break
+        return pkey, hits
+
+    # Build the unique work list (dedup by url+method+field) then dispatch it
+    # across a bounded worker pool, one field at a time.
+    jobs = []
+    for pt in points:
         if pt.kind == "xml":
-            _run_xml_class(engine, pt, t, targets, waf, direct_cap,
-                           mutant_cap, record)
-            continue
-        for k in (fields if fields else [k or "id"]):
+            continue  # handled serially below, whole-body XXE needs its own pass
+        fields = [fd[0] for fd in pt.fields] or ["id"]
+        for k in fields:
             pkey = (pt.url.split("?")[0], pt.method, k)
             if pkey in tested:
                 continue
             tested.add(pkey)
+            jobs.append((pt, k))
+    pt_total = max(1, len(jobs) + sum(1 for p in points if p.kind == "xml"))
+    pt_done = 0
 
-            def sender(payload, _pt=pt, _k=k):
-                return send_point(engine, _pt, _k, payload)
-
-            base_r = sender("vjrbase")
-            bbody = getattr(base_r, "body", "")[:60000]
-            blen, bstatus = len(bbody), base_r.status
-            low_base = bbody.lower()
-            origv = dict(pt.fields).get(k, "")
-
-            def not_blocked(r):
-                v, _why = classify_response(r)
-                return v != Verdict.BLOCKED
-
-            # ---- XSS ----
-            att = AdaptiveAttacker(sender, motive_reflect, waf=waf,
-                                   max_direct=direct_cap,
-                                   max_mutants=mutant_cap)
-            rx = att.run(BANKS["xss"])
-            engine._collect_evasion(att)
-            if not rx.achieved and att.blocked >= 2:
-                rx = ai_second_pass(engine, sender, motive_reflect, "XSS",
-                                    waf, att.evasion_log[-1]["original"]
-                                    if att.evasion_log else "", pt.origin) or rx
-            if rx.achieved:
-                record("xss", pt, k, rx)
-
-            cmd_param = any(h in k.lower() for h in CMD_HINTS)
-
-            # ---- SQLi (error) ----
-            def sqli_motive(p, r):
-                return not_blocked(r) and \
-                    bool(SQL_ERR_RE.search(getattr(r, "body", "")[:60000]))
-
-            att = AdaptiveAttacker(sender, sqli_motive, waf=waf,
-                                   max_direct=direct_cap,
-                                   max_mutants=mutant_cap)
-            rs = att.run(SQLI_BANK)
-            engine._collect_evasion(att)
-            if not rs.achieved and att.blocked >= 2:
-                rs = ai_second_pass(engine, sender, sqli_motive, "SQLi",
-                                    waf, att.evasion_log[-1]["original"]
-                                    if att.evasion_log else "", pt.origin) or rs
-            if rs.achieved:
-                record("sqli", pt, k, rs)
-                class_hits.setdefault(pkey, set()).add("sqli")
-
-            # ---- SQLi (boolean-blind differential) ----
-            if not (rs.achieved or class_hits.get(pkey)) and deep and \
-                    not REFLECT_MARKER.search(bbody) and \
-                    len(str(origv)) <= 80:
-                bolt = _blind_sqli(engine, sender, k, origv, base_r,
-                                   bstatus, blen)
-                if bolt:
-                    record("sqli_blind", pt, k, bolt, confidence="possible")
-
-            # ---- LFI ----
-            pathy = "rce" not in class_hits.get(pkey, ())
-            if pathy and any(h in k.lower() for h in
-                             PATHY_HINTS + ("name", "id", "file", "page")):
-                att = AdaptiveAttacker(sender, motive_lfi, waf=waf,
-                                       max_direct=direct_cap,
-                                       max_mutants=mutant_cap)
-                rl = att.run(BANKS["lfi"])
-                engine._collect_evasion(att)
-                if not rl.achieved and att.blocked >= 2:
-                    rl = ai_second_pass(engine, sender, motive_lfi, "LFI",
-                                        waf, att.evasion_log[-1]["original"]
-                                        if att.evasion_log else "",
-                                        pt.origin) or rl
-                if rl.achieved:
-                    record("lfi", pt, k, rl)
-                    class_hits.setdefault(pkey, set()).add("lfi")
-
-            # ---- RCE (reflected echo) ----
-            if cmd_param or len(fields) <= 3:
-                att = AdaptiveAttacker(sender, motive_rce, waf=waf,
-                                       max_direct=min(direct_cap, 120),
-                                       max_mutants=mutant_cap)
-                rr = att.run(BANKS["rce"])
-                engine._collect_evasion(att)
-                if not rr.achieved and att.blocked >= 2:
-                    rr = ai_second_pass(engine, sender, motive_rce, "RCE",
-                                        waf, att.evasion_log[-1]["original"]
-                                        if att.evasion_log else "",
-                                        pt.origin) or rr
-                if rr.achieved:
-                    record("rce", pt, k, rr)
-                    class_hits.setdefault(pkey, set()).add("rce")
-
-            # ---- blind RCE via OOB (aggressive/interactive) ----
-            oob = getattr(engine, "oob", None)
-            if oob and rr is not None and not rr.achieved and \
-                    (cmd_param or len(fields) <= 3):
-                br = _blind_rce_oob(engine, sender, pt, k, oob)
-                if br:
-                    record("rce_blind", pt, k, br)
-
-            # ---- SSTI ----
-            if any(h in k.lower() for h in SSTI_HINTS):
-                for marker_expr, marker_val in (("{{7*'7'}}", "7777777"),
-                                                ("{{7*7}}", "49")):
-                    if marker_val in low_base:
-                        continue
-                    att = AdaptiveAttacker(sender, motive_ssti(marker_val),
-                                           waf=waf, max_direct=6,
-                                           max_mutants=mutant_cap)
-                    rst = att.run([marker_expr])
-                    engine._collect_evasion(att)
-                    if rst.achieved:
-                        record("ssti", pt, k, rst)
-                        # escalate with the full engine-agnostic SSTI_RCE bank
-                        att2 = AdaptiveAttacker(sender, motive_ssti_diff(blen),
-                                                waf=waf,
-                                                max_direct=min(direct_cap, 60),
-                                                max_mutants=mutant_cap)
-                        rese = att2.run(BANKS["ssti"])
-                        engine._collect_evasion(att2)
-                        if rese.achieved:
-                            rese.technique = "ssti:" + rese.technique
-                            record("ssti", pt, k, rese)
-                        break
-
-            # ---- Open redirect ----
-            if any(h in k.lower() for h in URL_PARAM_HINTS):
-                att = AdaptiveAttacker(sender,
-                                       motive_redirect("vajra-oob.example"),
-                                       waf=waf, max_direct=25,
-                                       max_mutants=mutant_cap)
-                rd = att.run(BANKS["redirect"])
-                engine._collect_evasion(att)
-                if rd.achieved:
-                    record("redirect", pt, k, rd)
-
-            # ---- NoSQL ----
-            if any(h in k.lower() for h in ("user", "login", "pass", "email",
-                                            "auth")):
-                def nosql_motive(p, r):
-                    body = getattr(r, "body", "")
-                    return r.status != bstatus and 200 <= r.status < 400 or \
-                        (abs(len(body) - blen) > max(60, int(blen * 0.06)))
-                att = AdaptiveAttacker(sender, nosql_motive, waf=waf,
-                                       max_direct=14, max_mutants=6)
-                rn = att.run(BANKS["nosql"])
-                engine._collect_evasion(att)
-                if rn.achieved:
-                    record("nosql", pt, k, rn)
-
-            # ---- LDAP / XPath ----
-            if any(h in k.lower() for h in ("user", "login", "auth", "uid",
-                                            "dn", "filter", "search", "name",
-                                            "email")):
-                for cls, bank, emark in (("ldap", "ldap", LDAP_ERR_RE),
-                                         ("xpath", "xpath", XPATH_ERR_RE)):
-                    def diff_motive(p, r):
-                        return not_blocked(r) and \
-                            (bool(emark.search(r.body[:60000])) or
-                             abs(len(r.body) - blen) >
-                             max(90, int(blen * 0.1)))
-                    att = AdaptiveAttacker(sender, diff_motive, waf=waf,
-                                           max_direct=12, max_mutants=4)
-                    rd = att.run(BANKS[cls])
-                    engine._collect_evasion(att)
-                    if rd.achieved:
-                        record(cls, pt, k, rd)
-
-            # ---- HPP (duplicate-param) ----
-            if pt.kind in ("form", "json") and \
-                    "submit" not in k.lower():
-                _hpp_test(engine, pt, k, sender, bstatus, blen, record)
-
-            # ---- CRLF ----
-            crlf_probe = "vjr%0d%0aX-Vajra-Probe: 1"
-            rc_ = sender(crlf_probe)
-            if "x-vajra-probe" in {h.lower() for h in rc_.headers}:
-                att_fake = AdaptiveAttacker(sender, motive_header("x-vajra-probe"),
-                                            waf=waf, max_direct=1,
-                                            max_mutants=4)
-                rcx = att_fake.run([crlf_probe])
-                engine._collect_evasion(att_fake)
-                if rcx.achieved:
-                    record("crlf", pt, k, rcx)
-
-            # ---- time-based blind SQLi (deep profiles) ----
-            if deep and len(str(origv)) <= 40 and not origv.isdigit() or \
-                    (deep and re.match(r"^\d+$|^[a-z_]+$", str(origv))):
-                for tp in TIME_SQLI[:5]:
-                    t0 = time.time()
-                    rt = sender(str(origv) + " " + tp)
-                    took = time.time() - t0
-                    if took > 5.0 and rt.status == bstatus:
-                        fake_res = _mk_result(tp, "delay %.1fs" % took)
-                        record("sqli_time", pt, k, fake_res)
-                        break
+    if jobs:
+        # A generous worker ceiling for the I/O-bound HTTP brute; saturates the
+        # adapter without spawning thousands of threads.
+        inj_threads = min(120, max(8, int(engine.cfg("inject_threads", 24))))
+        if bool(getattr(engine.args, "aggressive", False)) and \
+                not bool(getattr(engine.args, "stealth", False)):
+            inj_threads = min(240, max(16, inj_threads * 6))
+        with ThreadPoolExecutor(max_workers=inj_threads) as ex:
+            futs = {ex.submit(_attack_field, pt, k): (pt, k)
+                    for pt, k in jobs}
+            for af in as_completed(futs):
+                pt, k = futs[af]
+                pt_done += 1
+                try:
+                    pkey, hits = af.result()
+                except Exception:
+                    pkey, hits = None, set()
+                if hits:
+                    with ips:
+                        class_hits.setdefault(pkey, set()).update(hits)
+                engine.progress(min(pt_done, pt_total), pt_total,
+                                detail="inject %d/%d" %
+                                       (min(pt_done, pt_total), pt_total))
+    # XML endpoints: whole-body XXE probe, sequence not parallelisable
+    for pt in points:
+        if pt.kind == "xml":
+            pt_done += 1
+            engine.progress(min(pt_done, pt_total), pt_total,
+                            detail="inject %d/%d" %
+                                   (min(pt_done, pt_total), pt_total))
+            _run_xml_class(engine, pt, t, targets, waf, direct_cap,
+                           mutant_cap, record)
     _check_methods(engine, targets)
     if deep:
         _stored_pass(engine, points, targets, waf, record)
