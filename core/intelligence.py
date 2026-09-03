@@ -55,6 +55,37 @@ def is_http_port(port):
 
 VERSION_RE = re.compile(r"(\d+(?:\.\d+){0,4})")
 
+# Generic single-token aliases that appear in ordinary HTTP response lines and
+# must never be treated as a software product (they produce garbage like
+# "vulnerable http 1.1 / serve 1.18.0 / date 03"). Matching is skipped for an
+# HTTP-wrapped banner unless the token is found in the parsed Server/product
+# position, not in a status/Date header.
+HTTP_GENERIC = {
+    "http", "https", "server", "serve", "date", "content", "content-type",
+    "x-powered-by", "x-now", "connection", "cache", "etag", "location",
+    "transfer-encoding", "accept-ranges", "set-cookie", "server-timing",
+    "null", "default", "main", "text/html", "text/",
+}
+
+
+def _strip_http_wrapper(banner):
+    """If a banner is a raw HTTP response (headers), return only the Server:
+    header value (the thing a version scan should correlate), else the banner.
+    Returns None when it is HTTP but has no usable Server header."""
+    if not banner:
+        return None
+    b = str(banner)
+    low = b.lower()
+    is_http = bool(re.search(r"(?m)^http/\d", low)) or \
+        ("server:" in low and re.search(r"(?m)^\s*server\s*:", low))
+    if not is_http:
+        # strip typical leading junk that is not a protocol product
+        return b
+    m = re.search(r"(?mi)^\s*server\s*:\s*([^\r\n]+)", b)
+    if m:
+        return m.group(1).strip()
+    return None
+
 
 def parse_version(v):
     m = VERSION_RE.search(str(v))
@@ -111,24 +142,34 @@ class Intelligence:
         """Return list of dicts: product, version, cves[{id,desc,cvss}]."""
         if not banner:
             return []
-        bl = banner.lower()
+        bl_raw = _strip_http_wrapper(banner)
+        if bl_raw is None:
+            # HTTP response with no Server header -> too ambiguous to guess,
+            # avoids inventing "vulnerable http 1.1 / date 03" findings.
+            return []
+        bl = bl_raw.lower()
         results = []
         for prod_key, meta in self.cve_db.items():
             aliases = [prod_key] + list(meta.get("aliases", []))
             hit_alias = None
             for al in aliases:
-                alw = al.lower()
-                m = re.search(r"(?<![a-z0-9])" + re.escape(alw),
-                              bl) if alw else None
+                alw = al.lower().strip()
+                if not alw or alw in HTTP_GENERIC:
+                    continue
+                m = re.search(r"(?<![a-z0-9])" + re.escape(alw), bl) if alw else None
                 if m:
                     idx = m.start()
-                    tail = banner[idx:idx + len(al) + 40]
+                    tail = bl_raw[idx:idx + len(al) + 80]
                     hit_alias = (al, tail)
                     break
             if not hit_alias:
                 continue
             vm = VERSION_RE.search(hit_alias[1][len(hit_alias[0]):])
             version = vm.group(1) if vm else ""
+            if not version:
+                # A product with no detected version is not safely attributable;
+                # skip rather than guess a bogus "vulnerable software" hit.
+                continue
             cves = []
             for rng, entries in meta.get("ranges", {}).items():
                 rc = RangeCheck(rng)

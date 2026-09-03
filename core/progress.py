@@ -27,6 +27,11 @@ import threading
 MIN_ESTIMATE_ELAPSED = 10.0
 MIN_ESTIMATE_DONE = 3
 ESTIMATE_ALPHA = 0.08
+# ETA rate is measured over the recent window of progress samples (seconds);
+# within that window the rate is EMA-smoothed with RATE_ALPHA. This keeps the
+# estimate reflecting the CURRENT throughput instead of an early fast burst.
+RATE_WINDOW = 30.0
+RATE_ALPHA = 0.35
 
 
 class _State:
@@ -62,7 +67,8 @@ class ProgressMeter:
         self.done = 0
         self.start = time.time()
         self._smooth_rate = None        # exponential moving average work/s
-        self._last_eta = None           # monotonic countdown (never grows)
+        self._last_eta = None           # recent display value (for damping)
+        self._samples = []              # (wallclock, done) for windowed rate
         self._detail = ""
         self._last_draw = -1.0
         self._tty = bool(sys.stdout.isatty())
@@ -143,43 +149,59 @@ class ProgressMeter:
     def _eta(self):
         """Stable remaining time from a smoothed (EMA) work-rate.
 
-        The ETA is explicitly NON-EXACT and monotonic: it is a best-effort
-        estimate that only ever trends down towards completion. This matters
-        because early, slow steps (e.g. the first port of a sweep) can make a
-        naive rate-based estimate balloon — shown live, a climbing remaining
-        time reads as a bug. So:
+        The ETA is a best-effort estimate and, importantly, TRACKS reality
+        rather than being frozen to an early value. A hard monotonic clamp
+        made a long running module never raise its ETA once a low value was
+        shown (it would stick at e.g. 00:10 for the whole run). Here we:
 
-          * no numeric ETA is shown until there is real signal (some elapsed
-            time AND measurable progress) — a still-at-0% meter prints the
-            honest '--:--' rather than a fabricated countdown,
-          * the raw estimate is capped to a sane upper bound, and
-          * the displayed value is never allowed to grow once shown.
+          * show no numeric ETA until there is real signal (some elapsed time
+            AND measurable progress),
+          * cap the raw estimate to a sane upper bound,
+          * damp the *rate* with an EMA so it does not jump wildly, and
+          * only gently limit how far the ETA may move per update (so it reads
+            steadily) rather than locking it forever at the first guess.
 
-        The result is a stable countdown that reassures the operator work is
-        progressing without pretending to predict the future precisely."""
+        The result is a countdown that reflects the currently measured pace and
+        drifts toward completion instead of a permanently pinned number."""
         el = time.time() - self.start
         if self.done <= 0 or el <= 0.001:
             return "--:--"
-        # Wait for meaningful momentum before trusting a rate: in the first
-        # seconds (or while progress is still ~0) any number we print would
-        # be a guess, so we keep it honest and blank.
         if el < MIN_ESTIMATE_ELAPSED or self.done < MIN_ESTIMATE_DONE:
             return "--:--"
-        rate = self.done / el
+        # Windowed work-rate: the pace over the RECENT samples, so a slow
+        # mid-scan module drags the estimate toward its real (longer) completion
+        # rather than staying anchored to an early fast burst.
+        self._samples.append((time.time(), self.done))
+        cutoff = time.time() - RATE_WINDOW
+        while len(self._samples) >= 2 and self._samples[0][0] < cutoff:
+            self._samples.pop(0)
+        if len(self._samples) >= 2 and self._samples[-1][1] > self._samples[0][1]:
+            span = max(1e-6, self._samples[-1][0] - self._samples[0][0])
+            rate = (self._samples[-1][1] - self._samples[0][1]) / span
+        else:
+            rate = self.done / el
         if self._smooth_rate is None:
             self._smooth_rate = rate
         else:
-            # Slower EMA: discrete module completions register as spikes, so
-            # a fast alpha makes the estimate wobble. Decay gently instead.
-            self._smooth_rate = (ESTIMATE_ALPHA * rate +
-                                 (1 - ESTIMATE_ALPHA) * self._smooth_rate)
+            self._smooth_rate = (RATE_ALPHA * rate +
+                                 (1 - RATE_ALPHA) * self._smooth_rate)
         sps = max(1e-6, self._smooth_rate)
         remain = (self.total - self.done) / sps
-        # Round to 5s granularity, clamp to a non-alarming ceiling.
-        remain = min(600.0, max(0.0, round(remain / 5.0) * 5.0))
-        # Monotonic non-increasing: never let the shown ETA climb.
+        # Cap to a non-alarming ceiling; also never display below 5s.
+        remain = min(600.0, max(0.0, remain))
+        # Steady the display: limit per-update movement so a bursty module does
+        # not swing the remaining time wildly, but do NOT freeze an old low ETA.
         if self._last_eta is not None:
-            remain = min(remain, self._last_eta)
+            low = 0.5 * self._last_eta
+            high = 1.5 * self._last_eta
+            if low <= remain <= high:
+                # inside the smooth band -> keep it smooth (no change ok)
+                pass
+            elif remain < low:
+                remain = max(remain, low)      # don't crash downward
+            else:
+                remain = min(remain, high)     # don't explode upward
+        remain = round(remain / 5.0) * 5.0
         if remain <= 0:
             remain = 0.0
         self._last_eta = remain

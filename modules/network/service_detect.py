@@ -436,14 +436,17 @@ def _post_checks(engine, t, host, services):
         top_cvss = max((c["cvss"] or 0) for c in hit["cves"])
         sev = "critical" if top_cvss >= 9 else (
             "high" if top_cvss >= 7 else "medium")
+        ids = ", ".join(c["id"] for c in hit["cves"][:4])
         engine.db.add_finding(Finding(
             t.display, "network.services", "cve-surface", sev,
-            "Potentially vulnerable software on port %d: %s %s" %
-            (svc["port"], hit["product"], hit["version"]),
+            "Vulnerable %s %s (port %d): %s" %
+            (hit["product"], hit["version"], svc["port"], ids),
             detail="Banner-matched known vulnerabilities: %s\n%s" %
-                   (cves, "\n".join("- %s: %s" % (c["id"], c["desc"])
+                   (cves, "\n".join("- %s (CVSS %s): %s"
+                                    % (c["id"], c["cvss"] or "?",
+                                       c["desc"] or "(no description)")
                                     for c in hit["cves"][:6])),
-            evidence="Banner: %s" % svc["banner"][:300],
+            evidence="Banner/Server: %s" % svc["banner"][:300],
             remediation="Update the affected component to a patched version; "
                         "verify exposure manually before exploitation "
                         "attempts.",

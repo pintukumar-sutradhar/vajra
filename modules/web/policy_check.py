@@ -19,8 +19,25 @@ LOGIN_INTEL = load_json("intel/login_surfaces.json", {})
 LOGIN_PATHS = LOGIN_INTEL.get("paths", [])
 
 
+def _looks_like_login(engine, url):
+    """Confirm a candidate URL actually serves a login form (a password input).
+    A guessed path that 200s but has no password field is NOT a login surface —
+    probing it would invent a bogus 'no rate limiting' finding."""
+    try:
+        r = engine.http.get(url, allow_redirects=False, timeout=8)
+    except Exception:
+        return False
+    if r.status not in (200, 401, 403):
+        return False
+    body = (r.content or b"").decode("utf-8", "replace")
+    return re.search(r"type=[\"']?password|name=[\"']?(password|pass|pwd|"
+                     r"passwd)[\"']?", body, re.I) is not None
+
+
 def _login_surfaces(engine):
-    """Yield (url, method, fields, username_field) for crawl login forms."""
+    """Yield (url, method, fields, username_field) for CONFIRMED login forms
+    (crawled forms with a password field) or candidate paths that demonstrably
+    serve a password input. Never invents a login where none exists."""
     seen = set()
     for page in engine.state.get("pages", []):
         for f in page.get("forms", []):
@@ -39,6 +56,9 @@ def _login_surfaces(engine):
                 seen.add(key)
                 yield (f.get("action"), f.get("method", "POST").upper(),
                        fields, sorted(user_names)[0])
+    # Candidate-path guessing is gated on confirmation: only probe a guessed
+    # login URL if it actually serves a password field. This keeps us from
+    # reporting 'no rate limiting' against a URL that is not a login page.
     for wt in (engine.state.get("web_targets") or []):
         base = wt["url"].rstrip("/")
         cands = [c for c in (LOGIN_PATHS or ("/login", "/signin", "/auth",
@@ -47,6 +67,8 @@ def _login_surfaces(engine):
         for cand in cands:
             key = ("POST", base + cand)
             if key in seen:
+                continue
+            if not _looks_like_login(engine, base + cand):
                 continue
             seen.add(key)
             yield (base + cand, "POST",

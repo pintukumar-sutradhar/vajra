@@ -757,14 +757,18 @@ def _check_host_header(engine, targets):
                     engine.target.display, "web.vulnscan",
                     "web-vuln", "medium",
                     "Host Header Injection / web-cache poisoning surface",
-                    detail="%s: %s reflected into %s on %s" % (
-                        hdr, hosty, detail_w, base),
+                    detail=("%s: %s reflected into %s on %s. NOTE: an unconfigured "
+                            "default/error page echoing the Host header is "
+                            "common and is NOT proof of cache poisoning — "
+                            "confirm a pathological caching CDN/devider "
+                            "manually before treating this as exploitable."
+                            % (hdr, hosty, detail_w, base)),
                     evidence=("raw socket GET %s with %s: %s\n--- "
                               "reflected occurrence ---\n%s"
                               % (path, hdr, hosty,
                                  snippet.decode("utf-8", "replace")[:600])),
                     remediation=REM["hostinject"],
-                    confidence="firm"))
+                    confidence="possible"))
                 engine.log.finding("[HOST-INJECT] %s reflected via %s at %s"
                                    % (hosty, hdr, base))
                 return

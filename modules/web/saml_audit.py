@@ -25,12 +25,16 @@ SAML_PATHS = [
     "/api/saml", "/saml/SSO", "/saml/ACS", "/SAML/discovery",
 ]
 
-# markers that indicate a live SAML surface
+# markers that indicate a live SAML surface (strong, discriminating)
 SAML_MARKERS = re.compile(
-    r"SAML|<EntityDescriptor|<md:EntityDescriptor|<saml:"
-    r"|AssertionConsumerService|SingleSignOnService|fed:ApplicationServiceType"
-    r"|ns0:EntityDescriptor|logging-in|SAMLRequest|SAMLResponse", re.I)
-XML_MARK = re.compile(r"<\?xml|DOCTYPE|EntityDescriptor|md:EntityDescriptor")
+    r"<EntityDescriptor|md:EntityDescriptor|ns0:EntityDescriptor"
+    r"|<saml:|samlp:|SAMLRequest|SAMLResponse|AssertionConsumerService"
+    r"|SingleSignOnService|SingleLogoutService|urn:oasis:names:tc:SAML"
+    r"|fed:ApplicationServiceType|ds:Signature", re.I)
+# XXE/metadata probing only makes sense against real SAML/XML descriptors,
+# never a generic 200 page that merely contains a distinguishable token.
+XML_MARK = re.compile(r"<EntityDescriptor|md:EntityDescriptor"
+                      r"|<saml:|samlp:|SAMLRequest|SAMLResponse|[?]xml")
 
 
 def _probe(engine, base):
@@ -42,9 +46,12 @@ def _probe(engine, base):
             continue
         if r.status in (429,) and "retry" in r.headers.get("retry-after", ""):
             break
+        # Only a 200 that actually carries SAML/XML-descriptor markers counts.
+        if r.status != 200:
+            continue
         body = (r.content or b"").decode("utf-8", "replace")
         text = " ".join(body.split())
-        if SAML_MARKERS.search(text) or XML_MARK.search(text):
+        if SAML_MARKERS.search(text):
             out.append((path, r.status, text[:400]))
     return out
 
@@ -108,17 +115,19 @@ def run(engine):
                     confidence="firm"))
                 engine.log.finding("[saml] XXE confirmed at %s" % path)
             else:
-                engine.db.add_finding(Finding(
-                    t.display, "web.saml", "coverage", "info",
-                    "SAML SSO surface discovered at %s" % path,
-                    detail=("Live SAML endpoint (HTTP %d).%s"
-                            % (status,
-                               " Flag for manual signature-validation review."
-                               if status == 200 else " Requires auth.")),
-                    evidence=snippet,
-                    confidence="firm"))
                 report.append(path)
+    # Aggregate confirmed surfaces into a SINGLE finding to avoid flooding the
+    # report with one line per guessed path.
     if report:
+        engine.db.add_finding(Finding(
+            t.display, "web.saml", "coverage", "info",
+            "SAML SSO surface present on %d endpoint path(s)" % len(report),
+            detail=("Confirmed SAML markup on %d endpoint path(s):\n%s"
+                    % (len(report), "\n".join("  - %s" % p for p in report))),
+            evidence="\n".join(report),
+            remediation="Review SAML signature validation and ACS/metadata "
+                        "endpoints for trust and parser issues.",
+            confidence="firm"))
         engine.log.info("[saml] %d SAML endpoint(s) surfaced" % len(report))
 
 

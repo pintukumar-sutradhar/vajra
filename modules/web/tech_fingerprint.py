@@ -495,6 +495,13 @@ def run(engine):
         markers = _cms_markers_from(pages)
         if not info and not markers[c]:
             continue
+        # A CMS claim backed only by the discounted generic word token (e.g.
+        # 'wordpress' appearing in prose/footer) is not worth a finding — it is
+        # noise. Require at least one real structural marker before reporting
+        # even a weak/possible CMS signal.
+        structural = [t for t, w in markers[c] if w == 1.0]
+        if not structural:
+            continue
         base = targets[0]["url"].rstrip("/") if targets else ""
         probe_note = None
         firm = bool(info and (info["score"] >= 6 or info["strong"])) or \
