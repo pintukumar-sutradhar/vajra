@@ -6,6 +6,7 @@
   },
   "threads": 40,
   "dns_threads": 160,
+  "dns_threads_aggressive": 2000,
   "dns_timeout": 0.6,
   "scan_timeout": 2.5,
   "scan_concurrency": 600,

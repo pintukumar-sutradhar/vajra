@@ -210,21 +210,47 @@ def _dns_workers(engine):
 
     Precedence: {engine.dns_threads attr, config dns_threads} is taken as the
     exact worker count; otherwise scale `--threads` (4x, capped 64..400).
-    Stealth mode always clamps to 16..64 for a low-noise sweep."""
+    Stealth mode always clamps to 16..64 for a low-noise sweep.
+
+    Aggressive mode (--aggressive or the aggressive profile) lifts the ceiling
+    so the resolver can be saturated to red-team speed: a separate
+    dns_threads_aggressive config (default 2000) is used as the exact worker
+    count when set, letting the pipeline push well past 1000 lookups/sec on a
+    healthy resolver."""
     stealth = bool(getattr(engine, "_stealthed", False)) or \
         bool(getattr(engine.args, "stealth", False))
+    aggressive = bool(getattr(engine.args, "aggressive", False))
+    if stealth:
+        # Low-noise sweep: worker count scales with --threads but clamps to a
+        # quiet 16..64 window regardless of profile/aggressive.
+        hi = (engine.cfg("dns_threads", 0) or 0)
+        if not hi and hasattr(engine, "dns_threads") and engine.dns_threads:
+            hi = int(engine.dns_threads)
+        if not hi:
+            hi = int(getattr(engine.args, "threads", 0) or 0) or 40
+        return max(16, min(64, hi))
+    if aggressive:
+        # Aggressive: saturate the resolver by lifting the worker ceiling to
+        # red-team speed. Prefer the dedicated dns_threads_aggressive knob so
+        # the non-aggressive dns_threads (which still paces normal scans) does
+        # not cap us back down.
+        cap = int(engine.cfg("dns_threads_aggressive", 2000) or 2000)
+        cap = max(256, min(4000, cap))
+        agg = engine.cfg("dns_threads_aggressive", 0) or 0
+        if agg:
+            return min(cap, max(256, int(agg)))
+        if hasattr(engine, "dns_threads") and engine.dns_threads:
+            return min(cap, max(256, int(engine.dns_threads)))
+        base = int(getattr(engine.args, "threads", 0) or 0) or 40
+        return min(cap, max(256, base * 20))
     explicit = None
     if hasattr(engine, "dns_threads") and engine.dns_threads:
         explicit = int(engine.dns_threads)
     elif engine.cfg("dns_threads", 0):
         explicit = int(engine.cfg("dns_threads"))
     if explicit:
-        if stealth:
-            return max(16, min(64, explicit))
         return min(400, max(16, explicit))
     base = int(getattr(engine.args, "threads", 0) or 0) or 40
-    if stealth:
-        return max(16, min(64, base))
     return min(400, max(64, base * 4))
 
 

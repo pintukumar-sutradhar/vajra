@@ -880,11 +880,19 @@ class Engine:
         if weight is not None:
             self._mod_progress_weight = weight
         w = getattr(self, "_mod_progress_weight", 1)
+        # Monotonic sub-progress: a module may report several bulk segments
+        # (e.g. the subdomain wordlist pass THEN a CT-log pass). Each segment
+        # re-reports its own 0..1 fraction, so naively replacing the fraction
+        # makes the overall percentage drop back to the module start whenever a
+        # new segment begins. Instead we only ever move the consumed fraction
+        # FORWARD: overall% = base + w * max-fraction-seen-this-module.
         if cur is not None and total:
             frac = max(0.0, min(1.0, cur / float(total)))
-            overall = (self._prog_base + w * frac) / float(self._prog_grand)
+            self._mod_frac = max(getattr(self, "_mod_frac", 0.0), frac)
         else:
-            overall = self._prog_base / float(self._prog_grand)
+            self._mod_frac = getattr(self, "_mod_frac", 0.0)
+        overall = (self._prog_base + w * self._mod_frac) / \
+            float(self._prog_grand)
         meter.update(int(overall * 100), force=False)
         if detail:
             meter.set_detail(detail)
@@ -895,6 +903,7 @@ class Engine:
         if getattr(self, "_run_meter", None) is not None:
             w = self._module_weight(m)
             self._mod_progress_weight = w
+            self._mod_frac = 0.0
             self.progress(cur=0, total=1, detail=m["name"],
                           weight=w)
         self.db.add_event(self.target.display, "module-start", m["name"])
