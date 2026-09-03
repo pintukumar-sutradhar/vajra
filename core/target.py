@@ -4,7 +4,7 @@ import ipaddress
 import re
 from urllib.parse import urlparse
 
-from core.utils import is_ip, normalize_url
+from core.utils import is_ip, normalize_url, expand_cidr
 
 
 class Target:

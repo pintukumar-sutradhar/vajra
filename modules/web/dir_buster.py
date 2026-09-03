@@ -44,6 +44,15 @@ def run(engine):
     paths = engine.dirs_words() or ["admin", "login", "dashboard",
                                     "uploads", "backup"]
     threads = int(engine.cfg("dir_threads", 25))
+    # Lift concurrency under aggressive/--threads so bulk fuzzing moves at
+    # red-team speed (dir busting is I/O-bound HTTP, not CPU-bound).
+    if bool(getattr(engine.args, "aggressive", False)) and \
+            not bool(getattr(engine.args, "stealth", False)):
+        base = int(getattr(engine.args, "threads", 0) or 0) or 40
+        threads = max(threads, min(800, max(100, base * 12)))
+    elif not getattr(engine, "_stealthed", False):
+        base = int(getattr(engine.args, "threads", 0) or 0) or 40
+        threads = max(threads, min(400, max(threads, base * 4)))
     hits, restricted, redirects, listings = [], [], [], []
     auth_paths = []
 

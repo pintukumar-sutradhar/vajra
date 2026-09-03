@@ -3,6 +3,7 @@ import concurrent.futures as cf
 import os
 import socket
 import struct
+import threading
 import urllib.request
 import json
 
@@ -16,10 +17,79 @@ from core.database import Finding
 # own is an order of magnitude faster for the (mostly NXDOMAIN) brute case, so
 # we use it as the primary resolver and only fall back to the OS resolver if
 # the direct channel proves unusable.
+#
+# File-descriptor budget: opening one fresh UDP socket per lookup means N
+# concurrent lookups occupy up to N fds. With a huge aggressive worker pool
+# (2000+) that blows past the process fd budget and raises EMFILE
+# ("Too many open files"). So lookups share a small fixed pool of UDP sockets
+# (bounded by the fd budget), one in-flight query per socket at a time — the
+# worker threads oversubscribe the pool. This keeps throughput high while capping
+# sockets well below any sane RLIMIT_NOFILE.
 _DNS_TIMEOUT = 0.6
 _DNS_NS = []            # populated lazily from resolv.conf
 _DNS_NS_PROBED = False
 _DNS_CHANNEL_OK = None  # tri-state: once True/False we trust it
+
+_MAX_POOL_FDS = 192     # hard cap on shared DNS sockets (well under typical limits)
+
+
+class _DnsSocketPool:
+    """Bounded pool of reusable UDP DNS sockets. Each socket answers one
+    in-flight query at a time; workers acquire a socket via an acquire/release
+    lock so concurrent lookups oversubscribe a small fixed fd set instead of
+    opening a socket each."""
+
+    def __init__(self, ns, size):
+        self._ns = ns
+        self._size = max(1, min(int(size), _MAX_POOL_FDS))
+        self._ready = []
+        self._lock = threading.Lock()
+        self._cond = threading.Condition(self._lock)
+        self._open = 0
+
+    def _new(self):
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(_DNS_TIMEOUT)
+        self._open += 1
+        return s
+
+    def acquire(self):
+        with self._cond:
+            while not self._ready and self._open >= self._size:
+                self._cond.wait()
+            if self._ready:
+                return self._ready.pop(), True
+            s = self._new()
+            return s, False
+
+    def release(self, s):
+        with self._cond:
+            self._ready.append(s)
+            self._cond.notify()
+
+    def close(self):
+        with self._cond:
+            for s in self._ready:
+                try:
+                    s.close()
+                except Exception:
+                    pass
+            self._ready = []
+
+
+_DNS_POOL = {}
+_DNS_POOL_SIZE = 32
+
+
+def _pool_for(ns, size):
+    global _DNS_POOL, _DNS_POOL_SIZE
+    if size != _DNS_POOL_SIZE:
+        _DNS_POOL_SIZE = size
+        _DNS_POOL = {}
+    p = _DNS_POOL.get(ns)
+    if p is None:
+        p = _DNS_POOL[ns] = _DnsSocketPool(ns, size)
+    return p
 
 
 def _ns_list():
@@ -116,11 +186,18 @@ def _parse_a(resp, want_qid):
 
 
 def _direct_a(host):
-    """Resolve `host` via a raw UDP A-query. Returns ``(ip_or_None, definitive)``
-    (see _parse_a). Tries each configured nameserver under a hard timeout."""
+    """Resolve `host` via a raw UDP A-query over a shared, bounded socket pool
+    (one in-flight query per socket; workers oversubscribe the pool). Returns
+    ``(ip_or_None, definitive)`` (see _parse_a). Tries each configured
+    nameserver under a hard timeout."""
     for ns in _ns_list():
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(_DNS_TIMEOUT)
+        try:
+            pool = _pool_for(ns, _DNS_POOL_SIZE)
+            sock, created = pool.acquire()
+        except Exception:
+            # Could not get a pooled socket (e.g. ephemeral fd exhaustion):
+            # degrade to the OS resolver rather than crash the module.
+            return None, False
         try:
             qid = (os.getpid() ^ hash(host)) & 0xFFFF
             q = _build_query(host, qid)
@@ -138,7 +215,7 @@ def _direct_a(host):
         except Exception:
             continue
         finally:
-            sock.close()
+            pool.release(sock)
     return None, False
 
 
@@ -331,8 +408,12 @@ def _resolve_many(engine, cands, dom):
     candidates lazily through a single pool of `dns_threads` workers (map only
     keeps ~workers lookups in flight), giving bounded backpressure even for an
     18k+ wordlist while saturating the resolver — far more throughput than the
-    general HTTP thread count."""
+    general HTTP thread count. File descriptors stay bounded because every
+    lookup borrows a socket from the shared, capped DNS pool rather than
+    opening its own."""
+    global _DNS_POOL_SIZE
     n_workers = _dns_workers(engine)
+    _DNS_POOL_SIZE = max(1, min(n_workers, _MAX_POOL_FDS))
     total = len(cands)
     resolved = found = 0
     live = []

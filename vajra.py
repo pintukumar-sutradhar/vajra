@@ -445,9 +445,12 @@ def main():
         engine.run()
         return 0
     except KeyboardInterrupt:
-        print("\n[!] interrupted by user — writing partial report...")
+        print("\n[!] interrupted by user — flushing report/evidence...")
+        # run()'s finally already called _finalize_partial_scan(); this guards
+        # the rare case where the interrupt hit inside that finalize itself, so
+        # we never return without attempting to persist findings.
         try:
-            engine.generate_reports()
+            engine._finalize_partial_scan()
         except Exception:
             pass
         return 130

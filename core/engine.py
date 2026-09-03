@@ -308,12 +308,13 @@ class Engine:
         s = _re.sub(r"[^A-Za-z0-9]+", "_", s).strip("_")[:48]
         return s or "finding"
 
-    def save_screenshot(self, url, base_name):
-        """Best-effort headless-browser PNG of ``url`` written to the current
-        target's evidence folder. Returns the relative path, or "" if the
-        browser is unavailable / the render failed (text evidence is kept)."""
+    def save_screenshot(self, url, base_name, evdir=None):
+        """Best-effort headless-browser PNG of ``url`` written to the given
+        evidence folder (default: the current target's). Returns the relative
+        path, or "" if the browser is unavailable / the render failed (text
+        evidence is kept)."""
         from core.screenshot import capture
-        evdir = self.state.get("evidence_dir")
+        evdir = evdir or self.state.get("evidence_dir")
         if not url or not evdir:
             return ""
         out = os.path.join(evdir, base_name)
@@ -332,13 +333,19 @@ class Engine:
         except Exception:
             return False
 
-    def _dump_evidence(self):
+    def _dump_evidence(self, t=None, db=None, evdir=None):
         """Write one raw-proof file under evidence/ for EVERY finding (plus a
         per-issue screenshot when a browser is available), so the evidence
         folder is the on-disk mirror of the report's 'PoC / Evidence' column
-        and is never left empty after a scan with findings."""
-        evdir = self.state.get("evidence_dir")
-        if not evdir:
+        and is never left empty after a scan with findings.
+
+        Defaults to the current target/db/evidence dir, but can be passed an
+        explicit target/db/dir so a partially-run or interrupted scan can still
+        flush whatever findings it has."""
+        t = t or self.target
+        db = db or self.db
+        evdir = evdir or self.state.get("evidence_dir")
+        if not evdir or not t or db is None:
             return
         os.makedirs(evdir, exist_ok=True)
         shots_on = self._screenshots_enabled()
@@ -348,8 +355,8 @@ class Engine:
         shot_urls = set()
         shots = 0
         written = 0
-        base_url = (self.target.display if self.target.kind == "url" else "")
-        for i, f in enumerate(self.db.findings(self.target.display)):
+        base_url = (t.display if getattr(t, "kind", "") == "url" else "")
+        for i, f in enumerate(db.findings(t.display)):
             sever = f.get("severity", "")
             poc = (f.get("evidence") or "").strip()
             if not poc:
@@ -386,12 +393,22 @@ class Engine:
                 continue
             shot_urls.add(url)
             png = "f%03d_%s.png" % (i + 1, slug)
-            if self.save_screenshot(url, png):
+            if self.save_screenshot(url, png, evdir=evdir):
                 shots += 1
         if written:
             self.log.success("[evidence] %d finding-proof file(s) -> "
                              "evidence/ (target %s)"
-                             % (written, self.target.display))
+                             % (written, t.display))
+
+    def _dump_evidence_for(self, t):
+        """Flush evidence for a target that is not currently `self.target` —
+        used when finalizing an interrupted scan after the cursor moved on."""
+        tdir = self.target_dirs.get(t.display)
+        db = self._db_for(t.display)
+        if not tdir or db is None:
+            return
+        self._dump_evidence(t=t, db=db,
+                            evdir=os.path.join(tdir, "evidence"))
 
     def _collect_evasion(self, attacker):
         try:
@@ -508,18 +525,37 @@ class Engine:
                     self.log.error("reporting failed for %s: %r" %
                                    (t.display, e))
         finally:
+            self._finalize_partial_scan()
+
+    def _finalize_partial_scan(self):
+        """Run on scan exit (normal OR interrupted). Flushes per-finding
+        evidence and writes a report for every target that has work but was not
+        already reported, so an interrupted scan never leaves the output folder
+        empty. Tolerates re-raised interrupts and per-target failures."""
+        try:
+            self._opsec_teardown()
+        except Exception as e:
+            self.log.debug("opsec teardown failed: %r" % e)
+        for t in self.targets:
+            if t.display in self.reported:
+                continue
             try:
-                self._opsec_teardown()
+                if self.target is not None and \
+                        self.target.display == t.display:
+                    self._dump_evidence()
+                else:
+                    self._dump_evidence_for(t)
+                self.generate_target_reports(t)
+            except KeyboardInterrupt:
+                self.log.warn("[finalize] interrupted again — stopping")
+                break
             except Exception as e:
-                self.log.debug("opsec teardown failed: %r" % e)
-            for t in self.targets:
-                if t not in self.reported:
-                    try:
-                        self.generate_target_reports(t)
-                    except Exception:
-                        pass
+                self.log.debug("finalize for %s failed: %r" % (t.display, e))
+        try:
             self.write_run_summary()
             self._workspace_finish()
+        except Exception as e:
+            self.log.debug("run summary failed: %r" % e)
 
     def run_target(self, t):
         self.target = t
