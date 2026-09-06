@@ -304,6 +304,14 @@ def run(engine):
         blen, bstatus = len(bbody), base_r.status
         low_base = bbody.lower()
         origv = dict(pt.fields).get(k, "")
+        # A parameter whose ORIGINAL value is echoed back by the app is a
+        # reflected parameter: ANY payload into it changes response length, so
+        # length-based differential motives below would false-positive. Same
+        # guard the blind-SQLi differential already uses.
+        reflects = False
+        ov = str(origv)
+        if len(ov) >= 2 and ov.lower() in low_base:
+            reflects = True
 
         def not_blocked(r):
             v, _why = classify_response(r)
@@ -442,6 +450,8 @@ def run(engine):
                                         "auth")):
             def nosql_motive(p, r):
                 body = getattr(r, "body", "")
+                if reflects:
+                    return False
                 return r.status != bstatus and 200 <= r.status < 400 or \
                     (abs(len(body) - blen) > max(60, int(blen * 0.06)))
             att = AdaptiveAttacker(sender, nosql_motive, waf=waf,
@@ -458,10 +468,14 @@ def run(engine):
             for cls, bank, emark in (("ldap", "ldap", LDAP_ERR_RE),
                                      ("xpath", "xpath", XPATH_ERR_RE)):
                 def diff_motive(p, r):
+                    if not_blocked(r) and \
+                            bool(emark.search(r.body[:60000])):
+                        return True
+                    if reflects:
+                        return False
                     return not_blocked(r) and \
-                        (bool(emark.search(r.body[:60000])) or
-                         abs(len(r.body) - blen) >
-                         max(90, int(blen * 0.1)))
+                        abs(len(r.body) - blen) > \
+                        max(90, int(blen * 0.1))
                 att = AdaptiveAttacker(sender, diff_motive, waf=waf,
                                        max_direct=12, max_mutants=4)
                 rd = att.run(BANKS[cls])
