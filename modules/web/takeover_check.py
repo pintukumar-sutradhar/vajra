@@ -1,10 +1,17 @@
 """VAJRA subdomain takeover (web.takeover): for every enumerated subdomain,
 walk CNAME records; if the alias targets a known cloud/paas provider root and
-the provider target does NOT resolve, the subdomain is dangling and can be
-claimed. DNS-only check — indicates but does not confirm the takeover."""
+the provider target does NOT exist (definitive NXDOMAIN / no A record), the
+subdomain is dangling and can be claimed. DNS-only check — indicates but does
+not confirm the takeover.
+
+Anti-FP: a transient DNS failure (SERVFAIL, resolver timeout, nameserver
+down) is NOT treated as 'the target is gone'. Only an authoritative negative
+answer counts, so flaky DNS never fabricates a takeover."""
+import os
 import socket
 
 from core.database import Finding
+from modules.recon.subdomain_enum import _direct_a
 
 # provider CNAME -> (label, provider-verify-pattern)
 TAKEOVER_ROOTS = {
@@ -40,30 +47,51 @@ LEGACY_SUFFIX = ("azurewebsites.net", "cloudapp.net", "trafficmanager.net",
 
 
 def _resolve(host):
+    """Return the A record for `host`, or None. ALIVE is True when the query
+    got a definitive answer (address present); ABSENT is True only on an
+    authoritative NXDOMAIN/no-A (truly unreachable). On a transitive DNS
+    failure (SERVFAIL/timeout/resolver down) both ALIVE and ABSENT are False —
+    the caller must treat that as INDETERMINATE, never as a takeover."""
     try:
-        return socket.gethostbyname(host)
-    except socket.gaierror:
-        return None
+        ip, definitive = _direct_a(host)
+        if definitive:
+            return "alive" if ip else "absent"
+        return "indeterminate"
     except Exception:
-        return None
+        return "indeterminate"
 
 
 def _cname(host):
-    """Raw DNS query for the CNAME of `host` (single-shot to 8.8.8.8)."""
+    """Raw DNS query for the CNAME of `host`. Tries a fixed public resolver
+    first, then the nameservers from /etc/resolv.conf as a fallback so a
+    network that blocks 8.8.8.8 still works."""
+    servers = ["8.8.8.8"]
     try:
-        import struct
-        hdr = struct.pack(">HHHHHH", 0x1122, 0x0100, 1, 0, 0, 0)
-        q = b"".join(bytes([len(p)]) + p.encode()
-                     for p in host.rstrip(".").split(".")) + b"\x00"
-        qtype = struct.pack(">HH", 5, 1)  # CNAME IN
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(3)
-        s.sendto(hdr + q + qtype, ("8.8.8.8", 53))
-        data, _ = s.recvfrom(4096)
-        s.close()
-        return _parse_cname(data)
+        from modules.recon.subdomain_enum import _ns_list
+        servers.extend(_ns_list())
     except Exception:
-        return None
+        pass
+    seen_qid = set()
+    for ns in dict.fromkeys(servers):
+        try:
+            import struct
+            qid = (os.getpid() ^ hash(host) ^ len(seen_qid)) & 0xFFFF
+            if qid in seen_qid:
+                qid = ((qid + 1) & 0xFFFF)
+            seen_qid.add(qid)
+            hdr = struct.pack(">HHHHHH", qid, 0x0100, 1, 0, 0, 0)
+            q = b"".join(bytes([len(p)]) + p.encode()
+                         for p in host.rstrip(".").split(".")) + b"\x00"
+            qtype = struct.pack(">HH", 5, 1)  # CNAME IN
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.settimeout(3)
+            s.sendto(hdr + q + qtype, (ns, 53))
+            data, _ = s.recvfrom(4096)
+            s.close()
+            return _parse_cname(data) or None
+        except Exception:
+            continue
+    return None
 
 
 def _parse_cname(data):
@@ -132,9 +160,15 @@ def run(engine):
                 break
         if not root_key:
             continue
-        alive = _resolve(cname)
-        if alive:
+        state = _resolve(cname)
+        if state == "alive":
             continue
+        if state == "indeterminate":
+            # Transient DNS failure (SERVFAIL/timeout/resolver down) is not
+            # proof the resource is unclaimed — skip rather than fabricate a
+            # takeover finding (anti-false-positive on flaky networks).
+            continue
+        # state == "absent": authoritative NXDOMAIN / no-A -> truly dangling
         label = TAKEOVER_ROOTS[root_key][0]
         sev = "high"
         if cname.endswith(LEGACY_SUFFIX):
