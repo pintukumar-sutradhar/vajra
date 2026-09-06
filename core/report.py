@@ -285,7 +285,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
  <div class="meta">
   <table>
-   <tr><td>Prepared for</td><td><b>_ _ _ _ _ _ _ _ _ _ _ _ _ _ _</b></td></tr>
+   <tr><td>Prepared for</td><td><b>[Client name]</b></td></tr>
    <tr><td>Assessment of</td><td><b>$targets</b></td></tr>
    <tr><td>Date of assessment</td><td>$date</td></tr>
    <tr><td>Assessment type</td><td>$profile</td></tr>
@@ -360,6 +360,69 @@ def _esc(s):
             .replace(">", "&gt;").replace('"', "&quot;"))
 
 
+def _measured_web_services(data):
+    """When the service scanner stored nothing, reconstruct an honest
+    'what was actually measured' row from the web findings — e.g. the nginx
+    banner and the URL scheme/port. Prevents the contradiction of a report
+    that says 'no service reachable' on the same page where the web app was
+    crawled and fingerprinted."""
+    import re as _re
+    from urllib.parse import urlsplit
+    rows = []
+    targets = (data.get("meta", {}) or {}).get("targets", []) or []
+    for f in data.get("findings", []) or []:
+        tl = ((f.get("title") or "") + " " + (f.get("detail") or "")).lower()
+        if "server version" not in tl and "technology fingerprint" not in tl:
+            continue
+        ev = (f.get("evidence") or "") or (f.get("detail") or "")
+        prod, ver = "", ""
+        m = _re.search(r"server[:\s]+([a-z0-9][a-z0-9._-]*)\s*(?:/([\d][\w.]*))?",
+                       ev.lower())
+        if m:
+            prod, ver = m.group(1), m.group(2) or ""
+        tgt = (f.get("target") or (targets[0] if targets else ""))
+        if not tgt or not tgt.startswith(("http://", "https://")):
+            continue
+        try:
+            parts = urlsplit(tgt)
+            port = parts.port or (443 if parts.scheme == "https" else 80)
+            scheme = parts.scheme or "http"
+        except Exception:
+            port, scheme = 443, "https"
+        rows.append({"target": tgt, "port": port,
+                     "service": "https" if scheme == "https" else "http",
+                     "product": prod or "-", "version": ver or "-"})
+    if not rows and targets:
+        tc = (data.get("tech_cves") or {})
+        for t in targets:
+            if not t.startswith(("http://", "https://")):
+                continue
+            try:
+                parts = urlsplit(t)
+                port = parts.port or (443 if parts.scheme == "https" else 80)
+                prod = ""
+                ver = ""
+                if tc:
+                    k = sorted(tc)[0]
+                    prod = k.title()
+                    ver = (tc[k].get("version") or "") or ""
+            except Exception:
+                port, prod, ver = 443, "", ""
+            rows.append({"target": t, "port": port,
+                         "service": "https" if parts.scheme == "https"
+                         else "http",
+                         "product": prod or "-", "version": ver or "-"})
+    seen = set()
+    deduped = []
+    for r in rows:
+        k = (r["target"], r["port"], r["service"])
+        if k in seen:
+            continue
+        seen.add(k)
+        deduped.append(r)
+    return deduped
+
+
 def build_data(engine):
     stats = engine.db.stats()
     findings = engine.db.findings()
@@ -406,7 +469,8 @@ def render_html(data):
     findings = data["findings"]
     total = len(findings)
 
-    if data.get("services"):
+    _services = data.get("services") or _measured_web_services(data)
+    if _services:
         srows = "".join(
             '<tr><td><code>%s</code></td><td>%s</td><td>%s</td><td>%s</td>'
             '<td>%s</td></tr>' % (
@@ -414,7 +478,7 @@ def render_html(data):
                 _esc(s["service"]),
                 _esc(s.get("product") or "-"),
                 _esc(s.get("version") or "-"))
-            for s in data["services"])
+            for s in _services)
         services_table = ('<table class="data"><tr><th>Target</th><th>Port</th>'
                           '<th>Service</th><th>Product</th><th>Version</th></tr>'
                           '%s</table>' % srows)
@@ -782,10 +846,11 @@ def render_markdown(data):
 
     lines.append("## 2. Services and open ports")
     lines.append("")
-    if data.get("services"):
+    services = data.get("services") or _measured_web_services(data)
+    if services:
         lines.append("| Target | Port | Service | Product | Version |")
         lines.append("|---|---|---|---|---|")
-        for s in data["services"]:
+        for s in services:
             lines.append("| %s | %s | %s | %s | %s |" % (
                 s["target"], s["port"], s["service"],
                 s.get("product") or "-", s.get("version") or "-"))

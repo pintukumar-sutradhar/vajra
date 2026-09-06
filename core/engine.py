@@ -772,6 +772,7 @@ class Engine:
                 self._exec(m)
         if self.ai_select:
             self.run_mission()
+        self._reconcile_port_scan_noise(t)
         self._dump_evidence()
         self._workspace_target(t)
         self.db.add_event(t.display, "scan-end", "")
@@ -779,6 +780,31 @@ class Engine:
         if self._run_meter is not None:
             self._run_meter.finish()
             self._run_meter = None
+
+    def _reconcile_port_scan_noise(self, t):
+        """Drop the 'No TCP ports responded from scanned set' info finding when
+        the web phase demonstrably reached the target (it is a URL that was
+        crawled over https). A report that says 'no service reachable' on the
+        same page where the site was assessed is self-contradictory noise."""
+        db = self._db_for(t.display) or self.db
+        findings = db.findings(t.display)
+        web_ok = any(
+            (f.get("module") or "").startswith("web.") or
+            "https://" in (f.get("evidence") or "") or
+            "http://" in (f.get("evidence") or "")
+            for f in findings)
+        if not web_ok:
+            return
+        for f in findings:
+            if (f.get("severity") == "info"
+                    and f.get("module") == "network.portscan"
+                    and "No TCP ports responded" in (f.get("title") or "")):
+                db.conn.execute(
+                    "DELETE FROM findings WHERE target=? AND module=?"
+                    " AND title=?",
+                    (t.display, "network.portscan", f["title"]))
+                self.log.info("reconciled: dropped 'no TCP ports' info — the "
+                              "web endpoint was measured reachable")
 
     def _workspace_target(self, t):
         ws = getattr(self, "workspace", None)
