@@ -182,7 +182,7 @@ def _well_known(engine, state_api, base):
         if "jwks" in path:
             state_api["jwks"] = data.get("keys", [])
             engine.db.add_finding(Finding(
-                engine.target.display, "web.api", "recon", "low",
+                engine.target.display, "web.api", "recon", "info",
                 "JWKS endpoint exposed at %s (%d JWK key(s))" %
                 (url, len(data.get("keys", []))),
                 evidence=json.dumps(data)[:1200],
@@ -191,7 +191,7 @@ def _well_known(engine, state_api, base):
                 in path:
             state_api["oidc"][path] = data
             engine.db.add_finding(Finding(
-                engine.target.display, "web.api", "recon", "low",
+                engine.target.display, "web.api", "recon", "info",
                 "OAuth/OIDC metadata exposed at %s" % url,
                 detail="issuer=%s token=%s auth=%s" % (
                     data.get("issuer", "?"), data.get("token_endpoint", "?"),
@@ -214,11 +214,13 @@ def _audit_jwks(engine, state_api):
                 evidence=json.dumps(k)[:600], confidence="firm"))
         if k.get("kty") == "RSA" and k.get("use") == "sig" and k.get("n"):
             engine.db.add_finding(Finding(
-                engine.target.display, "web.api", "recon", "medium",
+                engine.target.display, "web.api", "recon", "info",
                 "RSA signing key published in JWKS (alg-confusion surface)",
-                detail="If any consumer verifies RS256 with this JWKS but "
-                       "accepts HS256, the public 'n' becomes the HMAC "
-                       "secret. Audit validation libraries.",
+                detail="Public by design for an OIDC issuer — this is "
+                       "informational only. It becomes a vulnerability only "
+                       "if a consumer verifies RS256 against this JWKS while "
+                       "accepting HS256 (the 'n' as HMAC secret). Audit "
+                       "validation libraries for alg-confusion.",
                 evidence="n=<%s…>" % str(k.get("n", ""))[:40],
                 confidence="possible"))
             break
@@ -271,7 +273,19 @@ def _authz_checks(engine, state_api, t):
         url = url.split("{")[0].rstrip("/") + "/1"
         status, body = _raw_get_no_cookie(url,
                                           getattr(engine, "socks", None))
+        # A protected API answers a cookie-less request with 401/403 or an
+        # auth-error JSON body.  Only report when we actually got resource
+        # data back (rich JSON/XML object or a distinctive-content page),
+        # never a 31-byte {"error":"unauthorized"} stub.
         if status in (200, 203) and body and len(body) > 40:
+            head = body[:800].decode("utf-8", "replace").lower()
+            bad = ("unauthorized", "unauthenticated", "forbidden",
+                   "401", "403", "access denied", "invalid token",
+                   "missing token", "token expired", "not logged in",
+                   "login required", "requires authentication",
+                   "invalid credentials", "access_token required")
+            if any(tok in head for tok in bad):
+                continue
             engine.db.add_finding(Finding(
                 t.display, "web.api", "authz", "high",
                 "Declared-auth object endpoint reachable unauthenticated"
