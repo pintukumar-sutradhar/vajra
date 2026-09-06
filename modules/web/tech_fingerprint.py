@@ -242,6 +242,45 @@ def _cms_markers(hay):
     return counts
 
 
+_EXTERNAL_URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.I)
+
+
+def _url_in_scope(url, own_hosts):
+    """True when an absolute URL's host is the target itself (or a subdomain
+    of it) — a same-origin reference, not a third-party one."""
+    try:
+        host = (urlsplit(url).netloc or "").split(":")[0].lower()
+    except Exception:
+        return False
+    if not host:
+        return False
+    if host in own_hosts:
+        return True
+    return any(host.endswith("." + o) for o in own_hosts if "." in o)
+
+
+def _cms_markers_from(pages, own_hosts=None):
+    """Aggregate weighted CMS markers across every crawled page.
+
+    A marker that only appears inside an absolute URL pointing at an EXTERNAL
+    host tells you nothing about the scanned domain (e.g. a partner logolink
+    like ``https://partner.org/wp-content/uploads/…`` copied into a client
+    list) — those occurrences are stripped before matching so third-party CMS
+    markers never raise a CMS finding on the target."""
+    counts = {}
+    for p in pages:
+        body = (p.get("body") or "")
+        header = " ".join(str(v) for v in (p.get("headers") or {}).values())
+        if own_hosts:
+            body = _EXTERNAL_URL_RE.sub(
+                lambda m: m.group(0) if _url_in_scope(m.group(0), own_hosts)
+                else " ", body)
+        hay = {"body": body, "header": header}
+        for c, seen in _cms_markers(hay).items():
+            counts.setdefault(c, set()).update(seen)
+    return counts
+
+
 def _firm_cms(c, markers):
     """Two weighted-distinct markers (>=1.5 for structural tokens, or >=2.0
     counting one generic word) make the CMS claim firm."""
@@ -357,18 +396,6 @@ def _detect_techs(sigs, pages):
             res[name] = {"score": weight, "proofs": proofs[:8],
                          "version": version, "strong": strong}
     return res
-
-
-def _cms_markers_from(pages):
-    """Aggregate weighted CMS markers across every crawled page."""
-    counts = {}
-    for p in pages:
-        hay = {"body": (p.get("body") or ""),
-               "header": " ".join(str(v) for v in
-                                  (p.get("headers") or {}).values())}
-        for c, seen in _cms_markers(hay).items():
-            counts.setdefault(c, set()).update(seen)
-    return counts
 
 
 def _strong_cms_from(gen_low, c):
@@ -492,7 +519,21 @@ def run(engine):
                             % (tech, info["score"], info["proofs"][:1]))
     for c in sorted(CMS_ACTIONS):
         info = det.get(c)
-        markers = _cms_markers_from(pages)
+        own_hosts = set()
+        for wt in targets:
+            try:
+                h = (urlsplit(wt["url"]).netloc or "").split(":")[0].lower()
+                if h:
+                    own_hosts.add(h)
+            except Exception:
+                pass
+        try:
+            hn = (t.hostname or "").lower()
+            if hn:
+                own_hosts.add(hn.rstrip("."))
+        except Exception:
+            pass
+        markers = _cms_markers_from(pages, own_hosts)
         if not info and not markers[c]:
             continue
         # A CMS claim backed only by the discounted generic word token (e.g.
