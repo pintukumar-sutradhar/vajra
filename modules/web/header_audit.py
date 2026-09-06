@@ -92,8 +92,8 @@ def run(engine):
             engine.db.add_finding(Finding(
                 t.display, "web.headers", "hardening", "medium",
                 "Cookies without hardening flags (%d)" % len(bad_cookie),
-                detail="Session cookies are exposed to XSS/network interception "
-                       "without these flags.", evidence="\n".join(bad_cookie[:12]),
+                detail="Cookies without hardening flags can be read via XSS, sent over "
+                       "cleartext, or carried on cross-site requests.", evidence="\n".join(bad_cookie[:12]),
                 confidence="firm"))
         hsts = r.headers.get("strict-transport-security", "")
         if hsts:
@@ -147,7 +147,7 @@ def _cors_matrix(engine, url):
         if worst is None or _sev_rank(cand[0]) > _sev_rank(worst[0]):
             worst = cand
         if label == "plain cross-origin" and acao == "*":
-            worst = (sev, sig, acao, acac, origin)
+            worst = ("info", sig, acao, acac, origin)
     if worst is None:
         return
     sev, sig, acao, acac, origin = worst

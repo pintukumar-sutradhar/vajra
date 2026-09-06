@@ -47,10 +47,6 @@ def run(engine):
                     "__schema", "__type", "graphql")):
                 marker = "interactive IDE exposed"
                 graphql_confirmed += 1
-            elif is_json and ("errors" in body.lower() or
-                              "data" in body.lower()):
-                marker = "GraphQL-like JSON response"
-                graphql_confirmed += 1
             if marker:
                 sev = "medium" if marker.startswith("introspection") else "low"
                 engine.db.add_finding(Finding(
@@ -59,7 +55,10 @@ def run(engine):
                     detail="Introspection reveals the complete API schema "
                            "(types, mutations, hidden fields) — a map for "
                            "targeted injection and IDOR testing.",
-                    evidence="%s -> HTTP %d" % (url, r.status),
+                    evidence="%s -> HTTP %d%s" % (
+                        url, r.status,
+                        ("\n" + json.dumps(j)[:900].replace(" ", ""))
+                        if has_graphql_body else ""),
                     remediation="Disable introspection in production; add "
                                 "depth/complexity limits.",
                     confidence="firm"))
