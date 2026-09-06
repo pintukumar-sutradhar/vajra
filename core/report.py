@@ -459,12 +459,12 @@ def correlated_html(corr):
             '<tr><td><span class="sev %s">%s</span></td>'
             '<td><b>%s</b><br><span class="muted">%s</span></td>'
             '<td>%s</td>'
-            '<td>%d finding%s from %d module(s)</td>'
+            '<td>%d finding%s</td>'
             '<td><code>%s</code></td></tr>' % (
                 _esc(c.get("severity", "info")), _esc(c.get("severity", "info")),
                 _esc(c.get("label", "")), _esc(c.get("target", "")),
                 "; ".join(_esc(t[:70]) for t in c.get("titles", [])[:3]),
-                c.get("title_count", 1), plural, len(c.get("sources", [])),
+                c.get("title_count", 1), plural,
                 _esc(c.get("technique", "")) if c.get("technique") else "-"))
     if not rows:
         return ""
