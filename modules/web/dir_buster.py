@@ -25,7 +25,9 @@ def _soft404_sig(body):
     slightly (e.g. the path appearing in a title or text node), while a
     genuinely different page (real /assets dir, a 404 template, etc.) will
     have a different structural skeleton."""
-    txt = body[:50000].decode("utf-8", errors="ignore")
+    if isinstance(body, bytes):
+        body = body.decode("utf-8", errors="ignore")
+    txt = body[:50000]
     head = _HEAD_RE.search(txt)
     if head:
         txt = head.group(0)
@@ -54,7 +56,11 @@ def _check(engine, base, path, use_head_first=True):
     url = base + path
     if use_head_first:
         r = engine.http.head(url, allow_redirects=False)
-        if r.status in (0, 501, 405, 400):
+        # For 200 responses we need the real body to run the soft-404/SPA
+        # catch-all signature check — requests returns an empty body for HEAD,
+        # so refetch with GET. Redirect/auth codes are header-informative and
+        # safe to trust from HEAD alone.
+        if r.status in (0, 501, 405, 400) or r.status == 200:
             r = engine.http.get(url, allow_redirects=False)
     else:
         r = engine.http.get(url, allow_redirects=False)
