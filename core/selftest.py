@@ -429,8 +429,9 @@ def t_report():
     assert "<i>-</i>" not in html_out  # PoC cell never blank
     assert "observed proof detail only" in html_out  # detail fallback renders
     md = render_markdown(data)
-    assert "# ⚡ Vajra" in md and "Evasion Ops" in md
-    assert "Evidence / PoC:" in md and "observed proof detail only" in md
+    assert "# Security Assessment Report" in md and "Executive summary" in md
+    assert "Observed proof detail" in md or "observed proof detail" in md
+    assert "Recommended fix" in md or "Proof (what the scan saw)" in md
     return True, "all three report formats render (incl. PoC fallback)"
 
 

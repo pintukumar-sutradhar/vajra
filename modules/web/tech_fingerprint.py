@@ -122,6 +122,28 @@ def _cve_for(product_cfg, tech, version):
     return found
 
 
+def _record_tech_cves(engine, tech, version, source, hits, live=False):
+    """Persist the per-technlogy CVE list under engine.state["tech_cves"] so the
+    report can show, for every detected tech, exactly which CVEs were matched.
+    Offline KB hits are "CVE-XXXX-YYYY|summary|score|range" strings; online OSV
+    hits are dicts with id/cvss/summary."""
+    cves = []
+    for h in hits or []:
+        if live:
+            cves.append({"id": h.get("id", ""),
+                         "cvss": h.get("cvss", ""),
+                         "summary": h.get("summary", "")})
+        else:
+            parts = str(h).split("|")
+            cves.append({"id": parts[0] if parts else "",
+                         "cvss": parts[2] if len(parts) > 2 else "",
+                         "summary": parts[1] if len(parts) > 1 else ""})
+    if not cves:
+        return
+    engine.state.setdefault("tech_cves", {})[tech] = {
+        "version": version, "source": source, "cves": cves}
+
+
 def cve_correlation(engine, t, version_sightings):
     """version_sightings: list of (tech_key, version, source). Match against
     intel/cve_db.json product ranges and emit findings."""
@@ -150,6 +172,8 @@ def cve_correlation(engine, t, version_sightings):
             except Exception:
                 live = None
             if live:
+                _record_tech_cves(engine, tech, version, source, live,
+                                  live=True)
                 lines = "\n".join("%s (%.1f) %s" % (e["id"], e["cvss"],
                                                     e["summary"])
                                   for e in live[:8])
@@ -171,6 +195,7 @@ def cve_correlation(engine, t, version_sightings):
                 if len(c.split("|")) > 2]
         maxcv = max(cvss) if cvss else 0.0
         sev = "high" if maxcv >= 9.0 else ("medium" if maxcv >= 6.0 else "info")
+        _record_tech_cves(engine, tech, version, source, hits)
         lines = "\n".join("%s (%.1f) %s" % (h.split("|")[0],
                                             float(h.split("|")[2])
                                             if len(h.split("|")) > 2 else 0,

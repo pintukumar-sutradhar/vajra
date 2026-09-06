@@ -388,11 +388,11 @@ class Engine:
                 poc = (f.get("detail") or f.get("title") or "").strip()
             slug = self._slugify(f["title"])
             fn = "f%03d_%s.txt" % (i + 1, slug)
-            header = ("# VAJRA finding evidence dump\n"
+            header = ("# Finding evidence\n"
                       "# [%s] %s\n# target: %s\n"
-                      "# module: %s | category: %s | confidence: %s\n\n" %
-                      (sever.upper(), f["title"], f["target"], f["module"],
-                       f["category"], f["confidence"]))
+                      "# confidence: %s\n\n" %
+                      (sever.upper(), f["title"], f["target"],
+                       f["confidence"]))
             body = poc[:50000] if poc else (
                 "No raw PoC captured for this finding — the module reported "
                 "it without injectable proof text. Confirm in the report's "
@@ -1406,6 +1406,8 @@ def build_data_for(db, target, engine):
         "findings": findings,
         "events": events,
         "tech": sorted(set(engine.state.get("tech", []) or [])),
+        "tech_cves": dict(engine.state.get("tech_cves", {}) or {}),
+        "evidence_dir": str(engine.state.get("evidence_dir") or ""),
         "subdomains": engine.state.get("subdomains", []),
         "os_guess": engine.state.get("os_guess", ""),
         "evasion": list(getattr(engine, "evasion_all", []))[:150],

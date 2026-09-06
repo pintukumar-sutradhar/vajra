@@ -1,6 +1,7 @@
 """Vajra - report generation: interactive HTML dashboard, JSON, Markdown."""
 import datetime
 import json
+import os
 from string import Template
 
 from core.database import SEV_ORDER, SEV_WEIGHT
@@ -151,11 +152,6 @@ pre { background:#0a0d12; border:1px solid var(--line); border-radius:8px; paddi
   </section>
 
   <section>
-   <h2>Red-team objectives achieved</h2>
-   $objectives
-  </section>
-
-  <section>
    <h2>How to read this report</h2>
    <div class="narr">Every finding is colour-coded by severity:
   - <span class="sev critical">critical</span> Emergency — an attacker could take full control of the system or steal data with little effort.
@@ -195,6 +191,11 @@ A finding whose confidence is below its claimed severity is automatically downgr
   <section>
    <h2>Retest delta (vs previous snapshot)</h2>
    <pre>$delta</pre>
+  </section>
+
+  <section>
+   <h2>CVEs found on your systems</h2>
+   $cve_sections
   </section>
 
   <section>
@@ -267,6 +268,8 @@ def build_data(engine):
         "findings": findings,
         "events": events,
         "tech": sorted(set(engine.state.get("tech", []) or [])),
+        "tech_cves": dict(engine.state.get("tech_cves", {}) or {}),
+        "evidence_dir": str(engine.state.get("evidence_dir") or ""),
         "subdomains": engine.state.get("subdomains", []),
         "os_guess": engine.state.get("os_guess", ""),
         "evasion": list(getattr(engine, "evasion_all", []))[:150],
@@ -290,7 +293,7 @@ def render_html(data):
     chips_html = "".join('<span class="chip">%s</span>' % _esc(c) for c in chips)
 
     rows = []
-    for f in data["findings"]:
+    for i, f in enumerate(data["findings"]):
         mitre = _esc(f.get("mitre", ""))
         conf = (f.get("confidence") or "").lower()
         conf_label = (f.get("confidence") or "-").title()
@@ -308,18 +311,23 @@ def render_html(data):
         poc_block = ('<pre class="poc">%s</pre>' % _esc(poc[:2400])
                      if poc else
                      '<span class="muted">no proof captured — see detail</span>')
+        shot = _evidence_png_rel(data, i, f["title"])
+        shot_html = ('<br><a href="%s" target="_blank"><img src="%s" '
+                     'alt="proof screenshot" style="max-width:340px;'
+                     'border:1px solid var(--line);border-radius:8px'
+                     ';margin-top:8px"></a>' % (shot, shot)
+                     if shot else "")
         rows.append(
             '<tr class="frow"><td><span class="sev %s">%s</span></td>'
-            '<td>%s<br><span class="muted">%s / %s</span></td>'
+            '<td>%s</td>'
             '<td>%s%s</td>'
-            '<td class="poc">%s</td>'
+            '<td class="poc">%s%s</td>'
             '<td class="muted">%s</td></tr>' % (
                 f["severity"], f["severity"], _esc(f["title"]),
-                _esc(f["category"]), _esc(f["module"]),
                 _esc(f["detail"]),
                 ("<br><span class='muted'>ATT&amp;CK: %s</span>" % mitre)
                 if mitre else "",
-                poc_block,
+                poc_block, shot_html,
                 conf_badge))
     finding_rows = ('<table class="fixed findings"><thead><tr>'
                      '<th class="col-sev">Severity</th>'
@@ -359,12 +367,11 @@ def render_html(data):
     score = float(data["score"])
     scorecolor = "#f44336" if score >= 25 else \
         ("#ffb300" if score >= 10 else "#4caf50")
-    es_for = objectives_html(data.get("objectives") or [])
     tpl = Template(HTML_TEMPLATE)
     return tpl.substitute(
         date=data["meta"]["generated"], profile=_esc(data["meta"]["profile"]),
         targets=_esc(", ".join(data["meta"]["targets"])[:90]),
-        score=data["score"], scorecolor=scorecolor, objectives=es_for,
+        score=data["score"], scorecolor=scorecolor,
         crit=stats.get("critical", 0), high=stats.get("high", 0),
         medium=stats.get("medium", 0), low=stats.get("low", 0),
         info=stats.get("info", 0), total=len(data["findings"]),
@@ -377,7 +384,39 @@ def render_html(data):
             for k, v in data.get("delta", {}).items())),
         remediation=_render_remediation(data.get("remediation", [])),
         atkpath=attack_paths_html(data.get("attack_paths") or []),
-        correlated=correlated_html(data.get("correlated") or []))
+        correlated=correlated_html(data.get("correlated") or []),
+        cve_sections=_cve_sections_html(data.get("tech_cves") or {}))
+
+
+def _cve_sections_html(tech_cves):
+    if not tech_cves:
+        return '<div class="narr muted">No technology-to-CVE matches were ' \
+               'found for any detected component (or no version was ' \
+               'fingerprinted).</div>'
+    blocks = []
+    for tech in sorted(tech_cves):
+        rec = tech_cves[tech]
+        if not rec or not rec.get("cves"):
+            continue
+        rows = []
+        for c in rec["cves"]:
+            cve = c.get("id", "") or "-"
+            cvss = c.get("cvss", "") or "-"
+            rows.append('<tr><td><code>%s</code></td><td>%s</td><td>%s</td>'
+                        '<td><a href="%s" target="_blank" '
+                        'class="muted">View &rarr;</a></td></tr>' % (
+                            _esc(cve), _esc(str(cvss)),
+                            _esc((c.get("summary") or "")[:200]),
+                            _esc(_nvd_url(cve))))
+        blocks.append('<div class="card" style="margin-bottom:12px">'
+                      '<b style="color:#f78166">%s</b> '
+                      '<span class="muted">version %s</span>'
+                      '<table style="margin-top:8px"><tr><th>CVE ID</th>'
+                      '<th>CVSS</th><th>Summary</th><th>Details</th></tr>'
+                      '%s</table></div>' % (
+                          _esc(tech.title()), _esc(rec.get("version") or "?"),
+                          "".join(rows)))
+    return "".join(blocks) or '<div class="muted">No CVE matches.</div>'
 
 
 def attack_paths_html(paths):
@@ -473,130 +512,237 @@ def _render_remediation(sections):
         body = []
         for it in sec.get("items", [])[:50]:
             body.append('<tr><td><b>%s</b></td><td>%s</td></tr>'
-                          % (_esc(it["title"]), _esc(it["module"])))
+                          % (_esc(it["title"]), _esc(it["remediation"])))
         if not body:
             continue
         rows.append('<h3 style="color:var(--%s)">%s — %s</h3>'
                       % (sec["severity"], sec["severity"].upper(),
                          sec.get("priority", "")))
-        rows.append('<table><tr><th>Title</th><th>Module</th></tr>' +
+        rows.append('<table><tr><th>Finding</th><th>Recommended fix</th></tr>' +
                       "".join(body) + "</table>")
     return "".join(rows)
 
 
+# --- human-friendly report helpers -------------------------------------------
+
+def _slugify(s):
+    import re as _re
+    s = _re.sub(r"[^A-Za-z0-9]+", "_", s).strip("_")[:48]
+    return s or "finding"
+
+
+_SEV_ICON = {"critical": "🔴", "high": "🟠", "medium": "🟡",
+             "low": "🔵", "info": "⚪"}
+
+_SEV_MEANS = {
+    "critical": "Emergency. An attacker could probably take control of the "
+                "system or steal data with little effort. Fix immediately.",
+    "high": "Urgent. A serious weakness that most attackers could exploit. "
+            "Fix as soon as possible.",
+    "medium": "Plan a fix. Exploitable only under certain conditions or by a "
+              "skilled attacker. Fix in the next release.",
+    "low": "Minor. A small hardening gap. Fix when convenient.",
+    "info": "Information only. Not a vulnerability by itself, but useful to "
+            "know.",
+}
+
+_CONF_MEANS = {
+    "certain": "Certain — the check was proven end-to-end.",
+    "firm": "Firm — strong evidence the issue is real.",
+    "tentative": "Unverified lead — a signal that may be real or a false "
+                 "alarm; confirm it before acting.",
+    "possible": "Unverified lead — a signal that may be real or a false "
+                "alarm; confirm it before acting.",
+}
+
+
+def _nvd_url(cve_id):
+    if not cve_id:
+        return ""
+    return "https://nvd.nist.gov/vuln/detail/%s" % cve_id
+
+
+def _first_url(text):
+    import re as _re
+    m = _re.search(r"https?://[^\s\"'<>\)\]]+", str(text or ""))
+    return m.group(0) if m else ""
+
+
+def _evidence_png(data, index, title):
+    """Absolute path of the proof screenshot for a finding, or '' if none.
+    The per-issue PNGs are written by the engine as evidence/fNNN_<slug>.png
+    in the same folder as the report."""
+    evdir = data.get("evidence_dir") or ""
+    if not evdir:
+        return ""
+    slug = _slugify(title)
+    cand = os.path.join(evdir, "f%03d_%s.png" % (index + 1, slug))
+    if os.path.isfile(cand):
+        return cand
+    return ""
+
+
+def _evidence_png_rel(data, index, title):
+    """Path of a finding's proof screenshot relative to the report file
+    (report.md/html live in the same folder as evidence/)."""
+    png = _evidence_png(data, index, title)
+    if not png:
+        return ""
+    repdir = os.path.dirname(data.get("evidence_dir") or "")
+    if repdir:
+        return os.path.relpath(png, repdir)
+    return os.path.basename(png)
+
+
+def _md_sev_line(sev, conf, title):
+    icon = _SEV_ICON.get(sev, "⚪")
+    conf_note = (" _(%s)_" % _CONF_MEANS.get((conf or "").lower(),
+                                             str(conf or "")))
+    return "%s **%s**%s" % (icon, title, conf_note)
+
+
+def _cve_sections_md(tech_cves):
+    """Per-technology CVE table — the 'show me the CVEs again for each tech'
+    requirement."""
+    if not tech_cves:
+        return ""
+    out = ["## CVEs found on your systems", "",
+           "Every technology detected during the assessment is listed here "
+           "with the known-issue matches found for its version. Each CVE has "
+           "a link to the National Vulnerability Database for details.",
+           ""]
+    for tech in sorted(tech_cves):
+        rec = tech_cves[tech]
+        if not rec or not rec.get("cves"):
+            continue
+        ver = rec.get("version") or "?"
+        out.append("### %s — version %s" % (tech.title(), ver))
+        out.append("")
+        out.append("| CVE ID | Severity (CVSS) | Summary | Details |")
+        out.append("|---|---|---|---|")
+        for c in rec["cves"]:
+            cve = c.get("id", "") or ""
+            cvss = c.get("cvss", "") or ""
+            ref = _nvd_url(cve)
+            out.append("| %s | %s | %s | [View](%s) |" % (
+                cve or "-", cvss or "-",
+                (c.get("summary") or "").replace("|", "/")[:220] or "-",
+                ref))
+        out.append("")
+    return "\n".join(out)
+
+
 def render_markdown(data):
-    from core.attackpath import attack_path_md
     stats = data["stats"]
+    findings = data["findings"]
     lines = []
-    lines.append("# ⚡ Vajra Security Assessment Report")
+    lines.append("# Security Assessment Report")
     lines.append("")
     lines.append("| Field | Value |")
     lines.append("|---|---|")
-    lines.append("| Generated | %s |" % data["meta"]["generated"])
-    lines.append("| Profile | %s |" % data["meta"]["profile"])
-    lines.append("| Targets | %s |" % ", ".join(data["meta"]["targets"]))
-    lines.append("| Risk Score | %.1f/100 |" % data["score"])
-    ev = data.get("evasion") or []
-    if ev:
-        passed = sum(1 for e in ev if e.get("result") == "passed")
-        lines.append("| Evasion Ops | %d attempted / %d passed filters |" %
-                         (len(ev), passed))
-    lines.append("| Findings | %d critical / %d high / %d medium / %d low / %d info |"
+    lines.append("| Target | %s |" % ", ".join(data["meta"]["targets"]))
+    lines.append("| Assessment date | %s |" % data["meta"]["generated"])
+    lines.append("| Assessment type | %s |" % data["meta"]["profile"])
+    lines.append("| Overall risk | **%.1f / 100** |" % data["score"])
+    lines.append("| Findings | %d critical · %d high · %d medium · %d low "
+                 "· %d info |"
                  % tuple(stats.get(s, 0) for s in SEV_ORDER))
     lines.append("")
-    lines.append("## Executive Summary")
+    lines.append("## 1. Executive summary")
     lines.append("")
-    lines.append(data["narrative"])
+    lines.append(data["narrative"].replace("\n\n", "\n") if data["narrative"]
+                 else "_No summary available._")
     lines.append("")
-    lines.append("## Red-team objectives achieved")
-    lines.append("")
-    lines.append(objectives_md(data.get("objectives") or []))
-    lines.append("")
-    lines.append("## Synthesis & AI narrative")
-    lines.append("")
-    lines.append(data.get("synthesis", ""))
-    lines.append("")
-    lines.append("## Attack Paths")
-    lines.append("")
-    lines.append(attack_path_md(data.get("attack_paths") or []))
-    lines.append("")
-    if data.get("correlated"):
-        lines.append("## Correlated findings (deduplicated)")
+
+    cves_md = _cve_sections_md(data.get("tech_cves") or {})
+    if cves_md:
+        lines.append(cves_md)
         lines.append("")
-        lines.append("| Severity | Issue | Sources | Evidence titles |")
-        lines.append("|---|---|---|---|")
-        for c in data["correlated"]:
-            if not c.get("key"):
+
+    lines.append("## 2. Services and open ports")
+    lines.append("")
+    if data.get("services"):
+        lines.append("| Target | Port | Service | Product | Version |")
+        lines.append("|---|---|---|---|---|")
+        for s in data["services"]:
+            lines.append("| %s | %s | %s | %s | %s |" % (
+                s["target"], s["port"], s["service"],
+                s.get("product") or "-", s.get("version") or "-"))
+    else:
+        lines.append("_No reachable service was recorded._")
+    lines.append("")
+
+    lines.append("## 3. Findings")
+    lines.append("")
+    if not findings:
+        lines.append("_No findings recorded._")
+        lines.append("")
+    else:
+        grouped = {}
+        for f in findings:
+            grouped.setdefault(f["severity"], []).append(f)
+        for sev in SEV_ORDER:
+            flist = grouped.get(sev)
+            if not flist:
                 continue
-            lines.append("| %s | %s | %s | %s |" % (
-                c["severity"], c["label"],
-                ", ".join(c["sources"]),
-                "; ".join(t[:60] for t in c["titles"][:3])))
-        lines.append("")
-    lines.append("## Remediation Playbook")
-    lines.append("")
-    for sec in data.get("remediation", []):
-        lines.append("### %s — %s" % (sec["severity"].upper(),
-                                 sec.get("priority", "")))
-        lines.append("")
-        for it in sec.get("items", [])[:50]:
-            lines.append("- **%s** (%s)" % (it["title"], it["module"]))
-            lines.append("  - Remediation: %s" % it["remediation"])
-            refs = []
-            if it["cis"]:
-                refs.append("CIS: %s" % ", ".join(it["cis"]))
-            if it["nist"]:
-                refs.append("NIST CSF: %s" % ", ".join(it["nist"]))
-            if it["pci"]:
-                refs.append("PCI DSS: %s" % ", ".join(it["pci"]))
-            if refs:
-                lines.append("  - Controls: " + " | ".join(refs))
-        lines.append("")
-    lines.append("## Retest delta (vs previous snapshot)")
-    lines.append("")
-    for k, v in data.get("delta", {}).items():
-        lines.append("- %s: %s" % (k, ", ".join(v[:3]) + ("..." if len(v) > 3 else "")))
-    lines.append("")
-    lines.append("## Services")
-    lines.append("")
-    lines.append("| Target | Port | Service | Product | Version | TLS |")
-    lines.append("|---|---|---|---|---|---|")
-    for s in data.get("services", []):
-        lines.append("| %s | %s | %s | %s | %s | %s |" % (
-            s["target"], s["port"], s["service"], s.get("product") or "-",
-            s.get("version") or "-", "yes" if s.get("tls") else "no"))
-    lines.append("")
-    lines.append("## Detailed Findings")
-    lines.append("")
-    cur = None
-    for f in data["findings"]:
-        if f["severity"] != cur:
-            cur = f["severity"]
-            lines.append("### Severity: %s" % cur.upper())
+            lines.append("### %s %s" % (_SEV_ICON.get(sev, ""),
+                                        sev.upper()))
             lines.append("")
-        lines.append("#### [%s] %s" % (f["severity"].upper(), f["title"]))
-        lines.append("- **Module:** %s  **Category:** %s  **Confidence:** %s"
-                         % (f["module"], f["category"], f["confidence"]))
-        if (f.get("confidence") or "").lower() == "tentative":
-            lines.append("  - **Note:** unverified lead — confirm manually "
-                         "before treating as a real finding.")
-        if f.get("mitre"):
-            lines.append("- **ATT&CK:** %s" % f["mitre"])
-        if f.get("detail"):
-            lines.append("- **Detail:** %s" % f["detail"].replace("\n", " ")[:500])
-        if f.get("remediation"):
-            lines.append("- **Remediation:** %s" % f["remediation"])
-        poc = _poc_text(f)
-        if poc:
-            lines.append("- **Evidence / PoC:**")
-            lines.append("  ```")
-            for ln in poc.splitlines()[:15]:
-                lines.append("  " + ln[:300])
-            lines.append("  ```")
-        lines.append("")
+            lines.append(_SEV_MEANS.get(sev, ""))
+            lines.append("")
+            for i, f in enumerate(flist):
+                title = f["title"]
+                where_target = f.get("target") or ""
+                # Use the report-wide index for the evidence filename; the
+                # engine numbers PNVs across ALL findings of the target.
+                global_i = data["findings"].index(f) if data["findings"] else i
+                lines.append("#### %s" % _md_sev_line(
+                    sev, f.get("confidence", ""), title))
+                if f.get("confidence", "").lower() in ("tentative",
+                                                       "possible"):
+                    lines.append("> **Treat as a lead, not a confirmed "
+                                 "problem** — verify before acting.")
+                lines.append("")
+                loc = _first_url(f.get("evidence")) or where_target
+                we_do = []
+                if loc:
+                    we_do.append("**Where:** %s" % loc)
+                if f.get("detail"):
+                    detail = f["detail"].strip()
+                    if len(detail) > 900:
+                        detail = detail[:900] + " …"
+                    we_do.append("**What we found:** %s" % detail)
+                lines.append("\n\n".join(we_do) if we_do else "")
+                lines.append("")
+                poc = _poc_text(f)
+                if poc:
+                    lines.append("**Proof (what the scan saw):**")
+                    lines.append("")
+                    lines.append("```")
+                    for ln in poc.splitlines()[:12]:
+                        lines.append("  " + ln[:260].rstrip())
+                    lines.append("```")
+                    lines.append("")
+                png = _evidence_png_rel(data, global_i, title)
+                if png:
+                    lines.append("![Proof](%s)" % png)
+                    lines.append("")
+                if f.get("remediation"):
+                    lines.append("**Recommended fix:** %s" % f["remediation"])
+                    lines.append("")
+    lines.append("## 4. How to read severity levels")
+    lines.append("")
+    lines.append("| Level | What it means |")
+    lines.append("|---|---|")
+    for sev in SEV_ORDER:
+        icon = _SEV_ICON.get(sev, "")
+        lines.append("| %s %s | %s |" % (icon, sev.capitalize(),
+                                         _SEV_MEANS.get(sev, "")))
+    lines.append("")
     lines.append("---")
-    lines.append("*Automated tool output. Validate all findings manually. "
-                  "Unauthorized testing is illegal.")
+    lines.append("_Automated assessment. All findings should be validated by "
+                 "your team before remediation. Testing systems without "
+                 "written authorization is illegal._")
     return "\n".join(lines)
 
 
@@ -917,26 +1063,32 @@ def render_xlsx(data, path="report.xlsx"):
         stats.get("medium", 0), stats.get("low", 0),
         stats.get("info", 0)), "", "", ""])
     summary.append(["", "", "", "", ""])
-    summary.append(["Red-team objectives achieved", "", "", "", ""])
-    objs = data.get("objectives") or []
-    if not objs:
-        summary.append(["No confirmed compromise objectives achieved",
-                        "", "", ""])
-    else:
-        summary.append(["Objective", "Supporting findings", "", "", ""])
-        for o in objs:
-            summary.append([o["name"], o["count"], "", "", ""])
+    tc = (data.get("tech_cves") or {})
+    if tc:
+        summary.append(["CVEs found by technology", "", "", "", ""])
+        summary.append(["Technology", "Version", "CVE ID", "CVSS",
+                        "Summary"])
+        for tech in sorted(tc):
+            rec = tc[tech]
+            if not rec or not rec.get("cves"):
+                continue
+            for c in rec["cves"]:
+                summary.append([
+                    tech.title(), rec.get("version", "?"),
+                    c.get("id", ""), c.get("cvss", ""),
+                    (c.get("summary") or "")[:300],
+                ])
+        summary.append(["", "", "", "", ""])
 
     # Findings sheet
-    fhead = ["Severity", "Category", "Title", "Detail", "Module",
-             "Confidence", "MITRE", "PoC / Evidence"]
+    fhead = ["Severity", "Title", "Detail", "Confidence",
+             "PoC / Evidence"]
     findings = [fhead]
     for f in data.get("findings", []):
         findings.append([
-            f.get("severity", ""), f.get("category", ""),
-            f.get("title", ""), f.get("detail", ""),
-            f.get("module", ""), f.get("confidence", ""),
-            f.get("mitre", ""), _poc_text(f),
+            f.get("severity", ""), f.get("title", ""),
+            f.get("detail", ""), f.get("confidence", ""),
+            _poc_text(f),
         ])
 
     # Build shared strings + rows. Strings are interned here and tagged with
@@ -953,7 +1105,7 @@ def render_xlsx(data, path="report.xlsx"):
     rows_find = [[T(c) for c in row] for row in findings]
 
     sheet1 = _xlsx_sheet("Summary", rows_sum, [46, 70, 12, 12, 12])
-    sheet2 = _xlsx_sheet("Findings", rows_find, [10, 14, 34, 40, 14, 12, 12, 50])
+    sheet2 = _xlsx_sheet("Findings", rows_find, [10, 34, 40, 12, 60])
 
     # Workbook + relationships + styles (minimal).
     wb = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
