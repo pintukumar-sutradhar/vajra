@@ -16,6 +16,7 @@ def run(engine):
     if not targets:
         return
     checked = 0
+    graphql_confirmed = 0
     for wt in targets[:2]:
         base = wt["url"].rstrip("/")
         for path in CANDIDATES:
@@ -33,11 +34,23 @@ def run(engine):
                 j = r.json
             except Exception:
                 j = None
-            if isinstance(j, dict) and "__schema" in json.dumps(j)[:4000]:
+            ct = r.headers.get("content-type", "").lower()
+            is_json = "json" in ct
+            has_graphql_body = bool(
+                j and isinstance(j, dict) and
+                "__schema" in json.dumps(j)[:4000])
+            if has_graphql_body:
                 marker = "introspection enabled"
-            elif "graphiql" in body.lower() or "apollo" in body.lower() \
-                    or "playground" in body.lower():
+                graphql_confirmed += 1
+            elif is_json and any(k in body.lower() for k in (
+                    "graphiql", "apollo", "playground",
+                    "__schema", "__type", "graphql")):
                 marker = "interactive IDE exposed"
+                graphql_confirmed += 1
+            elif is_json and ("errors" in body.lower() or
+                              "data" in body.lower()):
+                marker = "GraphQL-like JSON response"
+                graphql_confirmed += 1
             if marker:
                 sev = "medium" if marker.startswith("introspection") else "low"
                 engine.db.add_finding(Finding(
@@ -50,8 +63,8 @@ def run(engine):
                     remediation="Disable introspection in production; add "
                                 "depth/complexity limits.",
                     confidence="firm"))
-    if checked:
+    if graphql_confirmed:
         engine.db.add_finding(Finding(
             t.display, "web.graphql_probe", "recon", "info",
-            "GraphQL candidates reachable: %d path(s) checked"
-            % checked, confidence="possible"))
+            "GraphQL confirmed: %d endpoint(s) with GraphQL responses"
+            % graphql_confirmed, confidence="firm"))

@@ -1,4 +1,5 @@
 """Vajra - directory & sensitive file discovery with smart classification."""
+import hashlib
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -8,6 +9,30 @@ from core.utils import rand_path
 
 ENV_LINE_RE = re.compile(r"(?m)^\s*[A-Za-z_][A-Za-z0-9_]{2,}\s*=\s*\S+")
 HTML_RE = re.compile(r"<\s*(html|body|div|a\s)", re.I)
+_SCRIPT_RE = re.compile(r"<script[^>]*>.*?</script>", re.S | re.I)
+_STYLE_RE  = re.compile(r"<style[^>]*>.*?</style>", re.S | re.I)
+_HEAD_RE   = re.compile(r"<head[^>]*>.*?</head>", re.S | re.I)
+_WS_RE     = re.compile(r"\s+")
+
+
+def _soft404_sig(body):
+    """Produce a structural signature for soft-404 detection.
+
+    Extracts the <head> section (structural skeleton: scripts, stylesheets,
+    meta tags), strips <script> and <style> content, normalises whitespace,
+    then returns the first 1024 chars.  Two pages served by the same SPA
+    catch-all will share this signature even if inline body content differs
+    slightly (e.g. the path appearing in a title or text node), while a
+    genuinely different page (real /assets dir, a 404 template, etc.) will
+    have a different structural skeleton."""
+    txt = body[:50000].decode("utf-8", errors="ignore")
+    head = _HEAD_RE.search(txt)
+    if head:
+        txt = head.group(0)
+    txt = _SCRIPT_RE.sub("", txt)
+    txt = _STYLE_RE.sub("", txt)
+    txt = _WS_RE.sub(" ", txt).strip().lower()
+    return txt[:1024]
 
 BACKUP_SUFFIXES = [".bak", ".old", ".zip", ".tar.gz", ".tgz", ".sql", ".swp",
                    "~", ".save"]
@@ -67,8 +92,8 @@ def run(engine):
                       "<h1>index of /" in body_head)
         soft404 = False
         if cls == "found" and baselines.get(base):
-            bstat, blen = baselines[base]
-            if r.status == bstat and abs(len(body) - blen) < 32:
+            bstat, blen, bsig = baselines[base]
+            if r.status == bstat and bsig and bsig == _soft404_sig(body):
                 soft404 = True
         return (base, path, url, r.status, cls, loc, is_listing, r, soft404)
 
@@ -87,7 +112,7 @@ def run(engine):
         base = wt["url"].rstrip("/")
         rb = engine.http.get(base + "/" + rand_path(12) + ".php",
                              allow_redirects=False)
-        baselines[base] = (rb.status, len(rb.body))
+        baselines[base] = (rb.status, len(rb.body), _soft404_sig(rb.body))
     results = []
     total_jobs = len(jobs)
     checked = 0

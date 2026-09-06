@@ -69,22 +69,32 @@ def run(engine):
                                                   10 ** 6)
                 for fd in fields if fd.get("name")}
         per_form = []
+        all_bodies = []
         for n in CONCURRENCY:
             started = time.time()
             results = []
+            bodies = []
             for _ in range(n):
                 try:
-                    results.append(engine.http.post(
-                        url, data=dict(base), allow_redirects=False,
-                        timeout=10).status)
+                    r = engine.http.post(url, data=dict(base),
+                                         allow_redirects=False, timeout=10)
+                    results.append(r.status)
+                    bodies.append(r.body[:500].lower())
                 except Exception:
                     results.append(0)
+                    bodies.append(b"")
             wall = time.time() - started
             successes = sum(1 for s in results if 200 <= s < 400)
             per_form.append((n, successes, results, wall))
+            all_bodies.extend(bodies)
         best = max(per_form, key=lambda x: x[1])
         n, ok_n, codes, wall = best
         if ok_n >= 2 and ok_n >= n - 1 and len(set(codes)) <= 2:
+            dedup_words = (b"already", b"duplicate", b"already used",
+                           b"already redeemed", b"already applied",
+                           b"already claimed", b"nonce", b"replay")
+            if any(w in b for b in all_bodies for w in dedup_words):
+                continue
             findings.append((url, base, ok_n, n, wall, codes))
     if not findings:
         engine.db.add_finding(Finding(

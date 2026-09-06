@@ -35,13 +35,21 @@ def run(engine):
     for wt in targets:
         base = wt["url"].rstrip("/")
         detected = {}
+        block_codes = 0
+        probe_total = 0
         for suffix in probes:
             r = engine.http.get(base + suffix, allow_redirects=False)
             waf = match_waf(sigs, r)
+            probe_total += 1
             if waf:
                 detected[waf] = True
-            if r.status in (403, 406, 429, 501) and not waf:
-                detected["Unknown (blocks malicious probes)"] = True
+            if r.status in (403, 406, 429, 501):
+                block_codes += 1
+        # 'Unknown (blocks malicious probes)' should only be inferred when the
+        # edge consistently blocks malicious probes — a single 403 on a malformed
+        # request is ordinary application input handling, not evidence of a WAF.
+        if block_codes == probe_total and probe_total and not detected:
+            detected["Unknown (consistently blocks probes)"] = True
         if not detected:
             r0 = engine.http.get(base + "/", allow_redirects=True)
             waf = match_waf(sigs, r0)

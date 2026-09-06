@@ -86,6 +86,7 @@ def run(engine):
                for ln in ehlo_resp.splitlines()[1:] if ln.strip()]
 
         accepted = []
+        external_relay = False
         try:
             s.sendall(b"MAIL FROM:<%s>\r\n" % RELAY_SENDER.encode())
             s.recv(256)
@@ -94,7 +95,8 @@ def run(engine):
         except Exception:
             rj = b""
         if b"250" in rj[:3]:
-            accepted.append("external RCPT accepted")
+            accepted.append("external RCPT accepted (%s)" % RELAY_JUICE)
+            external_relay = True
         for cand in ("recipient@%s.invalid" % t.display, RELAY_SENDER):
             try:
                 s.sendall(b"RCPT TO:<%s>\r\n" % cand.encode())
@@ -104,12 +106,12 @@ def run(engine):
             if (b"250" in rr[:3] or b"251" in rr[:3]) and \
                     "not in recipient" not in rr.lower():
                 accepted.append(cand)
-        if accepted:
+        if external_relay:
             engine.db.add_finding(Finding(
                 t.display, "network.smtp", "misconfiguration", "high",
                 "SMTP likely open relay / permissive recipient handling",
                 detail="Envelope check (no DATA, no mail sent): server "
-                       "accepted RCPT for %s" % "; ".join(accepted[:3]),
+                       "accepted RCPT for external domain %s" % RELAY_JUICE,
                 evidence="MAIL FROM:<%s>\nRCPT TO:<%s> -> %s" % (
                     RELAY_SENDER, RELAY_JUICE,
                     rj.decode("latin1", "replace").strip()[:120]),

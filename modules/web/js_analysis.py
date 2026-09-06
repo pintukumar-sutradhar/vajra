@@ -111,7 +111,14 @@ def run(engine):
             if "# sourceMappingURL=" in code:
                 findings_sourcemap.append(u)
             if DOM_SINK_RE.search(code) and DOM_SOURCE_RE.search(code):
-                findings_domsink.append((u, DOM_SINK_RE.search(code).group(0)[:48]))
+                for sm in DOM_SINK_RE.finditer(code):
+                    s_start = max(0, sm.start() - 500)
+                    s_end = min(len(code), sm.end() + 500)
+                    region = code[s_start:s_end]
+                    if DOM_SOURCE_RE.search(region):
+                        findings_domsink.append(
+                            (u, DOM_SINK_RE.search(code).group(0)[:48]))
+                        break
             base = "{uri.scheme}://{uri.netloc}/".format(uri=urlparse(u))
             for m in ENDPOINT_RE.finditer(code):
                 ep = m.group(1)

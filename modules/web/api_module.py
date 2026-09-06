@@ -144,15 +144,26 @@ def _consume_doc(engine, state_api, url, data, mark, base):
                        % (mark, url, entries))
     unauthed = [e for e in state_api["endpoints"] if not e.get("auth")]
     if len(unauthed) >= 3:
-        engine.db.add_finding(Finding(
-            engine.target.display, "web.api", "authz", "high",
-            "%d documented API endpoint(s) without declared auth" %
-            len(unauthed),
-            detail="Paths:\n%s" % "\n".join(
-                "%s %s" % (e["method"], e["path"]) for e in unauthed[:20]),
-            evidence="from %s" % url,
-            remediation="Advertise security requirements in the spec and "
-                        "enforce them server-side.", confidence="firm"))
+        global_auth = False
+        for doc_url in state_api.get("docs", []):
+            try:
+                r = engine.http.get(doc_url, timeout=5)
+                d = json.loads(r.body) if r.status == 200 else {}
+                if isinstance(d, dict) and d.get("security"):
+                    global_auth = True
+                    break
+            except Exception:
+                pass
+        if not global_auth:
+            engine.db.add_finding(Finding(
+                engine.target.display, "web.api", "authz", "high",
+                "%d documented API endpoint(s) without declared auth" %
+                len(unauthed),
+                detail="Paths:\n%s" % "\n".join(
+                    "%s %s" % (e["method"], e["path"]) for e in unauthed[:20]),
+                evidence="from %s" % url,
+                remediation="Advertise security requirements in the spec and "
+                            "enforce them server-side.", confidence="firm"))
 
 
 def _well_known(engine, state_api, base):
