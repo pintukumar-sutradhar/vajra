@@ -74,7 +74,7 @@ def _repro(f):
                  "nameserver for the domain.",
                  "An AXFR-capable server replies with the full zone instead "
                  "of an error, handing any outsider the complete hostname "
-                 "map.%s." % cnt])
+                 "map%s." % cnt])
 
     if ("host header" in tl) or ("cache poisoning" in tl):
         m = _r.search(r"https?://([^\s\"'<>\)\]]+)",
@@ -880,8 +880,13 @@ def render_markdown(data):
                 title = f["title"]
                 where_target = f.get("target") or ""
                 # Use the report-wide index for the evidence filename; the
-                # engine numbers PNVs across ALL findings of the target.
-                global_i = data["findings"].index(f) if data["findings"] else i
+                # engine numbers PNGs/TXT across ALL findings of the target.
+                # id() lookup avoids index() collapsing identical dicts.
+                global_i = 0
+                for gj, gf in enumerate(data["findings"]):
+                    if gf is f:
+                        global_i = gj
+                        break
                 lines.append("#### %s" % _md_sev_line(
                     sev, f.get("confidence", ""), title))
                 if f.get("confidence", "").lower() in ("tentative",
