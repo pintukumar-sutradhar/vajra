@@ -22,6 +22,55 @@ from modules import get_modules
 _MAX_EVIDENCE_SHOTS = 16
 
 
+def screenshot_targets_for(f, base_url=""):
+    """URLs that actually demonstrate a finding — used for proof screenshots.
+
+    Returns a list of (url, request_headers_or_None) to attempt in order.
+    Screenshots are kept honest:
+
+    1. No random homepage captures. A finding only gets a screenshot for URLs
+       that appear in its own evidence (the endpoints the check exercised), or
+       none at all if the issue is protocol-level (DNS, headers, banners).
+    2. Only reachable endpoints: URLs must be on the assessed host (evidence
+       for Host-header issues names an attacker-controlled host that cannot
+       resolve) and have a real path — a bare site root is not proof of this
+       specific issue.
+    """
+    import re as _re
+    from urllib.parse import urlsplit
+    sev = f.get("severity", "")
+    if sev == "info":
+        return []
+    try:
+        t = (f.get("target") or base_url or "")
+        host = urlsplit(t if t.startswith(("http://", "https://"))
+                        else "http://" + t).hostname.lower()
+    except Exception:
+        host = ""
+    text = "%s %s" % ((f.get("evidence") or ""),
+                      (f.get("detail") or ""))
+    seen = set()
+    out = []
+    for _u in _re.findall(r"https?://[^\s\"'<>\)\]]+", text):
+        u = _u.rstrip("),.;!?]\"")
+        if not u.startswith(("http://", "https://")):
+            continue
+        parts = urlsplit(u)
+        if not parts.path.strip("/"):
+            # Host-only URLs are just the target root — not evidence of this
+            # specific issue.
+            continue
+        if host and parts.hostname and \
+                parts.hostname.lower() != host:
+            # Attacker-controlled / foreign host from evidence; not reachable
+            # and not proof of behaviour on the assessed host.
+            continue
+        if u not in seen:
+            seen.add(u)
+            out.append((u, None))
+    return out[:4]
+
+
 def sanitize_target_name(display):
     import re as _re
     name = display.replace("://", "_").replace("/", "_")
@@ -333,17 +382,18 @@ class Engine:
         s = _re.sub(r"[^A-Za-z0-9]+", "_", s).strip("_")[:48]
         return s or "finding"
 
-    def save_screenshot(self, url, base_name, evdir=None):
+    def save_screenshot(self, url, base_name, evdir=None, headers=None):
         """Best-effort headless-browser PNG of ``url`` written to the given
         evidence folder (default: the current target's). Returns the relative
         path, or "" if the browser is unavailable / the render failed (text
-        evidence is kept)."""
+        evidence is kept). ``headers`` overrides request headers on the page
+        request (used to reproduce host-based issues)."""
         from core.screenshot import capture
         evdir = evdir or self.state.get("evidence_dir")
         if not url or not evdir:
             return ""
         out = os.path.join(evdir, base_name)
-        if not capture(url, out):
+        if not capture(url, out, headers=headers):
             return ""
         rel = os.path.relpath(out, self.outroot)
         self.log.success("[evidence] screenshot -> %s" % rel)
@@ -374,9 +424,6 @@ class Engine:
             return
         os.makedirs(evdir, exist_ok=True)
         shots_on = self._screenshots_enabled()
-        first_url = None
-        if shots_on:
-            from core.screenshot import first_url
         shot_urls = set()
         shots = 0
         written = 0
@@ -405,21 +452,18 @@ class Engine:
             except Exception:
                 continue
             # Per-issue screenshot (named by the same issue slug) when the
-            # run wants one, a URL is known, and the browser is usable.
+            # run wants one and the browser is usable. Only URLs that the
+            # finding's own evidence points at are captured (or a Host-replay
+            # for host-header findings) — never a random homepage.
             if not shots_on or sever == "info":
                 continue
-            url = first_url(f.get("evidence") or f.get("detail") or "")
-            if not url and (f.get("target") or base_url):
-                url = (f.get("target") or base_url) \
-                    if (f.get("target") or base_url).startswith(("http://",
-                                                                 "https://")) \
-                    else ""
-            if not url or url in shot_urls or shots >= _MAX_EVIDENCE_SHOTS:
-                continue
-            shot_urls.add(url)
-            png = "f%03d_%s.png" % (i + 1, slug)
-            if self.save_screenshot(url, png, evdir=evdir):
-                shots += 1
+            for _u, _h in screenshot_targets_for(f, base_url):
+                if _u in shot_urls or shots >= _MAX_EVIDENCE_SHOTS:
+                    continue
+                shot_urls.add(_u)
+                png = "f%03d_%s.png" % (i + 1, slug)
+                if self.save_screenshot(_u, png, evdir=evdir, headers=_h):
+                    shots += 1
         if written:
             self.log.success("[evidence] %d finding-proof file(s) -> "
                              "evidence/ (target %s)"

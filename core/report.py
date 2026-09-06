@@ -19,6 +19,119 @@ def _poc_text(f):
     return ""
 
 
+def _evidence_urls(f):
+    """All http(s) URLs mentioned in a finding's own evidence/detail."""
+    import re as _re
+    text = "%s %s" % ((f.get("evidence") or ""), (f.get("detail") or ""))
+    out, seen = [], set()
+    for m in _re.findall(r"https?://[^\s\"'<>\)\]]+", text):
+        u = m.rstrip("),.;!?]\"")
+        if u.startswith(("http://", "https://")) and u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out[:5]
+
+
+def _target_host(f):
+    try:
+        from urllib.parse import urlsplit
+        t = (f.get("target") or "").strip()
+        if t.startswith(("http://", "https://")):
+            return urlsplit(t).netloc
+    except Exception:
+        pass
+    return "<TARGET>"
+
+
+def _repro(f):
+    """(command, [plain-language steps]) for the report's Proof-of-Concept
+    block. Returns ("", []) when no meaningful reproduction exists — info
+    findings and protocol-only leads are exempt (they have no web PoC)."""
+    import re as _r
+    sev = f.get("severity", "")
+    if sev == "info":
+        return "", []
+    text = "%s %s %s" % (f.get("title", ""), f.get("detail", ""),
+                         f.get("evidence", ""))
+    tl = text.lower()
+    target = (f.get("target") or "").strip().rstrip("/")
+    host = _target_host(f)
+    root = (target + "/") if target else "%s/" % host
+
+    if "zone transfer" in tl:
+        m = _r.search(r"\(([a-z0-9][a-z0-9.-]*\.)\)",
+                      f.get("title") or "") or \
+            _r.search(r"nameserver\s+([a-z0-9][a-z0-9.-]*\.)",
+                      text)
+        ns = (m.group(1) if m else "ns1.<DOMAIN>")
+        dom = host.split(":")[0]
+        cnt = "" 
+        mc = _r.search(r"(\d+)\s*record", text)
+        if mc:
+            cnt = " — this target disclosed %s record(s)" % mc.group(1)
+        return ("dig @%s %s AXFR" % (ns, dom),
+                ["Send a DNS zone-transfer request to the authoritative "
+                 "nameserver for the domain.",
+                 "An AXFR-capable server replies with the full zone instead "
+                 "of an error, handing any outsider the complete hostname "
+                 "map.%s." % cnt])
+
+    if ("host header" in tl) or ("cache poisoning" in tl):
+        m = _r.search(r"https?://([^\s\"'<>\)\]]+)",
+                      f.get("evidence") or "")
+        atk = "vajra-oob.example"
+        if m:
+            try:
+                from urllib.parse import urlsplit
+                atk = urlsplit(m.group(0)).netloc
+            except Exception:
+                pass
+        return ("curl -sk -H 'Host: %s' -i %s" % (atk, root),
+                ["Replay a request whose Host header names a domain the "
+                 "attacker controls.",
+                 "Values from that Host header that are echoed back into the "
+                 "page (here an `og:image` meta tag) prove the server trusts "
+                 "attacker-supplied Host values — the prerequisite for "
+                 "web-cache poisoning."])
+
+    if ("discovered application path" in tl) or ("path/file" in tl):
+        urls = _evidence_urls(f)
+        if urls:
+            lines = "\n".join(
+                "curl -s -o /dev/null -w '%%{http_code} %%{url_effective}"
+                "\\n' %r" % u for u in urls)
+            return (lines,
+                    ["Request every endpoint that the scan listed as "
+                     "reachable (they appear in the proof block).",
+                     "Each one that answers instead of a flat 404 is an "
+                     "exposed asset that should be reviewed or removed."])
+
+    if "security header" in tl:
+        return ("curl -skI %s | grep -i '^[a-z]'" % root,
+                ["Fetch the full response header set of the site root.",
+                 "Compare it with the recommended headers in 'What we found' "
+                 "— every one missing from the reply is a hardening gap."])
+
+    if ("server version" in tl) or ("technology fingerprint" in tl) \
+            or ("known cve" in tl):
+        return ("curl -skI %s | grep -i '^server'" % root,
+                ["Fetch the server banner of the site root.",
+                 "The exact build (seen in the proof block) lets attackers "
+                 "match public exploits — the CVEs for this version are "
+                 "listed in the section above."])
+
+    urls = _evidence_urls(f)
+    if urls:
+        return ("curl -skI %s" % urls[0],
+                ["Replay the exact request the scanner made — the one shown "
+                 "in the proof block below.",
+                 "The observed reply from the server is reproduced verbatim "
+                 "there, so the finding can be validated and then retested "
+                 "after the fix."])
+
+    return "", []
+
+
 # Red-team mission objectives and how to recognise each from a finding.
 # Each rule is a (category, substrings-in-title-or-detail) probe; a finding
 # that matches is evidence the objective was (at least partially) achieved.
@@ -90,147 +203,154 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Vajra Report - $targets</title>
+<title>Security Assessment Report - $targets</title>
 <style>
- :root { --bg:#0d1117; --card:#161b22; --line:#21262d; --fg:#e6edf3; --mut:#8b949e;
-         --crit:#ff1744; --high:#ff5252; --med:#ffb300; --low:#4fc3f7; --info:#9e9e9e; }
- * { box-sizing:border-box; margin:0; padding:0; }
- body { background:var(--bg); color:var(--fg); font:14px/1.55 'Segoe UI',system-ui,sans-serif; padding:28px; }
- .wrap { max-width:1180px; margin:auto; }
- h1 { font-size:26px; letter-spacing:.5px; }
- h1 span { color:#f78166; }
- .sub { color:var(--mut); margin:6px 0 24px; }
- .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:14px; margin-bottom:26px; }
- .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
- .card .num { font-size:32px; font-weight:700; }
- .card .lbl { color:var(--mut); font-size:12px; text-transform:uppercase; letter-spacing:1px; }
- .scorebig { font-size:40px; font-weight:800; }
- table { width:100%; border-collapse:collapse; background:var(--card); border-radius:12px; overflow:hidden; border:1px solid var(--line); margin-bottom:30px; }
- th { background:#1c2129; text-align:left; padding:10px 14px; font-size:12px; text-transform:uppercase; color:var(--mut); letter-spacing:1px; cursor:pointer; }
- td { padding:11px 14px; border-top:1px solid var(--line); vertical-align:top; }
- tr:hover td { background:#1a202a; }
- .sev { display:inline-block; min-width:74px; text-align:center; border-radius:20px; font-weight:700; font-size:11px; padding:3px 10px; text-transform:uppercase; color:#000; }
- .sev.critical{background:var(--crit)} .sev.high{background:var(--high)} .sev.medium{background:var(--med)}
- .sev.low{background:var(--low)} .sev.info{background:var(--info)}
- .chip { display:inline-block; background:#21262d; border:1px solid #30363d; border-radius:16px; padding:3px 12px; margin:3px; font-size:12px; }
-pre { background:#0a0d12; border:1px solid var(--line); border-radius:8px; padding:10px; overflow-x:auto; white-space:pre-wrap; word-break:break-word; max-height:260px; font-size:12px; }
-  table.fixed { table-layout:fixed; width:100%; }
-  table.fixed th.col-sev{width:86px} table.fixed th.col-title{width:27%}
-  table.fixed th.col-detail{width:32%} table.fixed th.col-conf{width:120px}
-  td.poc { width:auto; }
-  pre.poc { background:#0a0d12; border:1px solid #2d333b; border-left:4px solid #f78166;
-            border-radius:8px; padding:12px 14px; overflow:auto; white-space:pre-wrap;
-            word-break:break-word; max-height:360px; font:12.5px/1.55 ui-monospace,Consolas,
-            'Cascadia Mono',monospace; }
-  pre.poc::-webkit-scrollbar { width:8px; height:8px; }
-  pre.poc::-webkit-scrollbar-thumb { background:#30363d; border-radius:4px; }
-  section { margin-bottom:34px; }
- h2 { font-size:18px; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid var(--line); }
- .narr { background:var(--card); border-left:4px solid #f78166; border-radius:8px; padding:16px 18px; white-space:pre-wrap; }
- .muted { color:var(--mut); }
- footer { color:var(--mut); font-size:12px; margin-top:36px; line-height:1.7; border-top:1px solid var(--line); padding-top:18px; }
- input#f { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:8px 12px; margin-bottom:14px; width:320px; }
+ :root{--ink:#1a1a24;--mut:#5b6472;--line:#d5dae3;--bg:#f4f6fa;--card:#ffffff;
+       --crit:#d40000;--high:#dd4b00;--med:#b45309;--low:#1d6fb8;--info:#5b6472;
+       --accent:#17365d;--accent2:#ffffff;}
+ *{box-sizing:border-box;margin:0;padding:0;}
+ body{background:var(--bg);color:var(--ink);font:14px/1.6 'Segoe UI',Arial,Helvetica,sans-serif;}
+ .page{max-width:1040px;margin:0 auto;padding:36px 42px;background:var(--card);
+   box-shadow:0 0 24px rgba(20,30,60,.06);}
+ h1{font-size:26px;color:var(--accent);letter-spacing:.4px;}
+ h2{font-size:19px;color:var(--accent);margin:34px 0 4px;padding-bottom:8px;
+   border-bottom:2px solid var(--accent);}
+ h2 .no{color:#93a3b8;margin-right:8px;}
+ h3{font-size:16px;}
+ .meta{border-top:3px solid var(--accent);margin-top:4px;padding-top:14px;}
+ .meta table{border-collapse:collapse;width:100%;}
+ .meta td{padding:5px 18px 5px 0;vertical-align:top;}
+ .meta td:first-child{width:170px;color:var(--mut);text-transform:uppercase;
+   font-size:11px;letter-spacing:1px;}
+ .riskline{margin:18px 0 4px;}
+ .bar{height:12px;width:100%;background:#e8ecf2;border-radius:6px;overflow:hidden;margin-top:6px;}
+ .bar i{display:block;height:100%;background:#dd4b00;}
+ .finds-band{margin-top:20px;}
+ .finds-band table{border-collapse:collapse;width:100%;}
+ .finds-band td{padding:8px 16px 8px 0;vertical-align:top;}
+ .k{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--mut);}
+ .v{font-size:26px;font-weight:700;color:var(--accent);}
+ .pill{display:inline-block;padding:3px 12px;border-radius:14px;font-size:12px;
+   font-weight:600;color:#fff;text-transform:uppercase;letter-spacing:.5px;}
+ .pill.critical{background:var(--crit)} .pill.high{background:var(--high)}
+ .pill.medium{background:var(--med)} .pill.low{background:var(--low)}
+ .pill.info{background:var(--info)} .pill.ghost{background:#e8ecf2;color:#3a4250;text-transform:none;}
+ .narr{white-space:pre-wrap;}
+ .muted{color:var(--mut);}
+ .small{font-size:12px;}
+ table.data{width:100%;border-collapse:collapse;margin-top:10px;}
+ table.data th{background:#eef1f6;text-align:left;padding:8px 12px;font-size:11px;
+   text-transform:uppercase;letter-spacing:.6px;color:#40505f;border:1px solid var(--line);}
+ table.data td{padding:8px 12px;border:1px solid var(--line);vertical-align:top;}
+ .chip{display:inline-block;background:#eef1f6;border-radius:12px;padding:2px 10px;
+   margin:2px 4px 2px 0;font-size:12px;color:#2b3440;}
+ article.finding{border:1px solid var(--line);border-left:6px solid var(--line);
+   border-radius:8px;padding:18px 24px;margin:18px 0;background:#fff;page-break-inside:avoid;}
+ article.finding.sev-critical{border-left-color:var(--crit)}
+ article.finding.sev-high{border-left-color:var(--high)}
+ article.finding.sev-medium{border-left-color:var(--med)}
+ article.finding.sev-low{border-left-color:var(--low)}
+ article.finding.sev-info{border-left-color:var(--info)}
+ .f-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:10px;}
+ .f-head h3{flex:1;min-width:260px;}
+ .fld{margin:10px 0;}
+ .fld b{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.7px;
+   color:#40505f;margin-bottom:3px;}
+ .lead{background:#fff7e6;border:1px solid #f2d199;color:#8a5a00;border-radius:6px;
+   padding:8px 12px;margin:8px 0;font-size:13px;}
+ ol.poc{margin:6px 0 10px 20px;}
+ ol.poc li{margin:4px 0;}
+ pre{background:#0e1420;color:#d9e2ef;border-radius:6px;padding:12px 14px;
+   overflow:auto;font:12.5px/1.55 ui-monospace,Consolas,'Cascadia Mono',monospace;
+   white-space:pre-wrap;word-break:break-word;}
+ pre.proof{max-height:320px;}
+ figure{margin:12px 0;}
+ figure img{max-width:520px;max-height:520px;border:1px solid var(--line);
+   border-radius:6px;display:block;}
+ figcaption{font-size:12px;color:var(--mut);margin-top:6px;}
+ footer{margin-top:36px;border-top:2px solid var(--accent);padding-top:14px;
+   color:var(--mut);font-size:12px;line-height:1.7;}
+ .toc{margin-top:6px;}
+ .toc a{color:#17365d;text-decoration:none;}
+ .toc li{margin:3px 0;}
+ @media print{ body{background:#fff;} .page{box-shadow:none;padding:0;max-width:none;}
+   article.finding{page-break-inside:avoid;} }
 </style>
 </head>
 <body>
-<div class="wrap">
- <h1>⚡ <span>VAJRA</span> Penetration Test Report</h1>
- <div class="sub">$date &nbsp;|&nbsp; profile: $profile &nbsp;|&nbsp; targets: $targets &nbsp;|&nbsp; risk score: <b>$score</b>/100</div>
+<div class="page">
+ <h1>Security Assessment Report</h1>
+ <div class="sub muted" style="margin-top:2px">Automated vulnerability assessment
+   &bull; $targets</div>
 
- <div class="grid">
-  <div class="card"><div class="num" style="color:var(--crit)">$crit</div><div class="lbl">Critical</div></div>
-  <div class="card"><div class="num" style="color:var(--high)">$high</div><div class="lbl">High</div></div>
-  <div class="card"><div class="num" style="color:var(--med)">$medium</div><div class="lbl">Medium</div></div>
-  <div class="card"><div class="num" style="color:var(--low)">$low</div><div class="lbl">Low</div></div>
-  <div class="card"><div class="num">$info</div><div class="lbl">Info</div></div>
-  <div class="card"><div class="scorebig" style="color:$scorecolor">$score</div><div class="lbl">Risk score /100</div></div>
+ <div class="meta">
+  <table>
+   <tr><td>Prepared for</td><td><b>_ _ _ _ _ _ _ _ _ _ _ _ _ _ _</b></td></tr>
+   <tr><td>Assessment of</td><td><b>$targets</b></td></tr>
+   <tr><td>Date of assessment</td><td>$date</td></tr>
+   <tr><td>Assessment type</td><td>$profile</td></tr>
+   <tr><td>Overall risk</td><td><b>$score / 100</b> (of $total findings)</td></tr>
+  </table>
+  <div class="riskline muted small">Overall risk score</div>
+  <div class="bar"><i style="width:$scorewidth%"></i></div>
  </div>
 
-  <section>
-   <h2>Executive summary</h2>
-   <div class="narr">$narrative</div>
-  </section>
+ <div class="finds-band">
+  <table>
+   <tr>
+    <td><div class="k">Critical</div><div class="v" style="color:var(--crit)">$crit</div></td>
+    <td><div class="k">High</div><div class="v" style="color:var(--high)">$high</div></td>
+    <td><div class="k">Medium</div><div class="v" style="color:var(--med)">$medium</div></td>
+    <td><div class="k">Low</div><div class="v" style="color:var(--low)">$low</div></td>
+    <td><div class="k">Info</div><div class="v" style="color:var(--info)">$info</div></td>
+    <td><div class="k">Total</div><div class="v">$total</div></td>
+   </tr>
+  </table>
+ </div>
 
-  <section>
-   <h2>How to read this report</h2>
-   <div class="narr">Every finding is colour-coded by severity:
-  - <span class="sev critical">critical</span> Emergency — an attacker could take full control of the system or steal data with little effort.
-  - <span class="sev high">high</span> Urgent — a serious weakness that most attackers can exploit; fix soon.
-  - <span class="sev medium">medium</span> Plan a fix — exploitable only under certain conditions or by a skilled attacker.
-  - <span class="sev low">low</span> Minor — a small hardening gap; fix when convenient.
-  - <span class="sev info">info</span> Information only — not a vulnerability by itself.
+ <h2><span class="no">1.</span>Executive summary</h2>
+ <div class="narr">$narrative</div>
 
-The "Evidence / PoC" block under each finding shows exactly what the scanner saw (a returned page, a server reply, an access attempt). If the technical wording is unclear, send those evidence lines to your IT team — they reproduce the exact check. Work top-down: fix critical and high items first, re-test, then move on to medium and low.
+ <h2><span class="no">2.</span>CVEs found on your systems</h2>
+ <div class="small muted">Every technology recognised during the assessment is
+   listed with the known-issue matches found for its version. Each CVE links to
+   the National Vulnerability Database.</div>
+ $cve_sections
 
-Each finding also carries a confidence level saying how sure the scanner is:
-  - <b>Certain</b> — the check was proven end-to-end (e.g. an exploit payload actually ran and its output was captured).
-  - <b>Firm</b> — strong evidence the weakness is real, but it was not conclusively proof-tested.
-  - <b>Tentative</b> — a signal that may be a real weakness or a false alarm; treat it as a lead to verify, not a confirmed problem.
+ <h2><span class="no">3.</span>Services and open ports</h2>
+ $services_table
 
-A finding whose confidence is below its claimed severity is automatically downgraded, so unproven leads are never reported as critical or high.</div>
-  </section>
+ <h2><span class="no">4.</span>Findings and proof of concept</h2>
+ <div class="small muted">Each finding states where it was seen, what was
+   found, how to reproduce it (step by step), the exact proof the scan
+   observed, and the recommended fix. </div>
+ $finding_cards
 
-  <section>
-   <h2>Attack surface</h2>
-   $chips
-  </section>
+ <h2><span class="no">5.</span>Recommended fixes</h2>
+ $remediation
 
-  <section>
-   <h2>Synthesis &amp; AI narrative</h2>
-   <div class="narr">$synthesis</div>
-  </section>
+ <h2><span class="no">6.</span>Severity definitions</h2>
+ <table class="data">
+  <tr><th style="width:100px">Level</th><th>What it means</th></tr>
+  <tr><td><span class="pill critical">critical</span></td><td>Emergency — an attacker could probably take control of the system or steal data with little effort. Fix immediately.</td></tr>
+  <tr><td><span class="pill high">high</span></td><td>Urgent — a serious weakness most attackers could exploit. Fix as soon as possible.</td></tr>
+  <tr><td><span class="pill medium">medium</span></td><td>Plan a fix — exploitable only under certain conditions or by a skilled attacker.</td></tr>
+  <tr><td><span class="pill low">low</span></td><td>Minor — a small hardening gap. Fix when convenient.</td></tr>
+  <tr><td><span class="pill info">info</span></td><td>Information only — not a vulnerability by itself.</td></tr>
+ </table>
 
-   $remediation
-
-  <section>
-   <h2>Attack paths &amp; finding correlation</h2>
-   $atkpath
-   $correlated
-  </section>
-
-  <section>
-   <h2>Retest delta (vs previous snapshot)</h2>
-   <pre>$delta</pre>
-  </section>
-
-  <section>
-   <h2>CVEs found on your systems</h2>
-   $cve_sections
-  </section>
-
-  <section>
-   <h2>Findings ($total)</h2>
-   <input id="f" placeholder="filter findings..." onkeyup="filter()">
-   $finding_rows
-  </section>
-
-  $evsection
- <section>
-  <h2>Scan timeline</h2>
-  <table><tr><th>Time</th><th>Target</th><th>Event</th></tr>$event_rows</table>
- </section>
-
-<footer>
- <b>VAJRA</b> — automated penetration testing framework.<br>
- Unverified, heuristic signals are flagged "unverified lead" and are never
- reported critical/high (anti-false-positive policy). Still, validate all
- findings manually before remediation. Use of this tool against systems
- without written authorization is illegal.<br>
- Generated: $date
-</footer>
+ <footer>
+  <b>Confidential.</b> This report is intended for the owner of the assessed
+  systems.<br>
+  Confidence labels: <b>Certain</b> = proven end-to-end &bull; <b>Firm</b> =
+  strong evidence &bull; <b>Tentative</b> = unverified lead, treat as a signal
+  to confirm, never as a confirmed finding.<br>
+  Unverified signals are reported only at low/info levels, never as
+  critical/high. Validate key findings manually before remediation. Testing
+  systems without written authorization is illegal.<br>
+  Generated: $date
+ </footer>
 </div>
-<script>
- function filter(){
-  var q=document.getElementById('f').value.toLowerCase();
-  document.querySelectorAll('tr.frow').forEach(function(r){
-   r.style.display = r.innerText.toLowerCase().includes(q)?'':'none';});
- }
- document.querySelectorAll('th').forEach(th=>th.addEventListener('click',()=>{
-  const tb=th.closest('table');const idx=[...th.parentElement.children].indexOf(th);
-  const rows=[...tb.querySelectorAll('tr.frow,tr.erow')];
-  rows.sort((a,b)=>a.children[idx].innerText.localeCompare(b.children[idx].innerText));
-  rows.forEach(r=>tb.appendChild(r));}));
-</script>
 </body>
 </html>"""
 
@@ -280,112 +400,109 @@ def build_data(engine):
 
 
 def render_html(data):
+    """Professional self-contained HTML report: plain-language, print-ready,
+    findings presented as cards with step-by-step proofs."""
     stats = data["stats"]
-    chips = []
-    for s in data.get("services", []):
-        chips.append("%s:%s %s%s" % (_esc(s["target"]), s["port"],
-                                     _esc(s["service"]),
-                                     (" (%s)" % _esc(s["product"])) if s.get("product") else ""))
-    for tech in data.get("tech") or []:
-        chips.append(str(tech))
-    if data.get("os_guess"):
-        chips.append("OS: " + data["os_guess"])
-    chips_html = "".join('<span class="chip">%s</span>' % _esc(c) for c in chips)
+    findings = data["findings"]
+    total = len(findings)
 
-    rows = []
-    for i, f in enumerate(data["findings"]):
-        mitre = _esc(f.get("mitre", ""))
-        conf = (f.get("confidence") or "").lower()
-        conf_label = (f.get("confidence") or "-").title()
-        # Unverified / heuristic signals are explicitly surfaced as LEADS, not
-        # confirmed problems, so the report never reads as a proven finding
-        # when the check was not proof-tested (no false positives).
-        if conf == "tentative":
-            conf_badge = ('<span class="chip">%s</span>'
-                          '<div class="muted" style="font-size:11px">'
-                          '&nbsp;unverified lead — verify manually</div>'
-                          % _esc(conf_label))
-        else:
-            conf_badge = '<span class="chip">%s</span>' % _esc(conf_label)
-        poc = _poc_text(f)
-        poc_block = ('<pre class="poc">%s</pre>' % _esc(poc[:2400])
-                     if poc else
-                     '<span class="muted">no proof captured — see detail</span>')
-        shot = _evidence_png_rel(data, i, f["title"])
-        shot_html = ('<br><a href="%s" target="_blank"><img src="%s" '
-                     'alt="proof screenshot" style="max-width:340px;'
-                     'border:1px solid var(--line);border-radius:8px'
-                     ';margin-top:8px"></a>' % (shot, shot)
-                     if shot else "")
-        rows.append(
-            '<tr class="frow"><td><span class="sev %s">%s</span></td>'
-            '<td>%s</td>'
-            '<td>%s%s</td>'
-            '<td class="poc">%s%s</td>'
-            '<td class="muted">%s</td></tr>' % (
-                f["severity"], f["severity"], _esc(f["title"]),
-                _esc(f["detail"]),
-                ("<br><span class='muted'>ATT&amp;CK: %s</span>" % mitre)
-                if mitre else "",
-                poc_block, shot_html,
-                conf_badge))
-    finding_rows = ('<table class="fixed findings"><thead><tr>'
-                     '<th class="col-sev">Severity</th>'
-                     '<th class="col-title">Title</th>'
-                     '<th class="col-detail">Detail</th>'
-                     '<th class="col-poc">PoC / Evidence</th>'
-                     '<th class="col-conf">Confidence</th></tr></thead>' +
-                     "".join(rows) + "</table>") if rows else \
-        '<p class="muted">No findings recorded.</p>'
-
-    ev_entries = data.get("evasion") or []
-    if ev_entries:
-        passed = sum(1 for e in ev_entries if e.get("result") == "passed")
-        rows_ev = "".join(
-            '<tr class="frow"><td>%s</td><td><code>%s</code></td>'
-            '<td><pre>%s</pre></td><td><span class="sev %s">%s</span></td></tr>' % (
-                _esc(e.get("waf", "?")), _esc(e.get("ops", "")),
-                _esc((e.get("original", "")[:110] + "  ==>  " +
-                      e.get("mutant", "")[:110])),
-                "low" if e.get("result") == "passed" else "info",
-                _esc(e.get("result", "")))
-            for e in ev_entries[:60])
-        evsection = (
-            '<section><h2>Evasion operations (%d attempts against WAF, '
-            '%d payloads passed filters)</h2>'
-            '<table><tr><th>WAF</th><th>Operator chain</th><th>payload '
-            'mutation</th><th>Result</th></tr>%s</table></section>'
-            % (len(ev_entries), passed, rows_ev))
+    if data.get("services"):
+        srows = "".join(
+            '<tr><td><code>%s</code></td><td>%s</td><td>%s</td><td>%s</td>'
+            '<td>%s</td></tr>' % (
+                _esc(s["target"]), _esc(str(s["port"])),
+                _esc(s["service"]),
+                _esc(s.get("product") or "-"),
+                _esc(s.get("version") or "-"))
+            for s in data["services"])
+        services_table = ('<table class="data"><tr><th>Target</th><th>Port</th>'
+                          '<th>Service</th><th>Product</th><th>Version</th></tr>'
+                          '%s</table>' % srows)
     else:
-        evsection = ""
+        services_table = ('<div class="muted">No reachable service was '
+                          'recorded for this target range.</div>')
 
-    erows = []
-    for ev_target, event, detail, created in data["events"]:
-        erows.append('<tr class="erow"><td>%s</td><td>%s</td><td>%s</td></tr>' %
-                         (_esc(created[11:19] if len(created) >= 19 else created),
-                          _esc(ev_target[:40]), _esc(event)))
-    score = float(data["score"])
-    scorecolor = "#f44336" if score >= 25 else \
-        ("#ffb300" if score >= 10 else "#4caf50")
+    cards = "".join(_finding_card(data, i, f)
+                    for i, f in enumerate(findings)) if findings else \
+        '<div class="muted">No findings recorded.</div>'
+
+    score = min(100.0, max(0.0, float(data.get("score") or 0)))
+    rem = _render_remediation(data.get("remediation", [])) or \
+        '<div class="muted">No specific fix list was produced — the fix ' \
+        'recommendations inside each finding card above apply.</div>'
+
     tpl = Template(HTML_TEMPLATE)
     return tpl.substitute(
-        date=data["meta"]["generated"], profile=_esc(data["meta"]["profile"]),
-        targets=_esc(", ".join(data["meta"]["targets"])[:90]),
-        score=data["score"], scorecolor=scorecolor,
+        date=_esc(data["meta"]["generated"]),
+        profile=_esc(data.get("meta", {}).get("profile", "default")),
+        targets=_esc(", ".join(data.get("meta", {}).get("targets", []) or []))[:90],
+        score="%.1f" % score, scorewidth=str(int(score)),
         crit=stats.get("critical", 0), high=stats.get("high", 0),
         medium=stats.get("medium", 0), low=stats.get("low", 0),
-        info=stats.get("info", 0), total=len(data["findings"]),
-        narrative=_esc(data["narrative"]), chips=chips_html or "<i class='muted'>none</i>",
-        finding_rows=finding_rows,
-        event_rows="".join(erows)[:200000], evsection=evsection,
-        synthesis=_esc(data.get("synthesis", "")),
-        delta=_esc("\n".join(
-            "%s: %s" % (k, ", ".join(v[:3]) + ("..." if len(v) > 3 else ""))
-            for k, v in data.get("delta", {}).items())),
-        remediation=_render_remediation(data.get("remediation", [])),
-        atkpath=attack_paths_html(data.get("attack_paths") or []),
-        correlated=correlated_html(data.get("correlated") or []),
-        cve_sections=_cve_sections_html(data.get("tech_cves") or {}))
+        info=stats.get("info", 0), total=total,
+        narrative=_esc(data["narrative"]),
+        cve_sections=_cve_sections_html(data.get("tech_cves") or {}),
+        services_table=services_table,
+        finding_cards=cards,
+        remediation=rem)
+
+
+def _finding_card(data, i, f):
+    """One professional finding card: severity + confidence header, location,
+    description, step-by-step PoC, observed proof (output + screenshot), fix."""
+    sev = f.get("severity", "info")
+    conf = (f.get("confidence") or "").lower()
+    conf_short = _esc((f.get("confidence") or "-").title())
+    title = _esc(f["title"])
+    lead = ""
+    if conf in ("tentative", "possible"):
+        lead = ('<div class="lead"><b>Unverified lead.</b> This signal may be '
+                'real or a false alarm — confirm it manually before acting on '
+                'it.</div>')
+
+    where_target = _esc(f.get("target") or "")
+    if ("host header" in (f.get("title") or "").lower()) or \
+            ("cache poisoning" in (f.get("title") or "").lower()):
+        loc = where_target
+    else:
+        loc = _esc(_first_url(f.get("evidence")) or where_target)
+
+    bits = ['<div class="fld"><b>Location</b>%s</div>' % loc]
+    if f.get("detail"):
+        bits.append('<div class="fld"><b>What we found</b><div>%s</div></div>'
+                    % _esc(f["detail"][:1600]))
+
+    cmd, steps = _repro(f)
+    if cmd and steps:
+        ol = "".join("<li>%s</li>" % _esc(s) for s in steps)
+        bits.append('<div class="fld"><b>Proof of concept — how to reproduce</b>'
+                    '<ol class="poc">%s</ol></div>' % ol)
+        bits.append('<div class="fld"><b>Command</b>'
+                    '<pre>%s</pre></div>' % _esc(cmd))
+
+    poc = _poc_text(f)
+    if poc:
+        bits.append('<div class="fld"><b>Observed proof (what the scan saw)'
+                    '</b><pre class="proof">%s</pre></div>'
+                    % _esc(poc[:2400]))
+    shot = _evidence_png_rel(data, i, f["title"])
+    if shot:
+        bits.append(
+            '<figure><a href="%s" target="_blank"><img src="%s" '
+            'alt="Proof screenshot for: %s"></a>'
+            '<figcaption>Proof screenshot — rendering of the reproduced '
+            'request above.</figcaption></figure>' % (shot, shot,
+                                                      title.replace('"', "")))
+    if f.get("remediation"):
+        bits.append('<div class="fld"><b>Recommended fix</b><div>%s</div>'
+                    '</div>' % _esc(f["remediation"]))
+
+    head = ('<div class="f-head"><span class="pill %s">%s</span>'
+            '<h3>%s</h3>'
+            '<span class="pill ghost">confidence: %s</span></div>'
+            % (sev, sev.capitalize(), title, conf_short))
+    return ('<article class="finding sev-%s">%s%s%s</article>'
+            % (sev, head, lead, "".join(bits)))
 
 
 def _cve_sections_html(tech_cves):
@@ -515,10 +632,11 @@ def _render_remediation(sections):
                           % (_esc(it["title"]), _esc(it["remediation"])))
         if not body:
             continue
-        rows.append('<h3 style="color:var(--%s)">%s — %s</h3>'
-                      % (sec["severity"], sec["severity"].upper(),
-                         sec.get("priority", "")))
-        rows.append('<table><tr><th>Finding</th><th>Recommended fix</th></tr>' +
+        rows.append('<h3 style="color:%s">%s — %s</h3>'
+                      % (_SEV_HEX.get(sec["severity"], "#17365d"),
+                         sec["severity"].upper(), sec.get("priority", "")))
+        rows.append('<table class="data"><tr><th>Finding</th>'
+                    '<th>Recommended fix</th></tr>' +
                       "".join(body) + "</table>")
     return "".join(rows)
 
@@ -554,6 +672,9 @@ _CONF_MEANS = {
     "possible": "Unverified lead — a signal that may be real or a false "
                 "alarm; confirm it before acting.",
 }
+
+_SEV_HEX = {"critical": "#d40000", "high": "#dd4b00", "medium": "#b45309",
+            "low": "#1d6fb8", "info": "#5b6472"}
 
 
 def _nvd_url(cve_id):
@@ -703,10 +824,14 @@ def render_markdown(data):
                     lines.append("> **Treat as a lead, not a confirmed "
                                  "problem** — verify before acting.")
                 lines.append("")
-                loc = _first_url(f.get("evidence")) or where_target
                 we_do = []
+                if ("host header" in title.lower()) or \
+                        ("cache poisoning" in title.lower()):
+                    loc = where_target
+                else:
+                    loc = _first_url(f.get("evidence")) or where_target
                 if loc:
-                    we_do.append("**Where:** %s" % loc)
+                    we_do.append("**Location:** %s" % loc)
                 if f.get("detail"):
                     detail = f["detail"].strip()
                     if len(detail) > 900:
@@ -714,12 +839,25 @@ def render_markdown(data):
                     we_do.append("**What we found:** %s" % detail)
                 lines.append("\n\n".join(we_do) if we_do else "")
                 lines.append("")
+                cmd, steps = _repro(f)
+                if steps and cmd:
+                    lines.append("**Proof of concept — how to reproduce:**")
+                    lines.append("")
+                    for k, step in enumerate(steps, 1):
+                        lines.append("%d. %s" % (k, step))
+                    lines.append("")
+                    lines.append("Command:")
+                    lines.append("")
+                    lines.append("```bash")
+                    lines.append(cmd)
+                    lines.append("```")
+                    lines.append("")
                 poc = _poc_text(f)
                 if poc:
-                    lines.append("**Proof (what the scan saw):**")
+                    lines.append("**Observed proof (what the scan saw):**")
                     lines.append("")
                     lines.append("```")
-                    for ln in poc.splitlines()[:12]:
+                    for ln in poc.splitlines()[:14]:
                         lines.append("  " + ln[:260].rstrip())
                     lines.append("```")
                     lines.append("")
@@ -1082,13 +1220,14 @@ def render_xlsx(data, path="report.xlsx"):
 
     # Findings sheet
     fhead = ["Severity", "Title", "Detail", "Confidence",
-             "PoC / Evidence"]
+             "PoC / Evidence", "How to reproduce (command)"]
     findings = [fhead]
     for f in data.get("findings", []):
+        _cmd, _steps = _repro(f)
         findings.append([
             f.get("severity", ""), f.get("title", ""),
             f.get("detail", ""), f.get("confidence", ""),
-            _poc_text(f),
+            _poc_text(f), _cmd,
         ])
 
     # Build shared strings + rows. Strings are interned here and tagged with
@@ -1105,7 +1244,7 @@ def render_xlsx(data, path="report.xlsx"):
     rows_find = [[T(c) for c in row] for row in findings]
 
     sheet1 = _xlsx_sheet("Summary", rows_sum, [46, 70, 12, 12, 12])
-    sheet2 = _xlsx_sheet("Findings", rows_find, [10, 34, 40, 12, 60])
+    sheet2 = _xlsx_sheet("Findings", rows_find, [10, 34, 40, 12, 60, 46])
 
     # Workbook + relationships + styles (minimal).
     wb = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'

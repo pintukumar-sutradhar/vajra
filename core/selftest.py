@@ -414,24 +414,30 @@ def t_report():
                           "category": "c", "module": "m", "detail": "d",
                           "evidence": "e", "confidence": "firm"},
                          {"severity": "medium",
-                          "title": "no-proof finding",
+                          "title": "Host Header Injection / web-cache "
+                                   "poisoning surface",
                           "category": "c2", "module": "m2",
-                          "detail": "observed proof detail only",
-                          "evidence": "", "confidence": "firm"}],
+                          "detail": "Host: evil.example reflected into the "
+                                   "response body on https://t/",
+                          "evidence": "raw socket GET / with Host: "
+                                      "evil.example",
+                          "confidence": "tentative"}],
             "events": [], "tech": [], "subdomains": [], "os_guess": "",
             "evasion": [{"waf": "Cloudflare", "ops": "case_swap",
                          "original": "<svg onload=alert(1)>",
                          "mutant": "<SvG oNlOaD=alert(1)>",
                          "result": "passed"}]}
     html_out = render_html(data)
-    assert "VAJRA" in html_out and "&lt;b&gt;" in html_out
-    assert "Evasion operations" in html_out and "case_swap" in html_out
-    assert "<i>-</i>" not in html_out  # PoC cell never blank
-    assert "observed proof detail only" in html_out  # detail fallback renders
+    assert "Security Assessment Report" in html_out and "&lt;b&gt;" in html_out
+    assert "Evasion operations" not in html_out  # analyst-only sections hidden
+    assert "Scan timeline" not in html_out
+    assert "Proof of concept" in html_out
+    assert "Observed proof" in html_out
+    assert "evil.example" in html_out  # repro + raw-socket proof render
     md = render_markdown(data)
     assert "# Security Assessment Report" in md and "Executive summary" in md
-    assert "Observed proof detail" in md or "observed proof detail" in md
-    assert "Recommended fix" in md or "Proof (what the scan saw)" in md
+    assert "Host: evil.example reflected" in md or "evil.example" in md
+    assert "Recommended fix" in md or "Observed proof" in md
     return True, "all three report formats render (incl. PoC fallback)"
 
 

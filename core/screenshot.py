@@ -107,8 +107,14 @@ def first_url(text):
     return m.group(0).rstrip("),.;!?]\"")
 
 
-def capture(url, out_path, timeout=8000, user_agent=None):
+def capture(url, out_path, timeout=8000, user_agent=None, headers=None):
     """Best-effort full-page PNG screenshot of ``url`` -> ``out_path``.
+
+    ``headers`` (optional) overrides request headers on the top-level document
+    request — used to reproduce Host-based issues (e.g. Host Header Injection)
+    visually: the page is rendered exactly as it would load for that host, so
+    the reflected value is visible in the screenshot instead of a generic
+    homepage capture.
 
     Returns True on success. Never raises: every failure is treated as
     'screenshot unavailable' so the caller can fall back to text evidence.
@@ -135,7 +141,22 @@ def capture(url, out_path, timeout=8000, user_agent=None):
                     user_agent=user_agent or
                     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
                     "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
-                page = ctx.new_page()
+                if headers:
+                    # Override headers only on the main document request so
+                    # sub-resources (css/js/images) still load normally.
+                    page = ctx.new_page()
+
+                    def on_route(route):
+                        req = route.request
+                        if (req.resource_type == "document"
+                                and req.url.startswith(url)):
+                            route.continue_(headers=headers)
+                        else:
+                            route.continue_()
+
+                    page.route("**/*", on_route)
+                else:
+                    page = ctx.new_page()
                 page.set_default_timeout(max(1000, int(timeout)))
                 try:
                     # Some hosts (e.g. cert-broken servers or slow TLS) never
