@@ -140,12 +140,14 @@ def run(engine):
                             "of hostile content" % url)
         elif accepted_any:
             engine.db.add_finding(Finding(
-                t.display, "web.upload", "medium", "medium",
-                "Upload accepts files but hostile content was not re-fetched "
-                "(%s)" % url,
+                t.display, "web.upload", "coverage", "info",
+                "Upload endpoint accepts files; stored-file reachability "
+                "unverified (%s)" % url,
                 detail="Upload returned success (%s) but no stored URL was "
-                       "retrievable with our marker — persistence or "
-                       "reachability unverified. Manual follow-up advised." %
+                       "retrievable with our marker. This is not a "
+                       "vulnerability claim — many legitimate uploads store "
+                       "content in a database without a public URL. Manual "
+                       "review advised only if the business case warrants it." %
                        ", ".join(str(getattr(results[l], "status", "?"))
                                  for l in ("benign", "traversal",
                                            "double-ext")),
