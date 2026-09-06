@@ -123,7 +123,12 @@ def capture(url, out_path, timeout=8000, user_agent=None):
             launched = pw.chromium.launch(
                 executable_path=browser, headless=True,
                 args=["--no-sandbox", "--disable-gpu",
-                      "--disable-dev-shm-usage"])
+                      "--disable-dev-shm-usage",
+                      # Never route PoC captures through a system proxy (some
+                      # Kali setups hang on it), and ignore broken TLS chains
+                      # the same way vajra's HTTP client does (verify=False).
+                      "--no-proxy-server",
+                      "--ignore-certificate-errors"])
             try:
                 ctx = launched.new_context(
                     ignore_https_errors=True,
@@ -132,10 +137,17 @@ def capture(url, out_path, timeout=8000, user_agent=None):
                     "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
                 page = ctx.new_page()
                 page.set_default_timeout(max(1000, int(timeout)))
-                page.goto(url, wait_until="domcontentloaded",
-                          timeout=max(1000, int(timeout)))
+                try:
+                    # Some hosts (e.g. cert-broken servers or slow TLS) never
+                    # emit domcontentloaded through the headless pipeline;
+                    # keep the domcontentloaded budget short and fall back to a
+                    # commit-level render which still proves the page state.
+                    page.goto(url, wait_until="domcontentloaded", timeout=4000)
+                except Exception:
+                    page.goto(url, wait_until="commit",
+                              timeout=max(1000, int(timeout)))
                 # Render for a beat so async content paints before capture.
-                page.wait_for_timeout(400)
+                page.wait_for_timeout(700)
                 try:
                     page.screenshot(path=out_path, full_page=True)
                 except Exception:
