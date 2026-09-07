@@ -428,14 +428,14 @@ def t_report():
                          "mutant": "<SvG oNlOaD=alert(1)>",
                          "result": "passed"}]}
     html_out = render_html(data)
-    assert "Security Assessment Report" in html_out and "&lt;b&gt;" in html_out
+    assert "Penetration Test Report" in html_out and "&lt;b&gt;" in html_out
     assert "Evasion operations" not in html_out  # analyst-only sections hidden
     assert "Scan timeline" not in html_out
     assert "Proof of concept" in html_out
     assert "Observed proof" in html_out
     assert "evil.example" in html_out  # repro + raw-socket proof render
     md = render_markdown(data)
-    assert "# Security Assessment Report" in md and "Executive summary" in md
+    assert "# Penetration Test Report" in md and "Executive summary" in md
     assert "Host: evil.example reflected" in md or "evil.example" in md
     assert "Recommended fix" in md or "Observed proof" in md
     return True, "all three report formats render (incl. PoC fallback)"
@@ -2211,10 +2211,13 @@ def t_xlsx_text():
     assert 't="s"' in s2, "no shared-string cells in Findings"
     assert 't="s"' in s1, "no shared-string cells in Summary"
     allsi = re.findall(r"<si><t[^>]*>(.*?)</t></si>", sst)
-    # ...and the first finding's severity resolves to the real word
+    # ...the first finding has a reference and a real severity word
     m = re.search(r'<c r="A2" t="s"><v>(\d+)</v></c>', s2)
     assert m, "A2 is not a shared-string cell (text leaked into numbers)"
-    assert allsi[int(m.group(1))] == "critical", allsi[int(m.group(1))]
+    assert allsi[int(m.group(1))] == "VULN-01", allsi[int(m.group(1))]
+    m = re.search(r'<c r="B2" t="s"><v>(\d+)</v></c>', s2)
+    assert m and allsi[int(m.group(1))] == "critical", \
+        "B2 severity must resolve to 'critical'"
     # a genuine number (risk score) must NOT be a string cell
     assert re.search(r'<c r="B6"><v>41.5</v></c>', s1), \
         "risk score should remain numeric"

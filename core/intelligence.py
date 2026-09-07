@@ -250,20 +250,20 @@ class Intelligence:
             else:
                 level = "%d serious" % high
             lines.append(
-                "Bottom line: %s weakness(es) were found. This is urgent — "
-                "at least one could let an attacker take control of the "
-                "system or steal data. Treat fixing them as an emergency "
+                "Key conclusion: %s weakness(es) were identified. This is an urgent "
+                "result — at least one could let an attacker take control of "
+                "the system or steal data. Treat fixing them as an emergency "
                 "and re-test when done." % level)
         elif med:
             lines.append(
-                "Bottom line: no emergency-level weaknesses were found, but "
+                "Key conclusion: no emergency-level weaknesses were found, but "
                 "several medium concerns were detected. They should be "
                 "fixed on a planned schedule before the system is exposed "
                 "to users.")
         else:
             lines.append(
-                "Bottom line: automated checks could not confirm any "
-                "exploitable weakness. This is good news, but not a "
+                "Key conclusion: no exploitable weakness was confirmed by the "
+                "automated checks. This is a positive result, but not a "
                 "guarantee of safety — a manual expert review is still "
                 "advised.")
         counts = []
@@ -282,7 +282,7 @@ class Intelligence:
             top = sorted([f for f in findings
                           if f["severity"] in ("critical", "high")],
                          key=lambda f: SEV_RANK_ORDER[f["severity"]])[:4]
-            lines.append("Most important findings (fix first):")
+            lines.append("Priority findings:")
             for f in top:
                 lines.append("  - [%s] %s" % (f["severity"].upper(),
                                               _plain_title(f["title"])))

@@ -203,7 +203,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Security Assessment Report - $targets</title>
+<title>Penetration Test Report - $targets</title>
 <style>
  :root{--ink:#1a1a24;--mut:#5b6472;--line:#d5dae3;--bg:#f4f6fa;--card:#ffffff;
        --crit:#d40000;--high:#dd4b00;--med:#b45309;--low:#1d6fb8;--info:#5b6472;
@@ -252,7 +252,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
  article.finding.sev-low{border-left-color:var(--low)}
  article.finding.sev-info{border-left-color:var(--info)}
  .f-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:10px;}
- .f-head h3{flex:1;min-width:260px;}
+  .f-head h3{flex:1;min-width:260px;}
+  .ref{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:#7b8794;
+    border:1px solid var(--line);border-radius:4px;padding:1px 8px;}
+  a.reg{color:#17365d;text-decoration:none;}
+  a.reg:hover{text-decoration:underline;}
  .fld{margin:10px 0;}
  .fld b{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.7px;
    color:#40505f;margin-bottom:3px;}
@@ -279,16 +283,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <div class="page">
- <h1>Security Assessment Report</h1>
- <div class="sub muted" style="margin-top:2px">Automated vulnerability assessment
+ <h1>Penetration Test Report</h1>
+ <div class="sub muted" style="margin-top:2px">Offensive security assessment
    &bull; $targets</div>
 
  <div class="meta">
   <table>
-   <tr><td>Prepared for</td><td><b>[Client name]</b></td></tr>
-   <tr><td>Assessment of</td><td><b>$targets</b></td></tr>
-   <tr><td>Date of assessment</td><td>$date</td></tr>
-   <tr><td>Assessment type</td><td>$profile</td></tr>
+   <tr><td>Assessed scope</td><td><b>$targets</b></td></tr>
+   <tr><td>Date of test</td><td>$date</td></tr>
+   <tr><td>Test type</td><td>$profile</td></tr>
    <tr><td>Overall risk</td><td><b>$score / 100</b> (of $total findings)</td></tr>
   </table>
   <div class="riskline muted small">Overall risk score</div>
@@ -311,22 +314,26 @@ HTML_TEMPLATE = """<!DOCTYPE html>
  <h2><span class="no">1.</span>Executive summary</h2>
  <div class="narr">$narrative</div>
 
- <h2><span class="no">2.</span>CVEs found on your systems</h2>
- <div class="small muted">Every technology recognised during the assessment is
+ <h2><span class="no">2.</span>Known CVEs for technologies in scope</h2>
+ <div class="small muted">Every technology recognised during the test is
    listed with the known-issue matches found for its version. Each CVE links to
    the National Vulnerability Database.</div>
- $cve_sections
+   $cve_sections
 
- <h2><span class="no">3.</span>Services and open ports</h2>
+ <h2><span class="no">3.</span>Services and ports in scope</h2>
  $services_table
 
- <h2><span class="no">4.</span>Findings and proof of concept</h2>
- <div class="small muted">Each finding states where it was seen, what was
-   found, how to reproduce it (step by step), the exact proof the scan
-   observed, and the recommended fix. </div>
+ <h2><span class="no">4.</span>Detailed findings and proof of concept</h2>
+ <div class="small muted">Findings register — every actionable issue, in one
+   glance. Jump to the full detail and proof-of-concept for each reference
+   below, or use the severity definitions at the end of this report.</div>
+ $register
+ <div class="small muted" style="margin-top:14px">Each finding states where it
+   was observed, what was found, how to reproduce it (step by step), the exact
+   proof recorded, and the recommended fix. </div>
  $finding_cards
 
- <h2><span class="no">5.</span>Recommended fixes</h2>
+ <h2><span class="no">5.</span>Remediation guidance</h2>
  $remediation
 
  <h2><span class="no">6.</span>Severity definitions</h2>
@@ -490,6 +497,23 @@ def render_html(data):
                     for i, f in enumerate(findings)) if findings else \
         '<div class="muted">No findings recorded.</div>'
 
+    register = ""
+    if findings:
+        reg = "".join(
+            '<tr><td><b>VULN-%02d</b></td><td><span class="pill %s">%s</span>'
+            '</td><td><a class="reg" href="#vuln-%02d">%s</a></td>'
+            '<td><code>%s</code></td></tr>'
+            % (i + 1, f.get("severity", "info") or "info",
+               _esc(f.get("severity", "info")), i + 1,
+               _esc(f.get("title", "")), _esc(_finding_asset(f)))
+            for i, f in enumerate(findings)
+            if f.get("severity", "info") != "info")
+        if reg:
+            register = ('<table class="data">'
+                        '<tr><th style="width:90px">Ref</th>'
+                        '<th style="width:110px">Severity</th><th>Finding</th>'
+                        '<th style="width:220px">Asset</th></tr>%s</table>' % reg)
+
     score = min(100.0, max(0.0, float(data.get("score") or 0)))
     rem = _render_remediation(data.get("remediation", [])) or \
         '<div class="muted">No specific fix list was produced — the fix ' \
@@ -508,6 +532,7 @@ def render_html(data):
         cve_sections=_cve_sections_html(data.get("tech_cves") or {}),
         services_table=services_table,
         finding_cards=cards,
+        register=register,
         remediation=rem)
 
 
@@ -561,12 +586,13 @@ def _finding_card(data, i, f):
         bits.append('<div class="fld"><b>Recommended fix</b><div>%s</div>'
                     '</div>' % _esc(f["remediation"]))
 
-    head = ('<div class="f-head"><span class="pill %s">%s</span>'
+    head = ('<div class="f-head"><span class="ref">VULN-%02d</span>'
+            '<span class="pill %s">%s</span>'
             '<h3>%s</h3>'
             '<span class="pill ghost">confidence: %s</span></div>'
-            % (sev, sev.capitalize(), title, conf_short))
-    return ('<article class="finding sev-%s">%s%s%s</article>'
-            % (sev, head, lead, "".join(bits)))
+            % (i + 1, sev, sev.capitalize(), title, conf_short))
+    return ('<article class="finding sev-%s" id="vuln-%02d">%s%s%s</article>'
+            % (sev, i + 1, head, lead, "".join(bits)))
 
 
 def _cve_sections_html(tech_cves):
@@ -753,6 +779,16 @@ def _first_url(text):
     return m.group(0) if m else ""
 
 
+def _finding_asset(f):
+    """Short 'asset' label for a finding in the register table: the host
+    of the location URL when present, otherwise the target host."""
+    from urllib.parse import urlsplit
+    loc = _first_url(f.get("evidence")) or (f.get("target") or "")
+    if loc.startswith(("http://", "https://")):
+        return urlsplit(loc).netloc.split(":")[0]
+    return (f.get("target") or "<target>")
+
+
 def _evidence_png(data, index, title):
     """Absolute path of the proof screenshot for a finding, or '' if none.
     The per-issue PNGs are written by the engine as evidence/fNNN_<slug>.png
@@ -779,6 +815,12 @@ def _evidence_png_rel(data, index, title):
     return os.path.basename(png)
 
 
+def _plain_md(text):
+    """Sanitize a string for use inside a markdown table cell."""
+    return (str(text or "").replace("|", "/").replace("`", "'")
+            .replace("\n", " ").strip())
+
+
 def _md_sev_line(sev, conf, title):
     icon = _SEV_ICON.get(sev, "⚪")
     conf_note = (" _(%s)_" % _CONF_MEANS.get((conf or "").lower(),
@@ -791,8 +833,8 @@ def _cve_sections_md(tech_cves):
     requirement."""
     if not tech_cves:
         return ""
-    out = ["## CVEs found on your systems", "",
-           "Every technology detected during the assessment is listed here "
+    out = ["## Known CVEs for technologies in scope", "",
+           "Every technology detected during the test is listed here "
            "with the known-issue matches found for its version. Each CVE has "
            "a link to the National Vulnerability Database for details.",
            ""]
@@ -821,13 +863,13 @@ def render_markdown(data):
     stats = data["stats"]
     findings = data["findings"]
     lines = []
-    lines.append("# Security Assessment Report")
+    lines.append("# Penetration Test Report")
     lines.append("")
     lines.append("| Field | Value |")
     lines.append("|---|---|")
-    lines.append("| Target | %s |" % ", ".join(data["meta"]["targets"]))
-    lines.append("| Assessment date | %s |" % data["meta"]["generated"])
-    lines.append("| Assessment type | %s |" % data["meta"]["profile"])
+    lines.append("| Test scope | %s |" % ", ".join(data["meta"]["targets"]))
+    lines.append("| Date of test | %s |" % data["meta"]["generated"])
+    lines.append("| Test type | %s |" % data["meta"]["profile"])
     lines.append("| Overall risk | **%.1f / 100** |" % data["score"])
     lines.append("| Findings | %d critical · %d high · %d medium · %d low "
                  "· %d info |"
@@ -844,7 +886,7 @@ def render_markdown(data):
         lines.append(cves_md)
         lines.append("")
 
-    lines.append("## 2. Services and open ports")
+    lines.append("## 2. Services and ports in scope")
     lines.append("")
     services = data.get("services") or _measured_web_services(data)
     if services:
@@ -858,12 +900,27 @@ def render_markdown(data):
         lines.append("_No reachable service was recorded._")
     lines.append("")
 
-    lines.append("## 3. Findings")
+    lines.append("## 3. Detailed findings and proof of concept")
     lines.append("")
     if not findings:
         lines.append("_No findings recorded._")
         lines.append("")
     else:
+        reg_rows = ["| Ref | Severity | Finding | Asset |", "|---|---|---|---|"]
+        for i, f in enumerate(findings):
+            if f.get("severity", "info") == "info":
+                continue
+            reg_rows.append("| %s | **%s** | %s | %s |" % (
+                "VULN-%02d" % (i + 1), f.get("severity", "").capitalize(),
+                _plain_md(f.get("title", "")), _finding_asset(f)))
+        if len(reg_rows) > 2:
+            lines.append("**Findings register:**")
+            lines.append("")
+            lines.extend(reg_rows)
+            lines.append("")
+            lines.append("Full detail and proof-of-concept for each reference "
+                         "follows below.")
+            lines.append("")
         grouped = {}
         for f in findings:
             grouped.setdefault(f["severity"], []).append(f)
@@ -887,8 +944,9 @@ def render_markdown(data):
                     if gf is f:
                         global_i = gj
                         break
-                lines.append("#### %s" % _md_sev_line(
-                    sev, f.get("confidence", ""), title))
+                lines.append("#### VULN-%02d — %s" % (
+                    global_i + 1,
+                    _md_sev_line(sev, f.get("confidence", ""), title)))
                 if f.get("confidence", "").lower() in ("tentative",
                                                        "possible"):
                     lines.append("> **Treat as a lead, not a confirmed "
@@ -938,7 +996,7 @@ def render_markdown(data):
                 if f.get("remediation"):
                     lines.append("**Recommended fix:** %s" % f["remediation"])
                     lines.append("")
-    lines.append("## 4. How to read severity levels")
+    lines.append("## 4. Severity definitions")
     lines.append("")
     lines.append("| Level | What it means |")
     lines.append("|---|---|")
@@ -948,8 +1006,8 @@ def render_markdown(data):
                                          _SEV_MEANS.get(sev, "")))
     lines.append("")
     lines.append("---")
-    lines.append("_Automated assessment. All findings should be validated by "
-                 "your team before remediation. Testing systems without "
+    lines.append("_Automated testing results. All findings should be validated "
+                 "by your team before remediation. Testing systems without "
                  "written authorization is illegal._")
     return "\n".join(lines)
 
@@ -1052,7 +1110,7 @@ def render_pdf(data, path="report.pdf"):
 
     rows = []  # (r,g,b, bold, size, text)
     m = data["meta"]
-    rows.append((0.97, 0.51, 0.4, True, 17, "VAJRA Security Assessment"))
+    rows.append((0.97, 0.51, 0.4, True, 17, "VAJRA Penetration Test Report"))
     rows.append((0.55, 0.58, 0.62, False, 9,
                  "Generated %s  profile=%s  target=%s  output=%s" % (
                      m["generated"], m["profile"], ", ".join(m["targets"]),
@@ -1240,7 +1298,7 @@ def _xlsx_col(idx):
 
 def render_xlsx(data, path="report.xlsx"):
     """Stdlib-only XLSX report: Summary + Findings worksheets. Findings sheet
-    carries severity, category, MITRE, confidence and the PoC/evidence text,
+    carries reference, severity, confidence, asset and the PoC/evidence text,
     so the report can be consumed in Excel pipelines and archiving."""
     import zipfile
 
@@ -1256,11 +1314,11 @@ def render_xlsx(data, path="report.xlsx"):
 
     # Summary sheet target rows
     summary = []
-    summary.append(["VAJRA Security Assessment", "", "", "", ""])
+    summary.append(["VAJRA Penetration Test Report", "", "", "", ""])
     summary.append(["Field", "Value", "", "", ""])
     meta = data.get("meta", {})
     summary.append(["Generated", meta.get("generated", ""), "", "", ""])
-    summary.append(["Profile", meta.get("profile", ""), "", "", ""])
+    summary.append(["Test type", meta.get("profile", ""), "", "", ""])
     summary.append(["Targets", ", ".join(meta.get("targets", []) or []),
                     "", "", ""])
     stats = data.get("stats", {})
@@ -1289,15 +1347,15 @@ def render_xlsx(data, path="report.xlsx"):
         summary.append(["", "", "", "", ""])
 
     # Findings sheet
-    fhead = ["Severity", "Title", "Detail", "Confidence",
-             "PoC / Evidence", "How to reproduce (command)"]
+    fhead = ["Ref", "Severity", "Title", "Detail", "Confidence",
+             "Asset", "PoC / Evidence", "How to reproduce (command)"]
     findings = [fhead]
-    for f in data.get("findings", []):
+    for i, f in enumerate(data.get("findings", [])):
         _cmd, _steps = _repro(f)
         findings.append([
-            f.get("severity", ""), f.get("title", ""),
+            "VULN-%02d" % (i + 1), f.get("severity", ""), f.get("title", ""),
             f.get("detail", ""), f.get("confidence", ""),
-            _poc_text(f), _cmd,
+            _finding_asset(f), _poc_text(f), _cmd,
         ])
 
     # Build shared strings + rows. Strings are interned here and tagged with
@@ -1314,7 +1372,8 @@ def render_xlsx(data, path="report.xlsx"):
     rows_find = [[T(c) for c in row] for row in findings]
 
     sheet1 = _xlsx_sheet("Summary", rows_sum, [46, 70, 12, 12, 12])
-    sheet2 = _xlsx_sheet("Findings", rows_find, [10, 34, 40, 12, 60, 46])
+    sheet2 = _xlsx_sheet("Findings", rows_find, [10, 12, 46, 40, 12, 22, 60,
+                                                 46])
 
     # Workbook + relationships + styles (minimal).
     wb = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
