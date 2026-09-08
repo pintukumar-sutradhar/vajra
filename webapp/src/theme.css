@@ -203,6 +203,17 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 }
 .progress { height: 6px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
 .progress > i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+.seg { display: flex; gap: 6px; margin-bottom: 10px; }
+.seg .seg-btn {
+  flex: 1; padding: 7px 10px; background: var(--surface-2); color: var(--muted);
+  border: 1px solid var(--border-2); border-radius: var(--radius-sm);
+  font-size: 12.5px; font-weight: 600; cursor: pointer;
+}
+.seg .seg-btn.on { background: rgba(0, 115, 255, 0.16); border-color: var(--accent); color: var(--accent-2); }
+.credbox {
+  background: rgba(0, 115, 255, 0.05); border: 1px dashed var(--border-2);
+  border-radius: var(--radius-sm); padding: 12px;
+}
 .spin {
   width: 16px; height: 16px; border-radius: 50%;
   border: 2px solid var(--border-2); border-top-color: var(--accent);
@@ -211,12 +222,61 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 @keyframes spin { to { transform: rotate(360deg); } }
 .login-wrap {
   min-height: 100vh; display: flex; align-items: center; justify-content: center;
-  background: radial-gradient(1200px 500px at 20% -10%, #122448 0%, var(--bg) 60%);
+  background:
+    radial-gradient(1100px 480px at 18% -8%, #12325e 0%, rgba(18, 50, 94, 0) 62%),
+    radial-gradient(900px 420px at 92% 108%, #07284f 0%, rgba(7, 40, 79, 0) 60%),
+    var(--bg);
+  padding: 26px;
 }
-.login-card { width: 380px; }
-.login-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 26px; justify-content: center; }
-.login-brand .bname { font-size: 22px; font-weight: 700; letter-spacing: 0.06em; }
-.login-brand .bedition { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted-2); }
+.login-stage {
+  width: 100%; max-width: 920px; min-height: 560px;
+  display: grid; grid-template-columns: 1.15fr 0.9fr;
+  background: var(--surface); border: 1px solid var(--border-2);
+  border-radius: 18px; overflow: hidden; box-shadow: var(--shadow);
+}
+.login-pane { padding: 42px 40px; }
+.login-pane.login-formpane {
+  background: linear-gradient(180deg, #0e1730 0%, #0d1527 100%);
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; justify-content: center;
+}
+.login-brand { display: flex; align-items: center; gap: 14px; }
+.login-brand .bname { font-size: 26px; font-weight: 800; letter-spacing: 0.08em; color: #fff; }
+.login-brand .bedition {
+  font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--muted);
+}
+.login-head {
+  margin-top: 34px; font-size: 26px; line-height: 1.2;
+  letter-spacing: -0.02em; color: #fff;
+}
+.login-sub { color: var(--muted); font-size: 14px; margin: 14px 0 24px; line-height: 1.55; }
+.login-feats { display: flex; flex-direction: column; gap: 16px; }
+.login-feats .feat { display: flex; gap: 13px; align-items: flex-start; }
+.login-feats .feat-ic {
+  flex: 0 0 38px; height: 38px; display: flex; align-items: center; justify-content: center;
+  font-size: 18px; border-radius: 10px;
+  background: rgba(0, 115, 255, 0.12); border: 1px solid rgba(0, 115, 255, 0.3); color: var(--accent-2);
+}
+.login-feats .feat-t { font-weight: 600; font-size: 14px; color: #eaf1fb; }
+.login-feats .feat-x { color: var(--muted); font-size: 12.5px; margin-top: 2px; line-height: 1.45; }
+.form-title { font-size: 22px; color: #fff; }
+.form-sub { color: var(--muted); font-size: 13px; margin: 6px 0 22px; }
+.login-form code {
+  background: rgba(0, 115, 255, 0.14); border: 1px solid rgba(0, 115, 255, 0.35);
+  color: var(--accent-2); padding: 1px 6px; border-radius: 5px;
+  font-family: var(--mono); font-size: 12px;
+}
+.login-hint { margin-top: 18px; color: var(--muted-2); font-size: 12px; text-align: center; }
+.login-foot {
+  margin-top: 34px; padding-top: 16px; border-top: 1px solid var(--border);
+  color: var(--muted-2); font-size: 11.5px; text-align: center; line-height: 1.5;
+}
+.btn-block { width: 100%; justify-content: center; padding: 10px 13px; font-size: 14px; margin-top: 6px; }
+@media (max-width: 820px) {
+  .login-stage { grid-template-columns: 1fr; }
+  .login-pane.login-formpane { border-left: none; border-top: 1px solid var(--border); }
+}
 .errorbox { background: rgba(225, 29, 72, 0.1); border: 1px solid rgba(225, 29, 72, 0.4); color: #fb7e98; border-radius: var(--radius-sm); padding: 9px 12px; font-size: 13px; margin-bottom: 12px; }
 .toasts { position: fixed; top: 16px; right: 16px; z-index: 90; display: flex; flex-direction: column; gap: 8px; }
 .toast {

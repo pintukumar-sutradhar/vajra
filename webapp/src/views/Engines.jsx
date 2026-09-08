@@ -51,6 +51,10 @@ export default function Engines({ onScanStart }) {
   )
 }
 
+function crumb(label) {
+  return label.replace(/_/g, ' ')
+}
+
 function LaunchModal({ engine, onClose, onScanStart }) {
   const [targets, setTargets] = useState([])
   const [targetId, setTargetId] = useState('')
@@ -58,6 +62,7 @@ function LaunchModal({ engine, onClose, onScanStart }) {
   const [params, setParams] = useState({})
   const [busy, setBusy] = useState(false)
   const [mode, setMode] = useState(null)
+  const [usedCreds, setUsedCreds] = useState(false)
   const shout = useToast()
 
   const reconOnly = engine.profiles && engine.profiles.length === 1 &&
@@ -75,6 +80,20 @@ function LaunchModal({ engine, onClose, onScanStart }) {
     { id: 'intrusive', label: 'Intrusive (aggressive)', profile: 'full',
       aggressive: true, desc: 'CVE RCE runners, brute force, exploitation channels' },
   ].filter((m) => (engine.profiles || []).includes(m.profile) || m.id === 'auto'))
+
+  const schema = engine.params_schema || {}
+
+  const credFields = []
+  const optFields = []
+  for (const [key, def] of Object.entries(schema)) {
+    if (def.type === 'object' && (def.fields || []).length) {
+      credFields.push(...def.fields.map((f) => ({ name: f, label: crumb(f) })))
+    } else if (def.secret) {
+      credFields.push({ name: key, label: def.label })
+    } else {
+      optFields.push([key, def])
+    }
+  }
 
   useEffect(() => {
     if (!mode && (engine.profiles || []).includes(engine.default_profile)) {
@@ -107,23 +126,20 @@ function LaunchModal({ engine, onClose, onScanStart }) {
   async function launch(e) {
     e.preventDefault()
     if (!targetId) return shout.push('add a compatible target first', 'err')
+    const body = { target_id: parseInt(targetId, 10), engine_id: engine.engine_id, profile, params }
+    if (!usedCreds) {
+      const clean = { ...params }
+      credFields.forEach((f) => delete clean[f.name])
+      body.params = clean
+    }
     setBusy(true)
     try {
-      const r = await shout.api(() => api('/v1/scans', {
-        method: 'POST',
-        body: {
-          target_id: parseInt(targetId, 10),
-          engine_id: engine.engine_id,
-          profile,
-          params,
-        },
-      }))
+      const r = await shout.api(() => api('/v1/scans', { method: 'POST', body }))
       shout.push(`Scan #${r.id} queued`)
       onScanStart(r.id)
     } catch (e2) { setBusy(false) }
   }
 
-  const schema = engine.params_schema || {}
   const kinds = engine.target_kinds || []
   const shown = targets.filter((t) => kinds.includes(t.kind))
 
@@ -164,41 +180,59 @@ function LaunchModal({ engine, onClose, onScanStart }) {
           </select>
         </div>
 
-        {Object.entries(schema).map(([key, def]) => (
-          def.type === 'object' ? (
-            <div className="field" key={key}>
-              <label>{def.label}</label>
-              {(def.fields || []).map((f) => (
-                <div key={f} className="field" style={{ marginTop: 4 }}>
-                  <input type="password" autoComplete="off" placeholder={f.replace('_', ' ')}
-                    value={params[f] || ''}
-                    onChange={(e) => setParam(f, e.target.value)} />
-                </div>
-              ))}
+        {credFields.length > 0 && (
+          <div className="field">
+            <label>Credentials</label>
+            <div className="seg">
+              <button type="button" className={!usedCreds ? 'seg-btn on' : 'seg-btn'}
+                onClick={() => setUsedCreds(false)}>Without credentials</button>
+              <button type="button" className={usedCreds ? 'seg-btn on' : 'seg-btn'}
+                onClick={() => setUsedCreds(true)}>With credentials</button>
             </div>
-          ) : (
-            <div className="field" key={key}>
-              <label>{def.label}</label>
-              {def.type === 'bool' ? (
-                <div style={{ display: 'flex', gap: 14 }}>
-                  {['yes', 'no'].map((v) => (
-                    <label key={v} style={{ display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}>
-                      <input type="radio" style={{ width: 'auto' }}
-                        checked={Boolean(params[key]) === (v === 'yes')}
-                        onChange={() => setParam(key, v === 'yes')} />
-                      {v}
-                    </label>
-                  ))}
+            {usedCreds && (
+              <div className="credbox">
+                <div className="muted" style={{ fontSize: 11.5, marginBottom: 10 }}>
+                  Optional — leave blank to keep the scan unauthenticated.
                 </div>
-              ) : (
-                <input type={def.secret ? 'password' : 'text'} autoComplete="off"
-                  placeholder={def.label}
-                  value={params[key] || ''}
-                  onChange={(e) => setParam(key, e.target.value)} />
-              )}
-            </div>
-          )
-        ))}
+                {credFields.map((f) => (
+                  <div key={f.name} className="field" style={{ marginTop: 6 }}>
+                    <input type="password" autoComplete="off" placeholder={f.label}
+                      value={params[f.name] || ''}
+                      onChange={(e) => setParam(f.name, e.target.value)} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {optFields.length > 0 && (
+          <div className="field">
+            <label>Advanced options</label>
+            {optFields.map(([key, def]) => (
+              <div className="field" key={key} style={{ marginTop: 4 }}>
+                <label>{def.label}</label>
+                {def.type === 'bool' ? (
+                  <div style={{ display: 'flex', gap: 14 }}>
+                    {['yes', 'no'].map((v) => (
+                      <label key={v} style={{ display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}>
+                        <input type="radio" style={{ width: 'auto' }}
+                          checked={Boolean(params[key]) === (v === 'yes')}
+                          onChange={() => setParam(key, v === 'yes')} />
+                        {v}
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <input type={def.secret ? 'password' : 'text'} autoComplete="off"
+                    placeholder={def.label}
+                    value={params[key] || ''}
+                    onChange={(e) => setParam(key, e.target.value)} />
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </form>
     </Modal>
   )

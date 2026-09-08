@@ -97,7 +97,7 @@ def main():
         r = c.get("/api/v1/auth/brand")
         check("brand", r.status_code == 200 and r.json().get("product"))
         r = c.post("/api/v1/auth/login",
-                   json={"username": "admin", "password": "admin123"})
+                   json={"username": "admin", "password": "admin"})
         check("login", r.status_code == 200, r.text[:200])
         token = r.json()["token"]
         H = {"Authorization": "Bearer " + token}

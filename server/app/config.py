@@ -20,7 +20,7 @@ class Settings:
         self.token_ttl_hours = int(os.environ.get("VAJRA_TOKEN_TTL_HOURS", 12))
         self.secret_key_path = VAR_DIR / "secret.key"
         self.admin_password = os.environ.get("VAJRA_ADMIN_PASSWORD",
-                                             "admin123")
+                                             "admin")
         self.cors_origins = [o.strip() for o in
                              os.environ.get("VAJRA_CORS_ORIGINS",
                                             "*").split(",")]
