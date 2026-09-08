@@ -67,6 +67,22 @@ export default function ScanDetail({ id }) {
     }
   }
 
+  async function downloadHtml() {
+    try {
+      const blob = await apiBlob('/v1/reports/' + id + '/static/report.html')
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'vajra-pentest-report-' + id + '.html'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      shout('HTML download failed: ' + (e.message || e.status), 'error')
+    }
+  }
+
   if (err) return <div className="errorbox">{err}</div>
   if (!scan) return <div className="muted"><Spinner /> Loading…</div>
 
@@ -111,7 +127,7 @@ export default function ScanDetail({ id }) {
         {scan.status === 'completed' && (
           <>
             <button className={'btn ' + (tab === 'report' ? 'primary' : '')}
-              onClick={() => { setTab('report'); setReportUrl('/v1/reports/' + id + '/html') }}>
+              onClick={() => { setTab('report'); setReportUrl('/v1/reports/' + id + '/static/report.html') }}>
               <IcoDoc /> Report
             </button>
             <button className={'btn ' + (tab === 'findings' ? 'primary' : '')} onClick={() => setTab('findings')}>
@@ -124,7 +140,10 @@ export default function ScanDetail({ id }) {
       {tab === 'events' && <EventsLog events={events} running={running} />}
       {tab === 'report' && (
         <>
-          <div className="toolbar" style={{ justifyContent: 'flex-end', padding: '8px 0' }}>
+          <div className="toolbar" style={{ justifyContent: 'flex-end', padding: '8px 0', gap: 8 }}>
+            <button className="btn secondary" onClick={downloadHtml}>
+              <IcoDoc /> Download HTML
+            </button>
             <button className="btn secondary" onClick={downloadPdf}>
               <IcoDoc /> Download PDF
             </button>
@@ -132,7 +151,7 @@ export default function ScanDetail({ id }) {
           <iframe className="report-frame" src={reportUrl} title="report" />
         </>
       )}
-      {tab === 'findings' && <FindingsView rows={findings} />}
+      {tab === 'findings' && <FindingsView rows={findings} scanId={id} />}
     </>
   )
 }
@@ -154,10 +173,11 @@ function EventsLog({ events, running }) {
   )
 }
 
-function FindingsView({ rows }) {
+function FindingsView({ rows, scanId }) {
   const [openId, setOpenId] = useState(null)
   if (!rows) return <div className="muted"><Spinner /> loading findings…</div>
   if (!rows.length) return <div className="empty">No findings recorded on this scan.</div>
+  const shots = (f) => (f.evidence && f.evidence.screenshots) || []
   return (
     <div>
       {rows.map((f) => (
@@ -186,6 +206,19 @@ function FindingsView({ rows }) {
               <>
                 <div className="section-title">Proof of concept / observed evidence</div>
                 <div className="mono-block">{f.evidence.text}</div>
+              </>
+            )}
+            {shots(f).length > 0 && (
+              <>
+                <div className="section-title">PoC screenshots</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 10 }}>
+                  {shots(f).map((s) => (
+                    <a key={s} href={'/api/v1/reports/' + scanId + '/static/' + s} target="_blank" rel="noreferrer">
+                      <img src={'/api/v1/reports/' + scanId + '/static/' + s}
+                        alt={s} style={{ width: '100%', border: '1px solid var(--line)', borderRadius: 6 }} />
+                    </a>
+                  ))}
+                </div>
               </>
             )}
             {f.remediation && (

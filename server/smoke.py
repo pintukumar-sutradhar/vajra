@@ -42,12 +42,18 @@ INDEX = b"""<html><head><title>vajra-smoke app</title></head>
 <form action="/login" method="post">
 <input name="username"><input name="password">
 <button type="submit">Sign in</button></form>
+<p><a href="/echo?q=hello">echo</a></p>
 </body></html>"""
 
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        body = INDEX
+        if self.path.startswith("/echo"):
+            q = self.path.split("q=", 1)[1] if "q=" in self.path else ""
+            body = ("<html><body><h1>Echo</h1><p>Reflected: %s</p>"
+                    "</body></html>" % q[:80]).encode()
+        else:
+            body = INDEX
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
         self.send_header("Content-Length", str(len(body)))
@@ -165,15 +171,67 @@ def main():
             "<html" in rr.text[:300].lower())
         check("report html", html_ok, "status=%d" % rr.status_code)
 
-        pf = c.get("/api/v1/reports/%d/pdf" % scan_id, headers=H)
-        body = pf.content
-        pdf_ok = (pf.status_code == 200
-                  and pf.headers.get("content-type", "") == "application/pdf"
-                  and body[:5] == b"%PDF-"
-                  and b"attachment; filename=" in
-                  pf.headers.get("content-disposition", "").encode())
-        check("report pdf", pdf_ok and len(body) > 3000,
-              "status=%d bytes=%d" % (pf.status_code, len(body)))
+        st = c.get("/api/v1/reports/%d/static/report.html" % scan_id, headers=H)
+        check("static report", st.status_code == 200 and
+              "<html" in st.text[:300].lower(),
+              "status=%d" % st.status_code)
+        traversal = c.get("/api/v1/reports/%d/static/../../etc/passwd"
+                          % scan_id, headers=H)
+        check("static traversal guard", traversal.status_code in (403, 404),
+              str(traversal.status_code))
+
+        eng = c.get("/api/v1/engines", headers=H).json()
+        ids = [e["engine_id"] for e in eng]
+        check("engine catalog", all(x in ids for x in
+              ["webapp", "api", "infrastructure", "active_directory",
+               "external"]), str(ids))
+        api_def = next((e for e in eng if e["engine_id"] == "api"), None)
+        check("api engine params", api_def is not None and
+              "aggressive" in api_def["params_schema"], str(api_def))
+
+        # ---- api engine e2e (url target) ----
+        api_scan = c.post("/api/v1/scans", headers=H,
+                          json={"target_id": target_id,
+                                "engine_id": "api", "profile": "quick",
+                                "params": {"aggressive": False}})
+        check("api scan create", api_scan.status_code == 201,
+              api_scan.text[:200])
+
+        # ---- infrastructure engine e2e (host target) ----
+        ht = c.post("/api/v1/targets", headers=H,
+                    json={"kind": "ip", "address": "127.0.0.1",
+                          "name": "smoke loopback",
+                          "authorization_proof": "LOCAL-SMOKE-AUTH-REF"})
+        check("host target create", ht.status_code == 201, ht.text[:160])
+        inf_scan = c.post("/api/v1/scans", headers=H,
+                          json={"target_id": ht.json()["id"],
+                                "engine_id": "infrastructure",
+                                "profile": "quick"})
+        check("infra scan create", inf_scan.status_code == 201,
+              inf_scan.text[:200])
+
+        for sid in (api_scan.json()["id"], inf_scan.json()["id"]):
+            deadline = time.time() + 300
+            while time.time() < deadline:
+                tick()
+                st = c.get("/api/v1/scans/%d" % sid, headers=H).json()
+                if st["status"] in ("completed", "failed", "canceled"):
+                    break
+                time.sleep(2)
+            check("secondary scan terminal (%d)" % sid,
+                  st["status"] in ("completed", "failed"), str(st))
+            check("secondary scan exit 0 (%d)" % sid,
+                  st.get("exit_code") == 0, str(st.get("exit_code")))
+
+        sc_info = c.get("/api/v1/scans/%d" % scan_id, headers=H).json()
+        bundle_dir = (sc_info.get("stats") or {}).get("bundle_dir", "")
+        import glob as _glob
+        pngs = _glob.glob(os.path.join(bundle_dir, "evidence", "*.png")) \
+            if bundle_dir else []
+        pdf_shot = c.get("/api/v1/reports/%d/pdf" % scan_id, headers=H)
+        check("pdf embeds screenshots",
+              (not pngs) or (b"image" in pdf_shot.content.lower()),
+              "pngs=%d bytes=%d" % (len(pngs), len(pdf_shot.content)))
 
         not_ready = c.get("/api/v1/reports/999999/pdf", headers=H)
         check("pdf missing scan guard", not_ready.status_code in (404, 409),

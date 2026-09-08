@@ -20,11 +20,40 @@ ENGINES = {
                      "type": "object",
                      "fields": ["web_user", "web_pass", "web_login",
                                 "web_otp", "web_totp_secret"]},
+            "aggressive": {"label": "Intrusive exploits (aggressive)",
+                           "type": "bool", "default": False},
             "external_intel": {"label": "Live CVE intel lookups",
                                "type": "bool", "default": False},
         },
         "cfg": {
             "default_profile": "deep",
+            "exclude_modules": ["ad.", "post."],
+            "oob": True,
+            "no_brute": True,
+        },
+    },
+    "api": {
+        "label": "API & Microservice",
+        "icon": "app-api",
+        "description": ("REST/GraphQL API assessment: OpenAPI/Swagger "
+                        "inventory, BOLA/IDOR object checks, JWT & token "
+                        "audit, SAML surface, auth logic and injection "
+                        "tests against the API's own endpoints, with "
+                        "auto-exploitation of confirmed issues."),
+        "target_kinds": ["url"],
+        "profiles": ["quick", "full", "deep"],
+        "params_schema": {
+            "auth": {"label": "Authenticated scanning",
+                     "type": "object",
+                     "fields": ["web_user", "web_pass", "web_login",
+                                "web_otp", "web_totp_secret"]},
+            "aggressive": {"label": "Intrusive exploits (aggressive)",
+                           "type": "bool", "default": False},
+            "external_intel": {"label": "Live CVE intel lookups",
+                               "type": "bool", "default": False},
+        },
+        "cfg": {
+            "default_profile": "full",
             "exclude_modules": ["ad.", "post."],
             "oob": True,
             "no_brute": True,
@@ -45,6 +74,8 @@ ENGINES = {
                     "default": False},
             "brute": {"label": "Service credential brute force",
                       "type": "bool", "default": False},
+            "aggressive": {"label": "Intrusive exploits (aggressive)",
+                           "type": "bool", "default": False},
             "external_intel": {"label": "Live CVE intel lookups",
                                "type": "bool", "default": False},
         },
@@ -71,6 +102,8 @@ ENGINES = {
                         "type": "string", "secret": True},
             "nthash": {"label": "NT hash (LM:NT or bare)",
                        "type": "string", "secret": True},
+            "aggressive": {"label": "Intrusive AD exploitation",
+                           "type": "bool", "default": False},
         },
         "cfg": {
             "default_profile": "full",

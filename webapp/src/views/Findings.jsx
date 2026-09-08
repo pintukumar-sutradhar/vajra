@@ -128,6 +128,19 @@ function TriageModal({ finding: f, onClose, onChanged }) {
         <div className="mono-block">{detail.evidence.text}</div>
       </>}
 
+      {(detail.evidence && detail.evidence.screenshots || []).length > 0 && <>
+        <div className="section-title">PoC screenshots</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 10 }}>
+          {(detail.evidence.screenshots || []).map((s) => (
+            <a key={s} href={'/api/v1/reports/' + detail.scan_id + '/static/' + s}
+              target="_blank" rel="noreferrer">
+              <img src={'/api/v1/reports/' + detail.scan_id + '/static/' + s}
+                alt={s} style={{ width: '100%', border: '1px solid var(--line)', borderRadius: 6 }} />
+            </a>
+          ))}
+        </div>
+      </>}
+
       <div className="field" style={{ marginTop: 16 }}>
         <label>Status</label>
         <select value={status} onChange={(e) => setStatus(e.target.value)}>

@@ -8,6 +8,7 @@ python-multipart>=0.0.9
 
 # Branded PDF report generation (pure Python, no system deps).
 fpdf2>=2.8
+pillow>=10.0
 
 # Platform DB is SQLite by default. For the production Postgres path install:
 #   psycopg2-binary>=2.9

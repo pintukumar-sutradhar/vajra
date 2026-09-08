@@ -54,6 +54,23 @@ def asset(scan_id: int, path: str, db: Session = Depends(get_db),
     return FileResponse(target)
 
 
+@router.get("/{scan_id}/static/{path:path}")
+def static_file(scan_id: int, path: str, db: Session = Depends(get_db),
+                user=Depends(current_user)):
+    """Serve any file under the scan bundle (report.html, evidence/*.png, ...)
+    so relative PoC-screenshot links in the report resolve inside the UI."""
+    s = _check(db, user, scan_id)
+    root = (s.stats or {}).get("bundle_dir", "")
+    if not root:
+        raise HTTPException(404, "no artifacts")
+    target = _safe_join(root, path or "")
+    if not os.path.isfile(target):
+        raise HTTPException(404, "missing static file")
+    if path.endswith(".html"):
+        return FileResponse(target, media_type="text/html")
+    return FileResponse(target)
+
+
 @router.get("/{scan_id}/pdf")
 def report_pdf(scan_id: int, db: Session = Depends(get_db),
                user=Depends(current_user)):

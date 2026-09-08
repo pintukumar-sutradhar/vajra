@@ -61,6 +61,8 @@ def build_argv(target, engine_cfg, profile, params, creds, run_dir, repo):
         argv += ["--exclude-modules", ",".join(expand_exclusions(ex))]
     if engine_cfg.get("ad"):
         argv += ["--ad"]
+    if params.get("aggressive"):
+        argv += ["--aggressive"]
     if params.get("udp"):
         argv += ["--udp"]
     if params.get("syn"):
@@ -119,6 +121,23 @@ def _read_bundle(bundle_dir):
     return rows, report
 
 
+def _slugify(s):
+    return re.sub(r"[^A-Za-z0-9]+", "_", (s or "")).strip("_")[:48] or "finding"
+
+
+def _screenshots_for(bundle, title):
+    """Match the engine's per-finding evidence PNGs (fNNN_<slug>.png) to a
+    finding by title slug. Returns relative bundle paths for the PDF/UI."""
+    if not bundle or not bundle.is_dir():
+        return []
+    ev_dir = bundle / "evidence"
+    if not ev_dir.is_dir():
+        return []
+    slug = _slugify(title)
+    return sorted("evidence/" + p.name for p in ev_dir.glob("f*.png")
+                  if slug in p.name)
+
+
 def _harvest(scan, run_dir):
     from ..app import models
     from ..app.db import SessionLocal
@@ -147,7 +166,9 @@ def _harvest(scan, run_dir):
                     asset=f.get("target") or scan.target.address,
                     source_module=module,
                     detail=f.get("detail") or "",
-                    evidence={"text": f.get("evidence") or ""},
+                    evidence={"text": f.get("evidence") or "",
+                              "screenshots": _screenshots_for(
+                                  bundle, f.get("title") or "")},
                     remediation=f.get("remediation") or "",
                     confidence=f.get("confidence") or "tentative",
                     dedup_key="%s:%s" % (module, f.get("title") or "")))

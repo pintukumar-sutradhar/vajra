@@ -5,6 +5,7 @@ import { IcoPlay } from '../icons.jsx'
 
 const ICONS = {
   'app-web': '🌐',
+  'app-api': '🔌',
   'app-infra': '🖥️',
   'app-ad': '🏛️',
   'app-external': '🗺️',
@@ -56,12 +57,38 @@ function LaunchModal({ engine, onClose, onScanStart }) {
   const [profile, setProfile] = useState(engine.default_profile)
   const [params, setParams] = useState({})
   const [busy, setBusy] = useState(false)
+  const [mode, setMode] = useState(null)
   const shout = useToast()
+
+  const reconOnly = engine.profiles && engine.profiles.length === 1 &&
+    engine.profiles[0] === 'recon'
+  const MODES = (reconOnly ? [
+    { id: 'gentle', label: 'Recon pass', profile: 'recon',
+      aggressive: false, desc: 'Fast, low-noise surface mapping' },
+  ] : [
+    { id: 'gentle', label: 'Stealthy / read-only', profile: 'quick',
+      aggressive: false, desc: 'Non-intrusive recon + checks, no exploitation' },
+    { id: 'auto', label: 'Active & auto-exploit', profile: engine.default_profile,
+      aggressive: false, desc: 'Proof-gated automated exploitation of confirmed issues' },
+    { id: 'deep', label: 'Deep coverage', profile: 'deep', aggressive: false,
+      desc: 'Larger crawl + injection surface, proof-gated exploitation' },
+    { id: 'intrusive', label: 'Intrusive (aggressive)', profile: 'full',
+      aggressive: true, desc: 'CVE RCE runners, brute force, exploitation channels' },
+  ].filter((m) => (engine.profiles || []).includes(m.profile) || m.id === 'auto'))
+
+  useEffect(() => {
+    if (!mode && (engine.profiles || []).includes(engine.default_profile)) {
+      pickMode(reconOnly ? 'gentle' :
+        engine.default_profile === 'full' ? 'auto' : 'gentle')
+    }
+  }, [])
 
   useEffect(() => {
     api('/v1/targets').then((t) => {
       setTargets(t)
-      if (t.length && !t.some((x) => x.id === targetId)) setTargetId(t[0].id)
+      const kinds = engine.target_kinds || []
+      let pick = t.find((x) => kinds.includes(x.kind)) || t[0] || null
+      if (pick) setTargetId(pick.id)
     }).catch((e) => shout.push(e.message, 'err'))
   }, [])
 
@@ -69,9 +96,17 @@ function LaunchModal({ engine, onClose, onScanStart }) {
     setParams((p) => ({ ...p, [k]: v }))
   }
 
+  function pickMode(m) {
+    const def = MODES.find((x) => x.id === m)
+    if (!def) return
+    setMode(m)
+    setProfile(def.profile)
+    setParams((p) => ({ ...p, aggressive: def.aggressive }))
+  }
+
   async function launch(e) {
     e.preventDefault()
-    if (!targetId) return shout.push('add a target first', 'err')
+    if (!targetId) return shout.push('add a compatible target first', 'err')
     setBusy(true)
     try {
       const r = await shout.api(() => api('/v1/scans', {
@@ -89,6 +124,8 @@ function LaunchModal({ engine, onClose, onScanStart }) {
   }
 
   const schema = engine.params_schema || {}
+  const kinds = engine.target_kinds || []
+  const shown = targets.filter((t) => kinds.includes(t.kind))
 
   return (
     <Modal title={`Launch ${engine.label} scan`} onClose={onClose} wide
@@ -100,52 +137,67 @@ function LaunchModal({ engine, onClose, onScanStart }) {
       </>}>
       <form onSubmit={launch}>
         <div className="field">
-          <label>Target</label>
-          <select value={targetId} onChange={(e) => setTargetId(e.target.value)}>
-            {targets.length === 0 && <option value="">No targets — add one on the Targets page</option>}
-            {targets.map((t) => <option key={t.id} value={t.id}>{t.address} {t.kind ? `(${t.kind})` : ''}</option>)}
-          </select>
+          <label>Operation mode</label>
+          {MODES.map((m) => (
+            <label key={m.id} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', cursor: 'pointer', padding: '4px 0' }}>
+              <input type="radio" style={{ width: 'auto', marginTop: 3 }}
+                checked={mode === m.id} onChange={() => pickMode(m.id)} />
+              <span>
+                <b>{m.label}</b>
+                <span className="muted" style={{ display: 'block', fontSize: 11.5 }}>{m.desc}</span>
+              </span>
+            </label>
+          ))}
         </div>
-        <div className="field">
+        <div className="field" style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           <label>Profile</label>
           <select value={profile} onChange={(e) => setProfile(e.target.value)}>
             {(engine.profiles || []).map((p) => <option key={p} value={p}>{p}</option>)}
           </select>
+          <span className="muted" style={{ fontSize: 11.5 }}>in sync with the selected mode</span>
+        </div>
+        <div className="field">
+          <label>Target</label>
+          <select value={targetId} onChange={(e) => setTargetId(e.target.value)}>
+            {shown.length === 0 && <option value="">No compatible targets ({kinds.join(', ')}) — add one on the Targets page</option>}
+            {shown.map((t) => <option key={t.id} value={t.id}>{t.address} ({t.kind})</option>)}
+          </select>
         </div>
 
         {Object.entries(schema).map(([key, def]) => (
-          <div className="field" key={key}>
-            <label>{def.label}</label>
-            {def.type === 'bool' ? (
-              <div style={{ display: 'flex', gap: 14 }}>
-                {['yes', 'no'].map((v) => (
-                  <label key={v} style={{ display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}>
-                    <input type="radio" style={{ width: 'auto' }}
-                      checked={Boolean(params[key]) === (v === 'yes')}
-                      onChange={() => setParam(key, v === 'yes')} />
-                    {v}
-                  </label>
-                ))}
-              </div>
-            ) : def.type === 'object' ? (
-              <div className="card" style={{ padding: 12 }}>
-                <div className="muted" style={{ fontSize: 11.5, marginBottom: 8 }}>
-                  Authenticated scanning (leave blank for unauthenticated)
+          def.type === 'object' ? (
+            <div className="field" key={key}>
+              <label>{def.label}</label>
+              {(def.fields || []).map((f) => (
+                <div key={f} className="field" style={{ marginTop: 4 }}>
+                  <input type="password" autoComplete="off" placeholder={f.replace('_', ' ')}
+                    value={params[f] || ''}
+                    onChange={(e) => setParam(f, e.target.value)} />
                 </div>
-                {(def.fields || []).map((f) => (
-                  <div key={f} style={{ marginBottom: 7 }}>
-                    <input placeholder={f.replace('_', ' ')}
-                      value={params[f] || ''}
-                      onChange={(e) => setParam(f, e.target.value)} />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <input placeholder={def.label}
-                value={params[key] || ''}
-                onChange={(e) => setParam(key, e.target.value)} />
-            )}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="field" key={key}>
+              <label>{def.label}</label>
+              {def.type === 'bool' ? (
+                <div style={{ display: 'flex', gap: 14 }}>
+                  {['yes', 'no'].map((v) => (
+                    <label key={v} style={{ display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}>
+                      <input type="radio" style={{ width: 'auto' }}
+                        checked={Boolean(params[key]) === (v === 'yes')}
+                        onChange={() => setParam(key, v === 'yes')} />
+                      {v}
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <input type={def.secret ? 'password' : 'text'} autoComplete="off"
+                  placeholder={def.label}
+                  value={params[key] || ''}
+                  onChange={(e) => setParam(key, e.target.value)} />
+              )}
+            </div>
+          )
         ))}
       </form>
     </Modal>

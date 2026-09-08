@@ -1,6 +1,7 @@
 """Branded PDF report generation (pure Python, fpdf2)."""
 
 import datetime
+import os
 
 from fpdf import FPDF
 
@@ -111,6 +112,19 @@ def _maybe_page(pdf):
         pdf.add_page()
 
 
+def _fit_width(png, max_h=190):
+    try:
+        from PIL import Image
+        with Image.open(png) as im:
+            w, h = im.size
+        if not h:
+            return 178.0
+        w = 178.0 * max_h / h if h > max_h else 178.0
+        return max(10.0, min(178.0, w))
+    except Exception:
+        return 178.0
+
+
 def build_pdf(scan, target, findings, engine_label, user):
     pdf = Report()
     pdf.alias_nb_pages()
@@ -153,6 +167,10 @@ def build_pdf(scan, target, findings, engine_label, user):
         ("Engine", engine_label or scan.engine_id),
         ("Profile", scan.profile),
         ("Scan ID", "#%s" % scan.id),
+    ]
+    if target and target.authorization_proof:
+        rows.insert(2, ("Authorization", target.authorization_proof[:60]))
+    rows += [
         ("Started", _fmt(scan.started_at or scan.created_at)),
         ("Finished", _fmt(scan.finished_at)),
         ("Duration", _duration(scan)),
@@ -216,6 +234,7 @@ def build_pdf(scan, target, findings, engine_label, user):
     # ----- findings -----
     pdf.body = True
     pdf.add_page()
+    bundle = (scan.stats or {}).get("bundle_dir", "")
     ordered = sorted(findings, key=lambda f: (
         SEVERITY_ORDER.index((f.severity or "info").lower())
         if (f.severity or "info").lower() in SEVERITY_ORDER else 9,
@@ -286,6 +305,26 @@ def build_pdf(scan, target, findings, engine_label, user):
             pdf.set_text_color(*INK)
             pdf.set_fill_color(239, 244, 249)
             pdf.multi_cell(0, 4, _clean(ev, limit=3200), fill=True, border=0)
+        shots = (f.evidence or {}).get("screenshots") \
+            if isinstance(f.evidence, dict) else []
+        for rel in shots or []:
+            _maybe_page(pdf)
+            png = os.path.join(bundle, rel)
+            if not os.path.isfile(png):
+                continue
+            pdf.set_font("helvetica", "", 7)
+            pdf.set_text_color(*MUTE)
+            pdf.cell(0, 4, _clean("Screenshot: %s" % os.path.basename(rel)))
+            pdf.ln(4)
+            y0 = pdf.get_y()
+            try:
+                pdf.image(png, x=16, y=y0, w=_fit_width(png))
+            except Exception:
+                pdf.set_y(y0)
+                pdf.set_font("helvetica", "I", 8)
+                pdf.set_text_color(*MUTE)
+                pdf.cell(0, 5, "[image unavailable]")
+                pdf.ln(5)
         if f.remediation:
             _label(pdf, "Remediation")
             _maybe_page(pdf)
