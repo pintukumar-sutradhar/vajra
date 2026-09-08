@@ -166,7 +166,7 @@ findings+events+reports persisted; SSE progress; authorization gate.
 report. selftest stays 56/56.
 
 **STATUS: DONE (2026-09-08)** — verified end-to-end by `server/smoke.py`
-(21 checks, real engine scan of a local target: 9 findings harvested,
+(20 checks, real engine scan of a local target: findings harvested,
 triage transitions, report served). Core selftest still 56/56.
 
 Delivered:
@@ -199,6 +199,19 @@ Branding/login/logo theme; targets; scans list + live progress; engine
 library cards; findings triage table (severity/confidence/status + PoC
 viewer + screenshot); report download; first real dashboards (open by
 severity, engines activity).
+
+**STATUS: DONE (2026-09-08)** — React 18 + Vite 5 SPA in `webapp/`.
+Built: branded login + app shell (dark commercial theme, design tokens in
+`webapp/src/theme.css`), dashboard (counts + severity split + recent
+scans), targets (create with mandatory authorization-proof), engine cards
+(4 templates), scans list with live progress pills, scan detail with live
+SSE event log streamed to completion + branded report iframe, findings
+triage table (filter by severity/status, modal with evidence/PoC, guards
+enforced server-side). `VITE_API_TARGET` for the API base in dev,
+`/api` proxy in `vite.config.js`. Production build verified
+(`npm run build`); full local e2e verified over live HTTP (uvicorn +
+worker subprocess): scan streamed 105s, `event: done`, report + findings
+read back, dashboard counts.
 
 ### Phase 3 — Engine depth + lifecycle
 scan templates/profiles/scheduling/retest; infra + AD engines parity with

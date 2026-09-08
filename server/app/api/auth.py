@@ -2,13 +2,14 @@
 
 import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from .. import models, security
 from ..audit import log as audit_log
-from ..config import BRAND
+from ..config import BRAND, settings
 from ..db import get_db
 from .deps import current_user, require_role
 
@@ -39,19 +40,24 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
     if not user.is_active:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "account disabled")
     token = security.issue_session_token()
-    user.last_login_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    user.last_login_at = datetime.datetime.now(datetime.timezone.utc)
     db.add(models.Session(
         user_id=user.id, token_hash=security.session_hash(token),
         expires_at=security.expires_after()))
     db.commit()
     audit_log(db, user.username, "auth.login")
-    return {"token": token, "user": _user_schema(user)}
+    resp = JSONResponse({"token": token, "user": _user_schema(user)})
+    resp.set_cookie("vajra_session", token,
+                    max_age=settings.token_ttl_hours * 3600,
+                    httponly=True, samesite="lax", path="/")
+    return resp
 
 
 @router.post("/logout")
-def logout(db: Session = Depends(get_db),
+def logout(response: Response, db: Session = Depends(get_db),
            user=Depends(current_user)):
     audit_log(db, user.username, "auth.logout")
+    response.delete_cookie("vajra_session", path="/")
     return {"ok": True}
 
 

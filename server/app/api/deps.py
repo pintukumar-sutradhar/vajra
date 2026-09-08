@@ -15,6 +15,9 @@ def _token_from_request(request: Request):
     auth = request.headers.get("Authorization", "")
     if auth.lower().startswith("bearer "):
         return auth[7:].strip()
+    cookie = request.cookies.get("vajra_session", "")
+    if cookie:
+        return cookie
     api = request.headers.get("X-API-Key", "")
     return None if not api else ("key:" + api)
 

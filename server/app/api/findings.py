@@ -113,3 +113,12 @@ def stats(db: Session = Depends(get_db), user=Depends(current_user)):
     return {"total": len(rows), "open": open_,
             "by_severity": by_sev, "by_status": by_status,
             "by_engine": by_engine}
+
+
+@router.get("/{finding_id}")
+def get_finding(finding_id: int, db: Session = Depends(get_db),
+                user=Depends(current_user)):
+    f = db.get(models.Finding, finding_id)
+    if not f or f.org_id != user.org_id:
+        raise HTTPException(404, "not found")
+    return _finding_out(f)

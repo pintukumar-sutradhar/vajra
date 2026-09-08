@@ -8,3 +8,6 @@ Outputs/
 .vajra_state.json
 intel/cve_online_cache.json
 server/var/
+node_modules/
+dist/
+webapp/dist/

@@ -136,7 +136,7 @@ workspaces that turn every re-run into a measurable retest.
 ```bash
 git clone https://github.com/pintukumar-sutradhar/vajra && cd vajra
 ./setup.sh                     # deps + wordlists + QA suite
-python3 vajra.py --selftest    # 55-point verification (54 core + attack-path/finding correlation + DNS concurrency)
+python3 vajra.py --selftest    # 56-point self-verification
 python3 vajra.py --version     # VAJRA v1.4-beta
 python3 vajra.py --update      # pull the latest build from GitHub
 ```
@@ -144,6 +144,28 @@ python3 vajra.py --update      # pull the latest build from GitHub
 Runs on stock Python ≥ 3.9. Optional extras (`requests`, `paramiko`,
 `scapy`, `dnspython`, `ollama`) are listed in `requirements.txt`; every one
 has a stdlib fallback.
+
+### VAJRA Platform (web UI + API)
+
+The CLI is the engine kernel; the platform is a FastAPI control plane with
+scan workers plus a branded React UI. See `docs/PLATFORM.md` for the full
+roadmap.
+
+```bash
+cd server
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt   # once
+.venv/bin/python run_api.py          # API  -> http://127.0.0.1:8000  (VAJRA_API_PORT)
+.venv/bin/python run_worker.py       # scan worker (polls the job queue)
+
+cd ../webapp
+npm install                          # once
+npm run dev                          # UI   -> http://127.0.0.1:5173  (proxies /api)
+```
+
+Default login `admin` / `admin123` (override with `VAJRA_ADMIN_PASSWORD`).
+`python server/smoke.py` runs the 20-check end-to-end verification
+(standalone harness, real engine scan). PowerShell/AD and infrastructure
+engines are launched from the UI exactly like the web engine.
 
 ---
 

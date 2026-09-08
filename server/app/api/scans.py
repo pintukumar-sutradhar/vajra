@@ -156,7 +156,7 @@ def scan_findings(scan_id: int, db: Session = Depends(get_db),
 
 
 @router.get("/{scan_id}/events")
-async def scan_events(scan_id: int, request: Request,
+async def scan_events(scan_id: int, request: Request, last: int = 0,
                       db: Session = Depends(get_db),
                       user=Depends(current_user)):
     s = db.get(models.Scan, scan_id)
@@ -164,19 +164,16 @@ async def scan_events(scan_id: int, request: Request,
         raise HTTPException(404, "not found")
 
     async def stream():
-        last = 0
         raw = request.headers.get("last-event-id")
-        if raw and raw.isdigit():
-            last = int(raw)
-        touched = False
+        cursor = int(raw) if raw and raw.isdigit() else last
         while True:
+            db.rollback()
             rows = db.query(models.ScanEvent).filter(
                 models.ScanEvent.scan_id == scan_id,
-                models.ScanEvent.id > last).order_by(
+                models.ScanEvent.id > cursor).order_by(
                     models.ScanEvent.id).all()
             for r in rows:
-                touched = True
-                last = r.id
+                cursor = r.id
                 yield "id: %d\ndata: %s\n\n" % (
                     r.id, json.dumps({"id": r.id, "level": r.level,
                                       "message": r.message,
