@@ -401,6 +401,60 @@ def t_fp_guard():
     return True, "confidence->severity cap (anti-FP) OK"
 
 
+def t_authcheck():
+    """Form-login confirmation: strong signals win, deltas are unverified."""
+    from modules.exploit.authcheck import confirm_form_auth
+    from core.http_client import HttpResult
+
+    class FakeHTTP:
+        def __init__(self, land_body):
+            self.land_body = land_body
+            self.http = self
+
+        def get(self, url, **kw):
+            return HttpResult(url, 200, {}, self.land_body, 0)
+
+    base = HttpResult("x", 200, {}, "<form>login</form>", 0)
+
+    # 1) Real redirect to a landing page that exposes 'logout' => confirmed
+    r = HttpResult("x", 302, {"location": "/home",
+                              "set-cookie": "sid=1"}, "", 0)
+    e = FakeHTTP("<nav>Welcome, admin <a>logout</a></nav>")
+    assert confirm_form_auth(e, "https://app/login", r, base.body,
+                             base.status)[0] == "confirmed"
+
+    # 2) Redirect that loops back to /login => NOT a win
+    r = HttpResult("x", 302, {"location": "/login?error=1"}, "", 0)
+    assert confirm_form_auth(FakeHTTP("x"), "https://app/login", r,
+                             base.body, base.status)[0] == "none"
+
+    # 3) No redirect, only a body-length delta (the old 5% heuristic) => likely
+    long_body = "-" * 400
+    r = HttpResult("x", 200, {}, long_body, 0)
+    assert confirm_form_auth(FakeHTTP("x"), "https://app/login", r, base.body,
+                             base.status)[0] == "likely"
+
+    # 4) No redirect but authenticated-context marker in body => confirmed
+    r = HttpResult("x", 200, {}, "<nav>Logout</nav>", 0)
+    assert confirm_form_auth(FakeHTTP("x"), "https://app/login", r, base.body,
+                             base.status)[0] == "confirmed"
+
+    # 5) Redirect to the document root that still loads => likely (no marker)
+    r = HttpResult("x", 302, {"location": "/", "set-cookie": "sid=1"}, "", 0)
+    assert confirm_form_auth(FakeHTTP("<html>index</html>"),
+                             "https://app/login", r, base.body,
+                             base.status)[0] == "likely"
+
+    # 6) External/SSO redirect must NOT be treated as local success
+    r = HttpResult("x", 302, {"location": "https://sso.example/start"}, "", 0)
+    assert confirm_form_auth(FakeHTTP("x"), "https://app/login", r, base.body,
+                             base.status)[0] == "none"
+
+    return True, "form-login confirmation (confirmed/likely/none) OK"
+
+    return True, "form-login confirmation (confirmed/likely/none) OK"
+
+
 def t_report():
     from core.report import render_html, render_markdown, render_json
     data = {"meta": {"tool": "VAJRA", "generated": "now",
@@ -2273,6 +2327,7 @@ def run_all():
     check("JS analysis same-origin scope", t_js_scope)
     check("vuln scanner proof-class mapping", t_vuln_records)
     check("confidence->severity anti-FP cap", t_fp_guard)
+    check("form-login confirmation (confirmed/likely/none)", t_authcheck)
     check("report rendering (html/md/json)", t_report)
     check("objectives + XLSX + post-module gating", t_resume_persistence_cloud_xlsx)
     check("http result model", t_http_result)

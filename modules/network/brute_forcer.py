@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from core.database import Finding
 from core.utils import load_json
+from modules.exploit.authcheck import confirm_form_auth
 
 try:
     import paramiko
@@ -177,8 +178,9 @@ def run(engine):
         baseline = engine.http.post(form["action"],
                                     data=_mkdata(form["fields"], user_field, pass_field,
                                                  "vjr-nouser", engine.nonce()))
-        blen = len(baseline.body)
         found = None
+        confirmed = False
+        why = ""
         attempts = 0
         backoff_delay = float(engine.cfg("brute_delay", 0.0))
         for u in users[:10]:
@@ -194,32 +196,54 @@ def run(engine):
                                     % (form["action"], r.status, backoff_delay))
                     time.sleep(backoff_delay)
                     continue
-                success = (r.status != baseline.status) or \
-                          (abs(len(r.body) - blen) > max(50, int(blen * 0.05))) or \
-                          any(k in r.headers.get("location", "").lower()
-                              for k in ("welcome", "dashboard", "home"))
-                if success:
+                # Only a strong offline signal counts as a win: a real
+                # redirect off the login flow, or an authenticated-context
+                # marker. Bare length/status deltas are reclassified as
+                # 'likely' and reported as unverified, never as credentials.
+                verdict, why = confirm_form_auth(
+                    engine, form["action"], r, baseline.body, baseline.status)
+                if verdict == "confirmed":
                     found = (u, p)
+                    confirmed = True
                     break
+                if verdict == "likely" and not found:
+                    found = (u, p)
+                    confirmed = False
                 attempts += 1
                 if attempts >= form_cap:
                     break
                 if backoff_delay:
                     time.sleep(backoff_delay)
-            if found or attempts >= form_cap:
+            if (found and confirmed) or attempts >= form_cap:
                 break
         if found:
-            creds_found.append((form["action"], found[0], found[1]))
-            engine.db.add_finding(Finding(
-                t.display, "network.brute", "credentials", "high",
-                "Login form weak password (%s:%s) at %s" %
-                (found[0], found[1], form["action"]),
-                detail="Detected via response differential heuristics; verify manually.",
-                confidence="possible"))
+            action = form["action"]
+            if confirmed:
+                creds_found.append((action, found[0], found[1]))
+                engine.db.add_finding(Finding(
+                    t.display, "network.brute", "credentials", "high",
+                    "Login form weak password (%s:%s) at %s" %
+                    (found[0], found[1], action),
+                    detail="Confirmed: %s." % why,
+                    evidence="%s\n%s:%s" % (action, found[0], found[1]),
+                    confidence="firm"))
+            else:
+                engine.db.add_finding(Finding(
+                    t.display, "network.brute", "credentials", "info",
+                    "Possible login credential, unverified (%s:%s) at %s" %
+                    (found[0], found[1], action),
+                    detail=("Unverified signal only: %s. The response does "
+                            "not prove an authenticated session — confirm "
+                            "with a real login before acting." % why),
+                    evidence="%s\n%s:%s" % (action, found[0], found[1]),
+                    confidence="possible"))
+                engine.log.info("[brute] possible credential (UNVERIFIED): "
+                                "%s %s:%s (%s)" % (action, found[0], found[1],
+                                                   why))
 
     if creds_found:
         summary = "\n".join("%-28s %s:%s" % c for c in creds_found)
-        engine.log.finding("[brute] valid credentials:\n" + summary)
+        engine.log.finding("[brute] confirmed credentials:\n" + summary)
         box = engine.state.setdefault("creds", [])
         for svc, u, p in creds_found:
             box.append((svc, u, p))
