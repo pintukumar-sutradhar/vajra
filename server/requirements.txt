@@ -10,6 +10,9 @@ python-multipart>=0.0.9
 fpdf2>=2.8
 pillow>=10.0
 
+# PoC screenshots (headless Chromium). Browsers: `.venv/bin/python -m playwright install chromium`
+playwright>=1.40
+
 # Platform DB is SQLite by default. For the production Postgres path install:
 #   psycopg2-binary>=2.9
 # and set VAJRA_DB_URL=postgresql+psycopg2://user:pass@localhost/vajra

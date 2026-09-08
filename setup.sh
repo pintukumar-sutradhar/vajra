@@ -17,6 +17,7 @@ else
     pip install -q -r requirements.txt || echo "[!] extras failed - stdlib fallback active"
 fi
 
+chmod +x vajra-launcher
 chmod +x vajra.py
 if [[ ! -f wordlists/passwords_full.txt ]]; then
     echo "[*] forging deep wordlists (~265k entries)"
@@ -33,11 +34,11 @@ else
 fi
 
 if [[ -w /usr/local/bin ]]; then
-    ln -sf "$(pwd)/vajra.py" /usr/local/bin/vajra
-    echo "[*] symlinked -> vajra (global command)"
+    ln -sf "$(pwd)/vajra-launcher" /usr/local/bin/vajra
+    echo "[*] symlinked -> vajra (global command → opens the browser UI)"
 fi
 
 echo ""
-echo "[+] Done. Run:"
-echo "      python3 vajra.py -t <ip-or-url> --profile full --yes"
-echo "    or (after symlink):  vajra -t <target> --yes"
+echo "[+] Done. Launch the platform with one command:"
+echo "      ./vajra      # installs the platform, starts it, opens the browser UI"
+echo "      vajra        # same (after the symlink above or for ~/.local/bin users)"

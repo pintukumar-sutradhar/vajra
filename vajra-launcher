@@ -1,0 +1,355 @@
+#!/usr/bin/env python3
+"""VAJRA — install-all launcher.
+
+Run once after cloning, then forever with a single command:
+
+    ./vajra-launcher       # installs if needed, starts the platform, opens the browser
+    vajra                  # symlinked on first run to ~/.local/bin
+
+The engine's vajra.py is intentionally not called directly; this launcher is the
+official entry point and every scan/credentialed mode runs through the UI.
+Options: ./vajra-launcher [--help] [--version] [--update] [--no-browser] [--port N]
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+import urllib.request
+import webbrowser
+from pathlib import Path
+import socket
+import shlex
+
+REPO = Path(__file__).resolve().parent
+SERVER_DIR = REPO / "server"
+VENV = REPO / ".venv"
+VAR = SERVER_DIR / "var"
+WEBAPP = REPO / "webapp"
+DIST = WEBAPP / "dist"
+LOG_DIR = VAR / "log"
+API_LOG = LOG_DIR / "api.log"
+WORKER_LOG = LOG_DIR / "worker.log"
+API_PID = VAR / "api.pid"
+WORKER_PID = VAR / "worker.pid"
+PORT_FILE = VAR / "port"
+VERSION = "1.4.0"
+CANDIDATE_PORTS = (8000, 8130, 8080, 9000, 51730)
+DEFAULT_CREDS = ("admin", "admin")
+
+
+def _a(*a, **kw):
+    print("\x1b[36m[VAJRA]\x1b[0m", *a, flush=True)
+
+def _w(*a, **kw):
+    print("\x1b[33m[VAJRA]\x1b[0m", *a, flush=True)
+
+def which(x: str) -> bool:
+    return shutil.which(x) is not None
+
+def run(cmd, cwd=None, env=None, **kw):
+    print("  $", " ".join(map(shlex.quote, map(str, cmd))))
+    return subprocess.run(cmd, cwd=cwd, env=env, **kw)
+
+def run_bg(args, cwd, env, log) -> int:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    API_LOG.parent.mkdir(parents=True, exist_ok=True)
+    import shlex as _sh
+    _a("starting", " ".join(map(_sh.quote, map(str, args))))
+    f = open(log, "ab", buffering=0)
+    env2 = {**os.environ, **(env or {})}
+    p = subprocess.Popen(args, cwd=str(cwd), env=env2,
+                         stdin=subprocess.DEVNULL,
+                         stdout=f, stderr=subprocess.STDOUT,
+                         start_new_session=True)
+    return p.pid
+
+def is_vajra_health(port: int) -> bool:
+    url = f"http://127.0.0.1:{port}/health"
+    try:
+        with urllib.request.urlopen(url, timeout=0.6) as r:
+            body = r.read()
+        j = json.loads(body)
+        return bool(j.get("ok") and j.get("product") == "VAJRA")
+    except Exception:
+        return False
+
+def free_port(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.6)
+        try:
+            s.connect(("127.0.0.1", port))
+            return False
+        except Exception:
+            return True
+
+def choose_port(explicit: str | None) -> int:
+    if explicit:
+        try:
+            p = int(explicit)
+            PORT_FILE.parent.mkdir(parents=True, exist_ok=True)
+            PORT_FILE.write_text(str(p))
+            return p
+        except ValueError:
+            _w(f"invalid port '{explicit}', using default")
+            explicit = None
+    # saved port
+    if PORT_FILE.exists():
+        try:
+            p = int(PORT_FILE.read_text().strip())
+            if is_vajra_health(p) or free_port(p):
+                return p
+        except Exception:
+            pass
+    for p in CANDIDATE_PORTS:
+        if is_vajra_health(p) or free_port(p):
+            PORT_FILE.parent.mkdir(parents=True, exist_ok=True)
+            PORT_FILE.write_text(str(p))
+            return p
+    PORT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PORT_FILE.write_text("8000")
+    return 8000
+
+def ensure_runnable(port: int):
+    VAR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+def ensure_install():
+    ensured = False
+    # 1) Python venv + platform deps
+    py = VENV / "bin" / "python"
+    pip = VENV / "bin" / "pip"
+    needs = not (pip.exists() or py.exists())
+    if needs:
+        _a("one-time setup — creating platform environment (this takes a minute)")
+    if not py.exists() and not which("python3"):
+        _w("python3 is required (≥ 3.9). Install Python and re-run ./vajra")
+        sys.exit(1)
+    if not VENV.exists():
+        run([sys.executable, "-m", "venv", str(VENV)], cwd=str(SERVER_DIR))
+    if py.exists():
+        run([str(pip), "install", "-q", "--upgrade", "pip"], cwd=str(REPO))
+        # engine stdlib selftest needs no extra deps; platform needs these
+        reqs = SERVER_DIR / "requirements.txt"
+        if reqs.exists():
+            from subprocess import CalledProcessError
+            try:
+                run([str(pip), "install", "-q", "-r", str(reqs)], cwd=str(REPO))
+            except (CalledProcessError, OSError):
+                _w("some optional deps failed — platform still works on stdlib (screenshots will be text-only)")
+        # best-effort PoC screenshot browser
+        try:
+            r = run([str(py), "-m", "playwright", "install", "chromium"], cwd=str(REPO),
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
+            if r.returncode != 0:
+                _w("headless browser not auto-installed — screenshots will fall back to text evidence")
+        except Exception:
+            pass
+        ensured = True
+    else:
+        _w("failed to create .venv — continuing; the engine will run on stock Python")
+    # 2) Wordlists (deterministically forged, ~265k entries)
+    wl = REPO / "wordlists" / "passwords_full.txt"
+    run_fw = REPO / "tools" / "gen_wordlists.py"
+    if not wl.exists() and run_fw.exists():
+        _a("forging wordlists")
+        venv_py = str(py) if py.exists() else sys.executable
+        run([venv_py, str(run_fw)], cwd=str(REPO))
+    # 3) Web UI dist
+    dist_idx = DIST / "index.html"
+    need_npm = not dist_idx.exists()
+    # build even if dist exists but node_modules not present? rebuild on install path anyway if missing dist
+    if need_npm:
+        if not (WEBAPP / "package.json").exists():
+            _w(f"{WEBAPP} missing — clone the full repo")
+            sys.exit(1)
+        if not (which("node") and which("npm")):
+            _w("npm/node is required once to build the web UI — install from https://nodejs.org then re-run ./vajra")
+        else:
+            _a("building the web UI")
+            has_nm = (WEBAPP / "node_modules").exists()
+            if not has_nm:
+                run(["npm", "install"], cwd=str(WEBAPP))
+            run(["npm", "run", "build"], cwd=str(WEBAPP))
+            if dist_idx.exists():
+                _a("UI build ready")
+            else:
+                _w("UI build failed — the app will still serve API-only at /health and /api")
+    # 4) Engine selftest (release gate, stdlib-only)
+    try:
+        venv_py = str(py) if py.exists() else sys.executable
+        r = subprocess.run([venv_py, str(REPO / "vajra.py"), "--selftest"],
+                           cwd=str(REPO), timeout=30,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if r.returncode == 0:
+            _a("engine selftest OK")
+    except Exception:
+        pass
+    return ensured
+
+def link_self():
+    src = Path(__file__).resolve()
+    home = Path.home()
+    # 1) ~/.local/bin (preferred) — on PATH on every normal distro
+    local_bin = home / ".local" / "bin"
+    local_bin.mkdir(parents=True, exist_ok=True)
+    local_vajra = local_bin / "vajra"
+    try:
+        if local_vajra.is_symlink() or local_vajra.is_file():
+            if local_vajra.resolve() == src:
+                return
+            try:
+                local_vajra.unlink()
+            except Exception:
+                pass
+        local_vajra.symlink_to(src)
+        print(f"\x1b[36m[VAJRA]\x1b[0m symlinked \033[1m{local_vajra}\033[0m → {src}")
+        bashrc = home / ".bashrc"
+        zshrc = home / ".zshrc"
+        local_bin_s = str(local_bin)
+        for rc in (bashrc, zshrc):
+            if rc.exists():
+                txt = rc.read_text(errors="ignore")
+                if local_bin_s not in txt:
+                    try:
+                        with open(rc, "a") as f:
+                            f.write(f'\n# VAJRA (added by ./vajra install)\nexport PATH="$HOME/.local/bin:$PATH"\n')
+                        _a(f"added $HOME/.local/bin to {rc.name} (open a new shell to pick it up)")
+                    except Exception:
+                        pass
+    except Exception as e:
+        _w(f"could not symlink to {local_bin}: {e}")
+    # 2) /usr/local/bin if writable (legacy compat)
+    ulb = Path("/usr/local/bin/vajra")
+    if os.access("/usr/local/bin", os.W_OK) and src != (ulb.resolve() if ulb.exists() and ulb.is_symlink() else None):
+        try:
+            if ulb.exists():
+                ulb.unlink()
+            ulb.symlink_to(src)
+            _a(f"symlinked {ulb} → {src}")
+        except Exception:
+            pass
+    try:
+        os.chmod(str(src), 0o755)
+    except Exception:
+        pass
+
+def start(port: int, open_browser: bool = True, timeout: int = 60):
+    ensure_runnable(port)
+    py = str((VENV / "bin" / "python")) if (VENV / "bin" / "python").exists() else sys.executable
+    env = {"VAJRA_API_PORT": str(port), "VAJRA_PLATFORM_VAR": str(VAR)}
+    url = f"http://127.0.0.1:{port}"
+    if is_vajra_health(port):
+        _a(f"platform already running at {url}")
+        if open_browser:
+            webbrowser.open(url)
+        print(f"\n  UI  {url}   (login admin / {DEFAULT_CREDS[1]})")
+        print(f"  API {url}/health  /  {url}/api/v1/...  /  docs {url}/docs\n")
+        return url
+    # api
+    api_pid = run_bg([py, str(REPO / "server" / "run_api.py")],
+                     cwd=str(REPO), env=env, log=str(API_LOG))
+    API_PID.write_text(str(api_pid))
+    # wait for health
+    for _ in range(max(1, int(timeout / 0.35))):
+        time.sleep(0.35)
+        if is_vajra_health(port):
+            break
+    else:
+        _w(f"API did not come up on {port} — tail {API_LOG}")
+    # worker (long-running queue poller) — only if no worker health yet
+    worker_up = False
+    try:
+        wpid = int((WORKER_PID.read_text(errors="ignore") or "0").strip() or "0")
+        if wpid:
+            os.kill(wpid, 0)
+            worker_up = True
+    except Exception:
+        pass
+    if not worker_up:
+        wpid = run_bg([py, str(REPO / "server" / "run_worker.py")],
+                      cwd=str(REPO), env=env, log=str(WORKER_LOG))
+        WORKER_PID.write_text(str(wpid))
+    link_self()
+    if open_browser:
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+    print(f"\n  UI  {url}   (login admin / {DEFAULT_CREDS[1]})")
+    print(f"  API {url}/api/v1/…  ·  docs {url}/docs")
+    if open_browser:
+        _a(f"opening {url} in your browser (use --no-browser to skip)")
+    return url
+
+def do_update():
+    _a("updating from git origin")
+    r = subprocess.run(["git", "-C", str(REPO), "pull", "--ff-only"],
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    sys.stdout.write(r.stdout or "")
+    if r.returncode != 0:
+        _w("git pull failed — run `git pull` by hand and re-run ./vajra")
+        return 1
+    ensure_install()
+    _a("update complete — restart with ./vajra")
+    return 0
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="VAJRA platform — launcher")
+    ap.add_argument("--port", help="API/UI port (default: auto 8000/8130/8080)", default=None)
+    ap.add_argument("--no-browser", action="store_true", help="start the platform but don't open the browser")
+    ap.add_argument("--link", action="store_true", help="install & symlink ~/.local/bin/vajra, then exit")
+    ap.add_argument("--update", action="store_true", help="git pull --ff-only + reinstall & rebuild")
+    ap.add_argument("--version", action="store_true", help="print version & exit")
+    ap.add_argument("--stop", action="store_true", help="stop api/worker and exit")
+    ap.add_argument("--check", action="store_true", help="check health only (exit 0 if running)")
+    args = ap.parse_args(argv)
+    if args.version:
+        print(f"vajra {VERSION} (platform)")
+        print(f"  repo: {REPO}")
+        if (SERVER_DIR / "app" / "config.py").exists():
+            print("  env: VAJRA_API_PORT=%s VAJRA_PLATFORM_VAR=%s" % (os.environ.get("VAJRA_API_PORT", ""), VAR))
+        for name in ("python3", "node", "npm"):
+            print(f"  {name}: {shutil.which(name) or 'missing'}")
+        return 0
+    if args.check:
+        for p in CANDIDATE_PORTS:
+            if is_vajra_health(p):
+                print(f"running at http://127.0.0.1:{p}")
+                return 0
+        print("not running")
+        return 1
+    if args.stop:
+        for name, pidfile in (("api", API_PID), ("worker", WORKER_PID)):
+            try:
+                pid = int(pidfile.read_text().strip())
+                os.kill(pid, 15)
+                pidfile.unlink()
+                _a(f"stopped {name} (pid {pid})")
+            except Exception:
+                pass
+        return 0
+    if args.update:
+        return do_update()
+    if args.link:
+        ensure_install()
+        link_self()
+        _a("run `./vajra` or `vajra` to launch the platform")
+        return 0
+    # default run: install if needed then start
+    if not (VENV / "bin/python").exists() or not (DIST / "index.html").exists():
+        ensure_install()
+    else:
+        # short symlink check even when not installing
+        link_self()
+    port = choose_port(args.port)
+    start(port, open_browser=not args.no_browser)
+    return 0
+
+if __name__ == "__main__":
+    raise SystemExit(main())

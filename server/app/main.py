@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import models
 from .api import auth, dashboard, engines, findings, reports, scans, targets
-from .config import BRAND, settings
+from .config import BRAND, settings, REPO
 from .db import SessionLocal, init_db
 from .security import hash_password
 
@@ -58,6 +58,12 @@ def make_app():
     def health():
         return {"ok": True, "product": BRAND["product"],
                 "edition": BRAND["edition"], "version": "0.1.0"}
+
+    dist = REPO / "webapp" / "dist"
+    if (dist / "index.html").exists():
+        from fastapi.staticfiles import StaticFiles
+        app.mount("/", StaticFiles(directory=str(dist), html=True),
+                  name="webapp")
     return app
 
 

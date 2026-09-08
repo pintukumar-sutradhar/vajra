@@ -131,35 +131,58 @@ by findings or report endpoints.
 Requirements: Python 3.9+, Node 18+, and the repo's `server` + `webapp`
 directories.
 
+Requirements: Python 3.9+, Node 18+.
+
+## Run — one command
+
+Clone the repo, then run the single launcher file. On the first run it
+installs everything (Python venv + platform deps, builds the web UI, forges
+the wordlists, symlinks the `vajra` command to `~/.local/bin`), starts the API
++ scan worker, and opens the browser:
+
 ```bash
-# 1. Platform API  -> http://0.0.0.0:8000   (customize with VAJRA_API_PORT)
-cd server
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt   # once
-.venv/bin/python run_api.py
-
-# 2. Scan worker (pulls queued scans off the job queue and runs the engine)
-.venv/bin/python run_worker.py
-
-# 3. Web UI -> http://localhost:5173 (proxies /api to the API; set VITE_API_TARGET if your API port differs)
-cd ../webapp
-npm install            # once
-VITE_API_TARGET=http://127.0.0.1:8000 npm run dev
+git clone <your-repo-url> && cd vajra
+./vajra-launcher         # one file — installs once, starts platform, opens browser
 ```
 
-Open **http://localhost:5173** and sign in.
+From then on every session is an even shorter one command:
+
+```bash
+vajra                   # opens http://127.0.0.1:8000 (auto port) in your browser
+```
+
+For development (hot-reload UI against a running API):
+
+```bash
+# API + worker as above; then, in another terminal:
+cd webapp && VITE_API_TARGET=http://127.0.0.1:8000 npm run dev   # UI on :5173
+```
+
+The UI is served by the API on a single origin — one process, one URL, no
+proxy needed. The active port is remembered (`server/var/port`); the launcher
+auto-picks from `8000 / 8130 / 8080 / 9000`.
 
 > Default login: `admin` / `admin` (override with `VAJRA_ADMIN_PASSWORD` before
-> first boot). If the dev UI proxies to a non-VAJRA port, the terminal prints
-> an explicit warning instead of silently showing `Not Found` on login — point
-> `VITE_API_TARGET` at the API port.
+> first boot).
+
+### Launcher commands
+
+```text
+vajra                        start platform + open browser
+vajra --no-browser           start without opening the browser
+vajra --link                 install/symlink ~/.local/bin/vajra and exit
+vajra --update               git pull --ff-only, reinstall + rebuild
+vajra --stop                 stop the API + worker
+vajra --check                print status / exit code
+vajra --version              version + toolchain check
+```
 
 **End-to-end verification** (standalone harness — spins up a local web app and
 runs a real engine scan through the full API → queue → worker → harvest →
 report path):
 
 ```bash
-cd server
-.venv/bin/python smoke.py        # 34 checks, green exit 0
+.venv/bin/python server/smoke.py        # 34 checks, green exit 0
 ```
 
 ---

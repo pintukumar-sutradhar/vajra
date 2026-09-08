@@ -226,13 +226,43 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
     radial-gradient(1100px 480px at 18% -8%, #12325e 0%, rgba(18, 50, 94, 0) 62%),
     radial-gradient(900px 420px at 92% 108%, #07284f 0%, rgba(7, 40, 79, 0) 60%),
     var(--bg);
-  padding: 26px;
+  padding: 26px; position: relative; overflow: hidden;
+}
+.login-orb {
+  position: absolute; border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, rgba(47, 143, 255, 0.30), rgba(0, 115, 255, 0.06) 55%, transparent 72%);
+  filter: blur(6px); pointer-events: none;
+  animation: loginFloat 16s ease-in-out infinite alternate;
+}
+.login-orb.o1 { width: 520px; height: 520px; top: -160px; left: -120px; }
+.login-orb.o2 { width: 420px; height: 420px; bottom: -120px; right: -80px; animation-delay: -6s; }
+.login-orb.o3 { width: 260px; height: 260px; top: 46%; left: -70px; animation-delay: -11s; opacity: 0.7; }
+@keyframes loginFloat {
+  0% { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(38px, 26px) scale(1.08); }
+}
+.login-grid {
+  position: absolute; inset: 0; pointer-events: none; opacity: 0.35;
+  background-image:
+    linear-gradient(rgba(120, 160, 220, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(120, 160, 220, 0.06) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(720px 520px at 50% 40%, #000 0%, transparent 78%);
+  mask-image: radial-gradient(720px 520px at 50% 40%, #000 0%, transparent 78%);
 }
 .login-stage {
   width: 100%; max-width: 920px; min-height: 560px;
   display: grid; grid-template-columns: 1.15fr 0.9fr;
-  background: var(--surface); border: 1px solid var(--border-2);
-  border-radius: 18px; overflow: hidden; box-shadow: var(--shadow);
+  background: linear-gradient(180deg, rgba(17, 26, 46, 0.96), rgba(15, 23, 41, 0.97));
+  border: 1px solid rgba(42, 59, 94, 0.9);
+  border-radius: 18px; overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(0, 115, 255, 0.06);
+  position: relative; z-index: 2;
+  animation: loginIn 0.5s ease both;
+}
+@keyframes loginIn {
+  from { opacity: 0; transform: translateY(14px) scale(0.99); }
+  to { opacity: 1; transform: none; }
 }
 .login-pane { padding: 42px 40px; }
 .login-pane.login-formpane {
@@ -267,6 +297,24 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
   color: var(--accent-2); padding: 1px 6px; border-radius: 5px;
   font-family: var(--mono); font-size: 12px;
 }
+.inrow { position: relative; display: flex; align-items: center; }
+.inrow .inicon {
+  position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+  color: var(--muted-2); font-size: 14px; pointer-events: none;
+}
+.inrow input {
+  padding-left: 34px; padding-right: 38px; height: 42px;
+  background: var(--surface); border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm); font-size: 14px; color: var(--text);
+  width: 100%;
+}
+.inrow input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0, 115, 255, 0.18); outline: none; }
+.inrow .in-eye {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; cursor: pointer; color: var(--muted-2);
+  font-size: 15px; padding: 4px 6px; line-height: 1;
+}
+.inrow .in-eye:hover { color: var(--accent-2); }
 .login-hint { margin-top: 18px; color: var(--muted-2); font-size: 12px; text-align: center; }
 .login-foot {
   margin-top: 34px; padding-top: 16px; border-top: 1px solid var(--border);
