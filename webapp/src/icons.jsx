@@ -2,7 +2,7 @@ import React from 'react'
 
 const S = (p) => (
   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{p}</svg>
+       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{p.children}</svg>
 )
 
 export const IcoGauge = () => <S><path d="M12 15l3.5-3.5M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0z" /></S>
