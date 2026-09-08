@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import './theme.css'
-import { api, loadBrand, token } from './api.js'
+import { api, loadBrand, token, getBrand } from './api.js'
 import { ToastHost, useToast, Logo } from './components.jsx'
 import { IcoGauge, IcoTarget, IcoScan, IcoFindings, IcoEngine, IcoOut } from './icons.jsx'
 import Login from './views/Login.jsx'
@@ -120,8 +120,7 @@ function Shell() {
 }
 
 function getProduct() {
-  // product name shown in top bar; brand module loads async
-  return 'Community'
+  return getBrand().edition || 'Professional'
 }
 
 createRoot(document.getElementById('root')).render(

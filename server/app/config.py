@@ -37,7 +37,7 @@ settings = Settings()
 BRAND = {
     "product": "VAJRA",
     "tagline": "Offensive security platform",
-    "edition": "Community",
+    "edition": "Professional",
     "company": "",
     "logo_svg": (
         "<svg width='64' height='64' viewBox='0 0 64 64' "
