@@ -22,6 +22,11 @@ export default function Login({ onLogin }) {
     try {
       const r = await api('/v1/auth/login', { method: 'POST', body: { username, password } })
       token.set(r.token)
+      // Blur inputs to ensure focus leaves the form
+      const u = document.getElementById('login-user')
+      const p = document.getElementById('login-pass')
+      if (u) u.blur()
+      if (p) p.blur()
       onLogin(r.user)
     } catch (e2) {
       setError(e2.message || 'Sign-in failed')

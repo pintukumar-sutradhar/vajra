@@ -1,31 +1,99 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { api } from '../api.js'
-import { Pill, Severity, Confidence, Status, Modal, Empty, Spinner, useToast } from '../components.jsx'
+import { ScanStatus, Empty } from '../components.jsx'
 
-const STATUSES = ['', 'open', 'triaged', 'false-positive', 'accepted-risk', 'fixed']
-const NEXT = {
-  open: ['triaged', 'false-positive', 'accepted-risk', 'fixed'],
-  triaged: ['open', 'false-positive', 'accepted-risk', 'fixed'],
-  'false-positive': ['open'],
-  'accepted-risk': ['open', 'fixed'],
-  fixed: ['open'],
-}
+const COLUMNS = ['new', 'triaged', 'confirmed', 'remediated', 'wont_fix']
 
 export default function Findings() {
   const [rows, setRows] = useState(null)
   const [sev, setSev] = useState('')
   const [status, setStatus] = useState('')
   const [q, setQ] = useState('')
+  const [mod, setMod] = useState('')
+  const [view, setView] = useState('table')
   const [sel, setSel] = useState(null)
 
   function load() {
     const p = new URLSearchParams()
     if (sev) p.set('severity', sev)
     if (status) p.set('status', status)
+    if (mod) p.set('engine_id', mod)
     if (q) p.set('q', q)
     api('/v1/findings?' + p.toString()).then(setRows).catch(() => setRows([]))
   }
-  useEffect(load, [sev, status, q])
+  useEffect(load, [sev, status, mod, q])
+
+  const kanban = useMemo(() => {
+    const buckets = {}
+    COLUMNS.forEach((c) => buckets[c] = [])
+    if (!rows) return buckets
+    rows.forEach((f) => {
+      const col = COLUMNS.includes(f.status) ? f.status : 'new'
+      buckets[col].push(f)
+    })
+    return buckets
+  }, [rows])
+
+  function renderTable() {
+    if (!rows) return <div className="muted"><Spinner /> loading…</div>
+    if (rows.length === 0) return <Empty icon="🛡️" text="No findings match." />
+    return (
+      <div className="card">
+        <table className="vt">
+          <thead>
+            <tr><th>Severity</th><th>Title</th><th>Asset</th><th>Status</th><th>Confidence</th><th>Last seen</th></tr>
+          </thead>
+          <tbody>
+            {rows.map((f) => (
+              <tr key={f.id} style={{ cursor: 'pointer' }} onClick={() => setSel(f)}>
+                <td><Severity value={f.severity} /></td>
+                <td style={{ maxWidth: 460 }}>
+                  <div style={{ fontWeight: 600 }}>{f.title}</div>
+                  <div className="muted mono" style={{ fontSize: 11.5 }}>{f.ref} · {f.source_module}</div>
+                </td>
+                <td className="mono">{f.asset}</td>
+                <td><Status value={f.status} /></td>
+                <td><Confidence value={f.confidence} /></td>
+                <td className="muted">{new Date(f.last_seen).toLocaleDateString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+
+  function renderKanban() {
+    if (!rows) return <div className="muted"><Spinner /> loading…</div>
+    return (
+      <div className="grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)', gap: 16 }}>
+        {COLUMNS.map((c) => (
+          <div key={c} className="card" style={{ minHeight: 400, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ fontWeight: 600, marginBottom: 10, textTransform: 'uppercase', fontSize: 12, color: 'var(--muted)' }}>
+              {c} <span className="muted mono">({kanban[c]?.length || 0})</span>
+            </div>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {(kanban[c] || []).length === 0
+                ? <div className="muted" style={{ textAlign: 'center', marginTop: 20 }}>—</div>
+                : (kanban[c] || []).map((f) => (
+                  <div key={f.id} className="card" style={{ cursor: 'pointer', padding: 12, fontSize: 12.5 }}
+                    onClick={() => setSel(f)}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 6 }}>
+                      <Severity value={f.severity} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>{f.title}</div>
+                        <div className="muted mono" style={{ fontSize: 11 }}>{f.ref} · {f.source_module}</div>
+                      </div>
+                    </div>
+                    <div className="muted mono" style={{ fontSize: 11 }}>{f.asset}</div>
+                  </div>
+                ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    )
+  }
 
   return (
     <>
@@ -38,41 +106,27 @@ export default function Findings() {
         </select>
         <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ width: 150 }}>
           <option value="">All statuses</option>
-          {STATUSES.slice(1).map((s) => <option key={s}>{s}</option>)}
+          {['open', 'triaged', 'false-positive', 'accepted-risk', 'fixed'].map((s) => <option key={s}>{s}</option>)}
         </select>
+        <select value={mod} onChange={(e) => setMod(e.target.value)} style={{ width: 130 }}>
+          <option value="">All modules</option>
+          {['webapp', 'api', 'infrastructure', 'active_directory', 'external'].map((m) => <option key={m}>{m}</option>)}
+        </select>
+        <div className="spacer" />
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button className="btn" onClick={() => setView('table')} disabled={view === 'table'}>Table</button>
+          <button className="btn" onClick={() => setView('kanban')} disabled={view === 'kanban'}>Kanban</button>
+        </div>
       </div>
 
-      {!rows ? <div className="muted"><Spinner /> loading…</div>
-        : rows.length === 0 ? <Empty icon="🛡️" text="No findings match." />
-          : (
-            <div className="card">
-              <table className="vt">
-                <thead>
-                  <tr><th>Severity</th><th>Title</th><th>Asset</th><th>Status</th><th>Confidence</th><th>Last seen</th></tr>
-                </thead>
-                <tbody>
-                  {rows.map((f) => (
-                    <tr key={f.id} style={{ cursor: 'pointer' }} onClick={() => setSel(f)}>
-                      <td><Severity value={f.severity} /></td>
-                      <td style={{ maxWidth: 460 }}>
-                        <div style={{ fontWeight: 600 }}>{f.title}</div>
-                        <div className="muted mono" style={{ fontSize: 11.5 }}>{f.ref} · {f.source_module}</div>
-                      </td>
-                      <td className="mono">{f.asset}</td>
-                      <td><Status value={f.status} /></td>
-                      <td><Confidence value={f.confidence} /></td>
-                      <td className="muted">{new Date(f.last_seen).toLocaleDateString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+      {view === 'table' ? renderTable() : renderKanban()}
 
       {sel && <TriageModal finding={sel} onClose={() => setSel(null)} onChanged={(f) => { setSel(f); load() }} />}
     </>
   )
 }
+
+function Spinner() { return <span className="spin" style={{ display: 'inline-block' }} /> }
 
 function TriageModal({ finding: f, onClose, onChanged }) {
   const [note, setNote] = useState(f.state_note || '')
@@ -83,9 +137,14 @@ function TriageModal({ finding: f, onClose, onChanged }) {
 
   useEffect(() => { api('/v1/findings/' + f.id).then(setDetail).catch(() => {}) }, [f.id])
 
-  function transitions() {
-    return NEXT[detail.status] || []
+  const NEXT = {
+    open: ['triaged', 'false-positive', 'accepted-risk', 'fixed'],
+    triaged: ['open', 'false-positive', 'accepted-risk', 'fixed'],
+    'false-positive': ['open'],
+    'accepted-risk': ['open', 'fixed'],
+    fixed: ['open'],
   }
+  function transitions() { return NEXT[detail.status] || [] }
 
   async function save() {
     setBusy(true)
@@ -135,7 +194,7 @@ function TriageModal({ finding: f, onClose, onChanged }) {
             <a key={s} href={'/api/v1/reports/' + detail.scan_id + '/static/' + s}
               target="_blank" rel="noreferrer">
               <img src={'/api/v1/reports/' + detail.scan_id + '/static/' + s}
-                alt={s} style={{ width: '100%', border: '1px solid var(--line)', borderRadius: 6 }} />
+                alt={s} style={{ width: '100%', border: '1px solid var(--border)', borderRadius: 6 }} />
             </a>
           ))}
         </div>

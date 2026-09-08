@@ -353,3 +353,36 @@ details.poc .inner { padding: 12px 14px; }
 .ev-log .row .lv-warning { color: #ffcb6b; }
 .ev-log .row .ts { color: var(--muted-2); margin-right: 8px; }
 .report-frame { width: 100%; height: 78vh; border: 1px solid var(--border); border-radius: var(--radius-sm); background: #fff; }
+
+/* Palette / command palette */
+.modal-backdrop .palette {
+  background: var(--surface); border: 1px solid var(--border-2);
+  border-radius: 14px; box-shadow: var(--shadow); width: 100%; max-width: 520px;
+  overflow: hidden; max-height: 80vh; display: flex; flex-direction: column;
+}
+.palette input { width: 100%; padding: 14px 18px; font-size: 15px; border: none;
+  background: var(--surface-2); color: var(--text); outline: none; border-bottom: 1px solid var(--border); }
+.pal-list { overflow-y: auto; max-height: 60vh; }
+.pal-item { display: flex; justify-content: space-between; align-items: center;
+  width: 100%; padding: 12px 18px; background: none; border: none;
+  color: var(--text); text-align: left; font-size: 14px; cursor: pointer; }
+.pal-item:hover, .pal-item.on { background: rgba(0, 115, 255, 0.12); color: #fff; }
+.pal-item .muted { font-size: 12px; }
+
+/* Help overlay */
+.modal-backdrop .card { max-width: 500px; }
+.modal-backdrop .card h2 { margin-top: 0; }
+
+/* Auth badge */
+.auth-badge { display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 600; padding: 2px 8px;
+  border-radius: 999px; cursor: help; }
+.auth-badge:has-text("✓") { background: rgba(34, 197, 94, 0.14); color: var(--ok); }
+.auth-badge:has-text("✗") { background: rgba(225, 29, 72, 0.14); color: var(--danger); }
+
+/* Chip alive */
+.chip-alive { background: rgba(0, 115, 255, 0.14); border-color: var(--accent); color: var(--accent-2); }
+
+/* Auth badge (fallback for :has unsupported) */
+.auth-badge.ok { background: rgba(34, 197, 94, 0.14); color: var(--ok); }
+.auth-badge.warn { background: rgba(225, 29, 72, 0.14); color: var(--danger); }

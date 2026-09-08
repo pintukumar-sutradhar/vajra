@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { Modal, Empty, useToast } from '../components.jsx'
-import { IcoPlus, IcoClose } from '../icons.jsx'
+import { IcoPlus, IcoClose, IcoUpload } from '../icons.jsx'
 
 const KINDS = ['url', 'ip', 'cidr', 'hostname', 'domain']
 
 export default function Targets() {
   const [targets, setTargets] = useState(null)
   const [open, setOpen] = useState(false)
+  const [bulkOpen, setBulkOpen] = useState(false)
   const shout = useToast()
 
   function load() {
@@ -19,6 +20,7 @@ export default function Targets() {
     <>
       <div className="toolbar">
         <button className="btn primary" onClick={() => setOpen(true)}><IcoPlus /> New target</button>
+        <button className="btn" onClick={() => setBulkOpen(true)}><IcoUpload /> Bulk import</button>
       </div>
 
       {!targets
@@ -29,7 +31,7 @@ export default function Targets() {
             <div className="card">
               <table className="vt">
                 <thead>
-                  <tr><th>Name</th><th>Address</th><th>Kind</th><th>Tags</th><th>Added</th></tr>
+                  <tr><th>Name</th><th>Address</th><th>Kind</th><th>Auth proof</th><th>Tags</th><th>Added</th></tr>
                 </thead>
                 <tbody>
                   {targets.map((t) => (
@@ -37,6 +39,12 @@ export default function Targets() {
                       <td><b>{t.name || t.address}</b></td>
                       <td className="mono">{t.address}</td>
                       <td><span className="tag">{t.kind}</span></td>
+                      <td>
+                        <span className={"auth-badge " + (t.authorization_proof ? 'ok' : 'warn')}
+                          title={t.authorization_proof}>
+                          {t.authorization_proof ? '✓ authorized' : '✗ missing'}
+                        </span>
+                      </td>
                       <td className="muted">{(t.tags && Object.keys(t.tags).join(', ')) || '—'}</td>
                       <td className="muted">{new Date(t.created_at).toLocaleDateString()}</td>
                     </tr>
@@ -47,6 +55,7 @@ export default function Targets() {
           )}
 
       {open && <NewTarget onClose={() => setOpen(false)} onDone={() => { setOpen(false); load() }} />}
+      {bulkOpen && <BulkImport onClose={() => setBulkOpen(false)} onDone={() => { setBulkOpen(false); load() }} />}
     </>
   )
 }
@@ -80,7 +89,7 @@ function NewTarget({ onClose, onDone }) {
       const r = await shout.api(() => api('/v1/targets', { method: 'POST', body }))
       shout.push(`Target #${r.id} created`)
       onDone()
-    } catch (e) { /* toast handled */ setBusy(false) }
+    } catch (e) { setBusy(false) }
   }
 
   return (
@@ -119,3 +128,54 @@ function NewTarget({ onClose, onDone }) {
     </Modal>
   )
 }
+
+function BulkImport({ onClose, onDone }) {
+  const shout = useToast()
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function submit(e) {
+    e.preventDefault()
+    const lines = text.trim().split('\n').filter((l) => l.trim() && !l.trim().startsWith('#'))
+    if (!lines.length) return shout.push('paste at least one line', 'err')
+    setBusy(true)
+    try {
+      for (const line of lines) {
+        const [kind, address, name, auth] = line.split('|').map((s) => s.trim())
+        if (!kind || !address) continue
+        await api('/v1/targets', {
+          method: 'POST', body: {
+            kind, address, name: name || address,
+            authorization_proof: auth || 'Bulk import — per-line auth proof required for scans',
+            tags: {},
+          },
+        })
+      }
+      shout.push(`Imported ${lines.length} targets`)
+      onDone()
+    } catch (e) { setBusy(false) }
+  }
+
+  return (
+    <Modal title="Bulk import targets" onClose={onClose} wide
+      foot={<>
+        <button className="btn" onClick={onClose}>Cancel</button>
+        <button className="btn primary" onClick={submit} disabled={busy}>{busy ? 'Importing…' : 'Import'}</button>
+      </>}>
+      <form onSubmit={submit}>
+        <div className="field">
+          <label>Paste lines (one per target)</label>
+          <textarea rows={12} value={text} onChange={(e) => setText(e.target.value)}
+            placeholder={[
+              "url|https://app.example.com|Customer Portal|Engagement-123",
+              "cidr|10.0.0.0/16|Internal Network|Engagement-123",
+              "domain|example.com|External Surface|Engagement-123",
+            ].join('\n')} />
+          <div className="hint">Format: <code>kind|address|name|authorization_proof</code> — fields separated by <code>|</code>. Comment lines start with <code>#</code>. Valid kinds: url, ip, cidr, hostname, domain.</div>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+function Spinner() { return <span className="spin" style={{ display: 'inline-block' }} /> }

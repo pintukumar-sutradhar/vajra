@@ -12,6 +12,8 @@ export const IcoFindings = () => <S><path d="M9 11l3 3L22 4" /><path d="M21 12v7
 export const IcoEngine = () => <S><rect x="3" y="4" width="18" height="7" rx="2" /><rect x="3" y="13" width="18" height="7" rx="2" /><path d="M7 7.5h.01M7 16.5h.01" /></S>
 export const IcoOut = () => <S><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5M21 12H9" /></S>
 export const IcoPlus = () => <S><path d="M12 5v14M5 12h14" /></S>
+export const IcoRefreshCw = () => <S><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M21 12a9 9 0 1 1-9 9 9.75 9.75 0 0 1 6.74-2.74L21 16" /></S>
+export const IcoUpload = () => <S><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></S>
 export const IcoPlay = () => <S><path d="M6 4l14 8-14 8z" /></S>
 export const IcoStop = () => <S><rect x="6" y="6" width="12" height="12" rx="2" /></S>
 export const IcoDoc = () => <S><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></S>
