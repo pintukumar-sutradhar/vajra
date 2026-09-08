@@ -3,7 +3,7 @@
 <pre align="center">
     ██╗   ██╗ █████╗      ██╗██████╗  █████╗
     ██║   ██║██╔══██╗     ██║██╔══██╗██╔══██╗
-    ██║   ██║███████║ ██  ██║██████╔╝███████║
+    ██║   ██║██║██║██║ ██  ██║██████╔╝███████║
     ╚██╗ ██╔╝██╔══██║ ╚██╗██╔╝██╔══██╗██╔══██║
      ╚████╔╝ ██║  ██║  ╚███╔╝ ██║  ██║██║  ██║
       ╚═══╝  ╚═╝  ╚═╝   ╚══╝  ╚═╝  ╚═╝╚═╝  ╚═╝
@@ -11,7 +11,7 @@
 
 # ⚡ V A J R A
 
-### Offensive Security Platform — Enterprise Pentesting, Fully in the Browser
+### Offensive Security Platform — Automated Penetration Testing, Fully in the Browser
 
 [![license](https://img.shields.io/badge/license-Custom-blue.svg)](LICENSE)
 
@@ -26,7 +26,7 @@
 
 ---
 
-> ⚠️ **Authorized use only.** VAJRA is a professional security assessment
+> ⚠️ **Authorized use only.** VAJRA is an offensive security assessment
 > platform. Running it against systems you do not own or lack written
 > permission to test is illegal. An authorization gate is enforced on every
 > scan.
@@ -41,7 +41,7 @@
 - [Quickstart](#quickstart)
 - [The platform](#the-platform)
 - [Reporting](#reporting)
-- [Commercial capabilities](#commercial-capabilities)
+- [Capabilities](#capabilities)
 - [API](#api)
 - [Architecture](#architecture)
 - [CLI status (deprecated)](#cli-status-deprecated)
@@ -55,8 +55,8 @@
 ## Overview
 
 VAJRA is a **fully automated penetration-testing platform** — the class of
-tool used by commercial vendors such as Acunetix, Tenable, Qualys and
-Ridgebot, delivered entirely through a modern web interface.
+tool used by vendors like Acunetix, Tenable, Qualys and Ridgebot, delivered
+entirely through a modern web interface.
 
 Every capability — creating targets, configuring and launching scans,
 choosing credentialed or unauthenticated operation, watching scans run live,
@@ -85,7 +85,7 @@ profiles and can run **credentialed or unauthenticated** (see below).
 |---|---|---|---|
 | **Web Application** | URL | quick · full · deep | Optional (web login: user / pass / OTP / TOTP) |
 | **API & Microservice** | URL | quick · full · deep | Optional (API login: user / pass / OTP / TOTP) |
-| **Infrastructure / Server** | IP · CIDR · hostname · domain | quick · full | Runs unauthenticated; optional UDP / SYN / brute / aggressive toggles |
+| **Infrastructure** | IP · CIDR · hostname · domain | quick · full | Runs unauthenticated; optional UDP / SYN / brute / aggressive toggles |
 | **Active Directory** | domain · hostname · IP | full · deep | Optional (domain user / pass / NT hash) — unauthenticated pass always runs |
 | **External Attack Surface** | domain · URL | recon | Unauthenticated recon module |
 
@@ -130,8 +130,6 @@ by findings or report endpoints.
 
 Requirements: Python 3.9+, Node 18+, and the repo's `server` + `webapp`
 directories.
-
-Requirements: Python 3.9+, Node 18+.
 
 ## Run — one command
 
@@ -182,7 +180,8 @@ runs a real engine scan through the full API → queue → worker → harvest �
 report path):
 
 ```bash
-.venv/bin/python server/smoke.py        # 34 checks, green exit 0
+cd server
+.venv/bin/python smoke.py        # 34 checks, green exit 0
 ```
 
 ---
@@ -196,6 +195,7 @@ report path):
 | **Engines** | Scan-type catalog; launch any scan with your choice of profile, mode and credentials |
 | **Scans** | Live queue with SSE progress; open any scan to watch events, findings and the report |
 | **Findings** | Cross-scan triage: severity, confidence, status workflow, PoC screenshots |
+| **Audit** | Immutable activity log |
 | **Reports** | Branded HTML (in-app preview) and PDF download from any completed scan |
 
 Scan detail shows:
@@ -209,7 +209,7 @@ Scan detail shows:
 
 ## Reporting
 
-Every completed scan produces a commercial-grade, brand-colored report:
+Every completed scan produces a branded, brand-colored report:
 
 - **Analysis Authorisation** line (target authorization proof) on the cover
 - Assessment summary with an executive narrative and severity matrix
@@ -225,9 +225,9 @@ issue (URL auto-derived from evidence) and embedded in both exports.
 
 ---
 
-## Commercial capabilities
+## Capabilities
 
-Feature parity with commercial platforms (Acunetix · Tenable · Qualys ·
+Feature set matching commercial platforms (Acunetix · Tenable · Qualys ·
 Ridgebot):
 
 - **Multi-engine coverage** — web, API, infrastructure, Active Directory,
@@ -239,9 +239,10 @@ Ridgebot):
 - **Real PoC screenshots** rendered into HTML and PDF reports.
 - **Asset + target inventory** with a mandatory authorization gate.
 - **Live streaming** of scan events over SSE (no page polling).
-- **Findings lifecycle** and triage workflow.
-- **Branded professional reports** with executive and technical sections.
+- **Findings lifecycle** and triage workflow (table + Kanban views).
+- **Branded reports** with executive and technical sections.
 - **Audit trail** (`/api/v1/audit`) for governance.
+- **Command palette + hotkeys** (`Ctrl+K`, `g d/t/s/e/f/a`, `n t/s`, `?`, `Esc`).
 
 ---
 
@@ -284,7 +285,7 @@ The UI speaks to a FastAPI control plane. Quick reference:
                             └───────────────────────────┘
 ```
 
-The scan worker runs the (now-embedded) engine kernel as a constrained,
+The scan worker runs the (embedded) engine kernel as a constrained,
 non-interactive subprocess per scan, then harvests each target's SQLite store,
 evidence text and PoC screenshots into the platform database. Reports are
 regenerated server-side from the harvested data.
@@ -320,7 +321,7 @@ The engine behind the platform is a full attack framework. Condensed view:
   WAF fingerprinting · tech/CVE correlation.
 - **API** — endpoint inventory, object-level authz sweep, token/JWT audit,
   SAML surface, injection suite against API bodies.
-- **Network/Infrastructure** — async/SYN port sweep, service fingerprinting,
+- **Infrastructure** — async/SYN port sweep, service fingerprinting,
   deep binary handshakes, TLS audit, OS detection, SNMP/UDP probes,
   unauth-exposure sweeps (Redis, Docker API, k8s, Elasticsearch, memcached…).
 - **Active Directory** — KDC user enum, AS-REP roast, kerberoasting, DACL
@@ -363,7 +364,7 @@ Environment variables:
 **What is VAJRA?** A fully automated, browser-first penetration-testing
 platform covering web apps, APIs, infrastructure, Active Directory and
 external attack surface, with automated exploitation, PoC screenshots and
-professional HTML/PDF reporting.
+branded HTML/PDF reporting.
 
 **Do I need credentials?** No. Every scan type runs unauthenticated by
 default; credentials are optional for a deeper, authenticated pass.

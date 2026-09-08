@@ -9,10 +9,7 @@ ENGINES = {
     "webapp": {
         "label": "Web Application",
         "icon": "app-web",
-        "description": ("Authenticated-capable web crawl and vulnerability "
-                        "test with PoC evidence: tech/CVE fingerprints, "
-                        "auth checks, SSRF, fuzzing, uploads, business logic "
-                        "and exploit confirmation."),
+        "description": "Complete web application security assessment — crawling, vulnerability detection, and automated exploitation with PoC evidence.",
         "target_kinds": ["url"],
         "profiles": ["quick", "full", "deep"],
         "params_schema": {
@@ -20,10 +17,8 @@ ENGINES = {
                      "type": "object",
                      "fields": ["web_user", "web_pass", "web_login",
                                 "web_otp", "web_totp_secret"]},
-            "aggressive": {"label": "Intrusive exploits (aggressive)",
-                           "type": "bool", "default": False},
-            "external_intel": {"label": "Live CVE intel lookups",
-                               "type": "bool", "default": False},
+            "aggressive": {"label": "Intrusive exploits", "type": "bool", "default": False},
+            "external_intel": {"label": "Live CVE intel lookups", "type": "bool", "default": False},
         },
         "cfg": {
             "default_profile": "deep",
@@ -35,11 +30,7 @@ ENGINES = {
     "api": {
         "label": "API & Microservice",
         "icon": "app-api",
-        "description": ("REST/GraphQL API assessment: OpenAPI/Swagger "
-                        "inventory, BOLA/IDOR object checks, JWT & token "
-                        "audit, SAML surface, auth logic and injection "
-                        "tests against the API's own endpoints, with "
-                        "auto-exploitation of confirmed issues."),
+        "description": "REST/GraphQL API security assessment — OpenAPI inventory, BOLA/IDOR, JWT audit, SAML, and injection testing with automated exploitation.",
         "target_kinds": ["url"],
         "profiles": ["quick", "full", "deep"],
         "params_schema": {
@@ -47,10 +38,8 @@ ENGINES = {
                      "type": "object",
                      "fields": ["web_user", "web_pass", "web_login",
                                 "web_otp", "web_totp_secret"]},
-            "aggressive": {"label": "Intrusive exploits (aggressive)",
-                           "type": "bool", "default": False},
-            "external_intel": {"label": "Live CVE intel lookups",
-                               "type": "bool", "default": False},
+            "aggressive": {"label": "Intrusive exploits", "type": "bool", "default": False},
+            "external_intel": {"label": "Live CVE intel lookups", "type": "bool", "default": False},
         },
         "cfg": {
             "default_profile": "full",
@@ -60,24 +49,17 @@ ENGINES = {
         },
     },
     "infrastructure": {
-        "label": "Infrastructure / Server",
+        "label": "Infrastructure",
         "icon": "app-infra",
-        "description": ("Port/service discovery, TLS and banner analysis, "
-                        "service CVE mapping and credentialed checks across "
-                        "hosts, ranges and domains."),
+        "description": "Network and host security assessment — port/service discovery, TLS analysis, service CVE mapping, and credentialed checks.",
         "target_kinds": ["ip", "cidr", "hostname", "domain"],
         "profiles": ["quick", "full"],
         "params_schema": {
-            "udp": {"label": "UDP service probes", "type": "bool",
-                    "default": False},
-            "syn": {"label": "Raw SYN scan (root)", "type": "bool",
-                    "default": False},
-            "brute": {"label": "Service credential brute force",
-                      "type": "bool", "default": False},
-            "aggressive": {"label": "Intrusive exploits (aggressive)",
-                           "type": "bool", "default": False},
-            "external_intel": {"label": "Live CVE intel lookups",
-                               "type": "bool", "default": False},
+            "udp": {"label": "UDP service probes", "type": "bool", "default": False},
+            "syn": {"label": "Raw SYN scan (root)", "type": "bool", "default": False},
+            "brute": {"label": "Service credential brute force", "type": "bool", "default": False},
+            "aggressive": {"label": "Intrusive exploits", "type": "bool", "default": False},
+            "external_intel": {"label": "Live CVE intel lookups", "type": "bool", "default": False},
         },
         "cfg": {
             "default_profile": "full",
@@ -88,22 +70,14 @@ ENGINES = {
     "active_directory": {
         "label": "Active Directory",
         "icon": "app-ad",
-        "description": ("Domain discovery, LDAP/kerberos enumeration, AS-REP "
-                        "roast, kerberoasting, ACL/DACL abuse, NTLM relay, "
-                        "certificate (ADCS) abuse and privilege escalation "
-                        "paths. Requires a domain-context target and, for "
-                        "bound checks, domain credentials."),
+        "description": "AD security assessment — domain discovery, LDAP/Kerberos enumeration, AS-REP roasting, kerberoasting, ACL/DACL abuse, ADCS, and privilege escalation paths.",
         "target_kinds": ["domain", "hostname", "ip"],
         "profiles": ["full", "deep"],
         "params_schema": {
-            "ad_user": {"label": "Domain username",
-                        "type": "string", "secret": True},
-            "ad_pass": {"label": "Password",
-                        "type": "string", "secret": True},
-            "nthash": {"label": "NT hash (LM:NT or bare)",
-                       "type": "string", "secret": True},
-            "aggressive": {"label": "Intrusive AD exploitation",
-                           "type": "bool", "default": False},
+            "ad_user": {"label": "Domain username", "type": "string", "secret": True},
+            "ad_pass": {"label": "Password", "type": "string", "secret": True},
+            "nthash": {"label": "NT hash (LM:NT or bare)", "type": "string", "secret": True},
+            "aggressive": {"label": "Intrusive AD exploitation", "type": "bool", "default": False},
         },
         "cfg": {
             "default_profile": "full",
@@ -115,14 +89,11 @@ ENGINES = {
     "external": {
         "label": "External Attack Surface",
         "icon": "app-external",
-        "description": ("Fast, low-noise recon pass: DNS, WHOIS, "
-                        "subdomains and AXFR enumeration to map the exposed "
-                        "attack surface before deeper testing."),
+        "description": "External reconnaissance — DNS, WHOIS, subdomain enumeration, and AXFR to map the exposed attack surface.",
         "target_kinds": ["domain", "url"],
         "profiles": ["recon"],
         "params_schema": {
-            "external_intel": {"label": "Live intel lookups",
-                               "type": "bool", "default": False},
+            "external_intel": {"label": "Live intel lookups", "type": "bool", "default": False},
         },
         "cfg": {
             "default_profile": "recon",
