@@ -1,0 +1,25 @@
+# Optional Postgres for the VAJRA platform (dev/on-prem).
+# Start the DB, then:
+#   VAJRA_DB_URL=postgresql+psycopg2://vajra:vajra@127.0.0.1:5432/vajra \
+#   python server/run_api.py
+#   python server/run_worker.py
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: vajra
+      POSTGRES_PASSWORD: vajra
+      POSTGRES_DB: vajra
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vajra"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

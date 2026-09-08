@@ -810,6 +810,40 @@ pull any Ollama tag, then set the *exact* tag name as `ai_model` in
 
 ---
 
+## Platform API (Phase 1)
+
+VAJRA is evolving from a CLI scanner into a commercial pentest platform
+(control plane + scan workers), see `docs/PLATFORM.md` for the full plan,
+architecture and roadmap.
+
+```bash
+# 1. install platform deps (already installed if you used .venv)
+.venv/bin/pip install -r server/requirements.txt
+
+# 2. control plane API  -> http://0.0.0.0:8000   (use VAJRA_API_PORT if busy)
+python server/run_api.py
+
+# 3. scan worker (picks up queued scans, runs the engine, harvests results)
+python server/run_worker.py
+
+# 4. end-to-end verification (real engine scan against a local HTTP target)
+python server/smoke.py
+```
+
+- Default login: `admin` / `admin123` (override with `VAJRA_ADMIN_PASSWORD`
+  before first boot).
+- Default DB: SQLite at `server/var/platform.db`. For Postgres set
+  `VAJRA_DB_URL=postgresql+psycopg2://...` and `pip install psycopg2-binary`
+  (see `deploy/compose.db.yml`).
+- Every scan target requires an authorization-proof statement — the
+  platform refuses to scan without an explicit authorized-scope reference.
+- Core engine selftest remains the release gate: `core/selftest.py` → 56/56.
+- API basics: `POST /api/v1/auth/login` → bearer token → create target →
+  create scan → poll `GET /api/v1/scans/{id}` → stream `.../events` (SSE) →
+  `GET /api/v1/reports/{id}/html` → triage via `PATCH /api/v1/findings/{id}`.
+
+---
+
 ## License & author
 
 **VAJRA — Automated Penetration Testing Framework**
