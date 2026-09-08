@@ -6,6 +6,9 @@ uvicorn[standard]>=0.31
 SQLAlchemy>=2.0
 python-multipart>=0.0.9
 
+# Branded PDF report generation (pure Python, no system deps).
+fpdf2>=2.8
+
 # Platform DB is SQLite by default. For the production Postgres path install:
 #   psycopg2-binary>=2.9
 # and set VAJRA_DB_URL=postgresql+psycopg2://user:pass@localhost/vajra

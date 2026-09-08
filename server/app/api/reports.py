@@ -1,13 +1,14 @@
-"""Reports: serve the engine-generated HTML report and raw scan artifacts."""
+"""Reports: serve the engine-generated HTML report, raw artifacts and PDFs."""
 
 import os
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
 from .. import models
 from ..db import get_db
+from ..reporting import build_pdf
 from .deps import current_user
 
 router = APIRouter(prefix="/api/v1/reports", tags=["reports"])
@@ -51,6 +52,31 @@ def asset(scan_id: int, path: str, db: Session = Depends(get_db),
     if not os.path.isfile(target):
         raise HTTPException(404, "missing asset")
     return FileResponse(target)
+
+
+@router.get("/{scan_id}/pdf")
+def report_pdf(scan_id: int, db: Session = Depends(get_db),
+               user=Depends(current_user)):
+    s = _check(db, user, scan_id)
+    if s.status not in ("completed", "failed"):
+        raise HTTPException(409, "scan not finished yet")
+    target = db.get(models.Target, s.target_id)
+    findings = (db.query(models.Finding)
+                  .filter(models.Finding.scan_id == scan_id)
+                  .order_by(models.Finding.id).all())
+    edef = (db.query(models.EngineDef)
+              .filter(models.EngineDef.engine_id == s.engine_id).first())
+    engine_label = edef.label if edef else s.engine_id
+    who = db.get(models.User, user.id)
+    try:
+        data = build_pdf(s, target, findings, engine_label, who)
+    except Exception as exc:
+        raise HTTPException(500, "report generation failed: %s" % exc)
+    stamp = s.created_at.strftime("%Y%m%d") if s.created_at else "scan"
+    fname = "vajra-pentest-report-%s-%s.pdf" % (scan_id, stamp)
+    return Response(content=data, media_type="application/pdf",
+                    headers={"Content-Disposition":
+                             'attachment; filename="%s"' % fname})
 
 
 @router.post("/{scan_id}/regenerate")

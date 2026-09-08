@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { api, streamEvents } from '../api.js'
+import { api, apiBlob, streamEvents } from '../api.js'
 import { Pill, ScanStatus, Elapsed, Spinner, useToast } from '../components.jsx'
 import { IcoStop, IcoDoc, IcoChev } from '../icons.jsx'
 
@@ -50,6 +50,22 @@ export default function ScanDetail({ id }) {
   }, [id, scan && scan.status])
 
   const running = scan && !TERMINAL[scan.status]
+
+  async function downloadPdf() {
+    try {
+      const blob = await apiBlob('/v1/reports/' + id + '/pdf')
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'vajra-pentest-report-' + id + '.pdf'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      shout('PDF download failed: ' + (e.message || e.status), 'error')
+    }
+  }
 
   if (err) return <div className="errorbox">{err}</div>
   if (!scan) return <div className="muted"><Spinner /> Loading…</div>
@@ -107,7 +123,14 @@ export default function ScanDetail({ id }) {
 
       {tab === 'events' && <EventsLog events={events} running={running} />}
       {tab === 'report' && (
-        <iframe className="report-frame" src={reportUrl} title="report" />
+        <>
+          <div className="toolbar" style={{ justifyContent: 'flex-end', padding: '8px 0' }}>
+            <button className="btn secondary" onClick={downloadPdf}>
+              <IcoDoc /> Download PDF
+            </button>
+          </div>
+          <iframe className="report-frame" src={reportUrl} title="report" />
+        </>
       )}
       {tab === 'findings' && <FindingsView rows={findings} />}
     </>

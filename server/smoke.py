@@ -121,6 +121,10 @@ def main():
         scan_id = bad.json()["id"]
         check("scan pending", bad.json()["status"] == "pending")
 
+        live_pdf = c.get("/api/v1/reports/%d/pdf" % scan_id, headers=H)
+        check("pdf running guard", live_pdf.status_code == 409,
+              str(live_pdf.status_code))
+
         from server.worker.queue import tick
         deadline = time.time() + 420
         while time.time() < deadline:
@@ -160,6 +164,21 @@ def main():
         html_ok = rr.status_code == 200 and (
             "<html" in rr.text[:300].lower())
         check("report html", html_ok, "status=%d" % rr.status_code)
+
+        pf = c.get("/api/v1/reports/%d/pdf" % scan_id, headers=H)
+        body = pf.content
+        pdf_ok = (pf.status_code == 200
+                  and pf.headers.get("content-type", "") == "application/pdf"
+                  and body[:5] == b"%PDF-"
+                  and b"attachment; filename=" in
+                  pf.headers.get("content-disposition", "").encode())
+        check("report pdf", pdf_ok and len(body) > 3000,
+              "status=%d bytes=%d" % (pf.status_code, len(body)))
+
+        not_ready = c.get("/api/v1/reports/999999/pdf", headers=H)
+        check("pdf missing scan guard", not_ready.status_code in (404, 409),
+              str(not_ready.status_code))
+
         check("dashboard", c.get("/api/v1/dashboard", headers=H)
               .status_code == 200)
         check("audit", c.get("/api/v1/audit", headers=H)

@@ -48,6 +48,19 @@ export async function api(path, opts = {}) {
   return data
 }
 
+/* Fetch a binary artifact (e.g. the PDF report) with auth; returns a Blob. */
+export async function apiBlob(path, opts = {}) {
+  const headers = { ...(opts.headers || {}) }
+  if (token.get()) headers['Authorization'] = 'Bearer ' + token.get()
+  const res = await fetch('/api' + path, { method: opts.method || 'GET', headers })
+  if (!res.ok) {
+    let err = new Error(res.status + ' ' + res.statusText)
+    err.status = res.status
+    throw err
+  }
+  return res.blob()
+}
+
 /* EventSource-over-fetch so we can send the Authorization header.
    Re-emits last event id, so the API replays from where we left off. */
 export async function streamEvents(url, { onEvent, onDone, signal }) {
