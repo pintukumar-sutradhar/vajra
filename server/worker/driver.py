@@ -246,6 +246,7 @@ def run_scan(scan_id):
         lines = []
         buf = ""
         last_event = 0.0
+        last_commit = 0.0
 
         def flush(force=False):
             nonlocal lines, last_event
@@ -289,6 +290,12 @@ def run_scan(scan_id):
             for key, _ in sel.select(timeout=0.25):
                 drain_master()
             flush()
+            # Persist progress heartbeats so the UI sees the running percent
+            # live instead of stuck at 0% until the very end.
+            now = time.monotonic()
+            if now - last_commit >= 2.0:
+                db.commit()
+                last_commit = now
             if scan.cancel_requested:
                 proc.terminate()
                 try:
