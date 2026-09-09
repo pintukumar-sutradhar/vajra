@@ -61,25 +61,15 @@ function LaunchModal({ engine, onClose, onScanStart }) {
   const [profile, setProfile] = useState(engine.default_profile)
   const [params, setParams] = useState({})
   const [busy, setBusy] = useState(false)
-  const [mode, setMode] = useState(null)
   const [usedCreds, setUsedCreds] = useState(false)
   const shout = useToast()
 
-  const reconOnly = engine.profiles && engine.profiles.length === 1 &&
-    engine.profiles[0] === 'recon'
-  const MODES = (reconOnly ? [
-    { id: 'gentle', label: 'Recon pass', profile: 'recon',
-      aggressive: false, desc: 'Fast, low-noise surface mapping' },
-  ] : [
-    { id: 'gentle', label: 'Stealthy / read-only', profile: 'quick',
-      aggressive: false, desc: 'Non-intrusive recon + checks, no exploitation' },
-    { id: 'auto', label: 'Active & auto-exploit', profile: engine.default_profile,
-      aggressive: false, desc: 'Proof-gated automated exploitation of confirmed issues' },
-    { id: 'deep', label: 'Deep coverage', profile: 'deep', aggressive: false,
-      desc: 'Larger crawl + injection surface, proof-gated exploitation' },
-    { id: 'intrusive', label: 'Intrusive (aggressive)', profile: 'full',
-      aggressive: true, desc: 'CVE RCE runners, brute force, exploitation channels' },
-  ].filter((m) => (engine.profiles || []).includes(m.profile) || m.id === 'auto'))
+  const PROFILES = [
+    { id: 'quick', label: 'Quick', desc: 'Fast triage pass' },
+    { id: 'full', label: 'Standard', desc: 'Full assessment' },
+    { id: 'deep', label: 'Deep', desc: 'Extensive coverage' },
+    { id: 'recon', label: 'Recon', desc: 'Attack-surface mapping' },
+  ].filter((p) => (engine.profiles || []).includes(p.id))
 
   const schema = engine.params_schema || {}
 
@@ -96,13 +86,6 @@ function LaunchModal({ engine, onClose, onScanStart }) {
   }
 
   useEffect(() => {
-    if (!mode && (engine.profiles || []).includes(engine.default_profile)) {
-      pickMode(reconOnly ? 'gentle' :
-        engine.default_profile === 'full' ? 'auto' : 'gentle')
-    }
-  }, [])
-
-  useEffect(() => {
     api('/v1/targets').then((t) => {
       setTargets(t)
       const kinds = engine.target_kinds || []
@@ -113,14 +96,6 @@ function LaunchModal({ engine, onClose, onScanStart }) {
 
   function setParam(k, v) {
     setParams((p) => ({ ...p, [k]: v }))
-  }
-
-  function pickMode(m) {
-    const def = MODES.find((x) => x.id === m)
-    if (!def) return
-    setMode(m)
-    setProfile(def.profile)
-    setParams((p) => ({ ...p, aggressive: def.aggressive }))
   }
 
   async function launch(e) {
@@ -153,24 +128,21 @@ function LaunchModal({ engine, onClose, onScanStart }) {
       </>}>
       <form onSubmit={launch}>
         <div className="field">
-          <label>Operation mode</label>
-          {MODES.map((m) => (
-            <label key={m.id} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', cursor: 'pointer', padding: '4px 0' }}>
-              <input type="radio" style={{ width: 'auto', marginTop: 3 }}
-                checked={mode === m.id} onChange={() => pickMode(m.id)} />
-              <span>
-                <b>{m.label}</b>
-                <span className="muted" style={{ display: 'block', fontSize: 11.5 }}>{m.desc}</span>
-              </span>
-            </label>
-          ))}
-        </div>
-        <div className="field" style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <label>Profile</label>
-          <select value={profile} onChange={(e) => setProfile(e.target.value)}>
-            {(engine.profiles || []).map((p) => <option key={p} value={p}>{p}</option>)}
-          </select>
-          <span className="muted" style={{ fontSize: 11.5 }}>in sync with the selected mode</span>
+          <label>Scan profile</label>
+          {PROFILES.length > 0 ? (
+            <div className="seg">
+              {PROFILES.map((p) => (
+                <button type="button" key={p.id}
+                  className={'seg-btn' + (profile === p.id ? ' on' : '')}
+                  onClick={() => setProfile(p.id)}>
+                  {p.label}
+                  <span className="muted" style={{ display: 'block', fontSize: 10.5 }}>{p.desc}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="muted" style={{ fontSize: 12 }}>Recon profile</div>
+          )}
         </div>
         <div className="field">
           <label>Target</label>

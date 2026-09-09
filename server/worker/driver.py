@@ -12,12 +12,17 @@ import re
 import selectors
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 BANNER = re.compile(r"VAJRA v[\d.]+")
-_PROGRESS = re.compile(r"(\d{1,3})%")
+# engine progress: "42.5%" from the live meter or "42/100 (42.0%)"" lines
+_PROGRESS = re.compile(r"(\d{1,3}(?:\.\d+)?)%")
 _BLANK = re.compile(r"^[\s\-_=]*$", re.M)
+# engine chatter that just leaks local filesystem layout into the UI
+_NOISE = re.compile(r"output root ->|report ->|snapshot persisted|"
+                    r"workspace snapshot", re.I)
 
 _INTERVAL = 1.0
 
@@ -52,7 +57,7 @@ def expand_exclusions(tokens):
 def build_argv(target, engine_cfg, profile, params, creds, run_dir, repo):
     argv = [sys.executable, str(repo / "vajra.py"),
             "-t", target.address, "--profile", profile, "--yes",
-            "--output", str(run_dir / "Outputs"),
+            "--output", str((run_dir / "Outputs").resolve()),
             "--no-color"]
     ex = list(engine_cfg.get("exclude_modules") or [])
     if engine_cfg.get("no_brute"):
@@ -192,7 +197,9 @@ def run_scan(scan_id):
     from ..app.security import decrypt_creds
     from .engine_defs import get_engine
 
-    run_dir = settings.runs_dir / str(scan_id)
+    # Always resolve absolute paths: a relative --output / cwd would make the
+    # engine (which abspaths against its own cwd) nest the runs dir twice.
+    run_dir = (settings.runs_dir / str(scan_id)).resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
     db = SessionLocal()
     try:
@@ -219,35 +226,68 @@ def run_scan(scan_id):
                                                 scan.profile))
         env = dict(os.environ)
         env["PYTHONUNBUFFERED"] = "1"
-        env["PYTHONPYCACHEPREFIX"] = str(settings.var_dir / "pycache")
-        proc = subprocess.Popen(argv, cwd=str(run_dir), env=env,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True)
+        env["PYTHONPYCACHEPREFIX"] = str((settings.var_dir / "pycache").resolve())
+        env["VAJRA_PLATFORM_VAR"] = str(settings.var_dir.resolve())
+
+        # Spawn the engine on a pty so its live progress meter sees a real TTY
+        # and keeps redrawing continuously; a plain pipe only yields a 0% line
+        # at start and a 100% line at the very end, so progress would stay at
+        # 0% for the whole run. We parse the meter's redraw for real percents.
+        import pty
+        master, slave = pty.openpty()
+        try:
+            proc = subprocess.Popen(argv, cwd=str(run_dir), env=env,
+                                    stdin=subprocess.DEVNULL,
+                                    stdout=slave, stderr=subprocess.STDOUT)
+        finally:
+            os.close(slave)
         sel = selectors.DefaultSelector()
-        sel.register(proc.stdout, selectors.EVENT_READ)
+        sel.register(master, selectors.EVENT_READ)
         lines = []
-        last_flush = 0.0
+        buf = ""
+        last_event = 0.0
 
         def flush(force=False):
-            nonlocal lines, last_flush
+            nonlocal lines, last_event
+            now = time.monotonic()
             if lines and (force or len(lines) >= 40 or
-                          _INTERVAL - last_flush <= 0):
+                          now - last_event >= _INTERVAL):
                 _push_events(scan_id, lines)
                 lines = []
-                last_flush = 0.0
+                last_event = now
+
+        def handle(raw):
+            if "\r" in raw:                 # live meter redraw — never log
+                return
+            clean = ANSI.sub("", raw).strip()
+            if not clean or BANNER.search(clean) or _BLANK.match(clean) or \
+                    _NOISE.search(clean):
+                return
+            lines.append((_classify(clean), clean))
+
+        def drain_master():
+            try:
+                data = os.read(master, 65536)
+            except OSError:
+                data = b""
+            if not data:
+                return False
+            nonlocal buf
+            buf += data.decode("latin1", errors="replace")
+            while "\n" in buf:
+                line, buf = buf.split("\n", 1)
+                handle(line + "\n")
+            tail = buf.split("\r")[-1]
+            m = _PROGRESS.search(ANSI.sub("", tail))
+            if m:
+                pct = float(m.group(1))
+                if pct <= 100.0:
+                    scan.progress = min(99.0, pct)
+            return True
 
         while proc.poll() is None:
             for key, _ in sel.select(timeout=0.25):
-                data = key.fileobj.readline()
-                if data:
-                    clean = ANSI.sub("", data).strip()
-                    if clean and not BANNER.search(clean) and \
-                            not _BLANK.match(clean):
-                        lines.append((_classify(clean), clean))
-                        m = _PROGRESS.search(clean)
-                        if m:
-                            scan.progress = min(99.0, float(m.group(1)))
-                            last_flush = 1.0
+                drain_master()
             flush()
             if scan.cancel_requested:
                 proc.terminate()
@@ -261,7 +301,16 @@ def run_scan(scan_id):
                 db.commit()
                 _log(scan_id, "cancel requested by operator", "warning")
                 return
+        # drain whatever the child left behind just before it exited
+        while True:
+            sel.select(timeout=0.05)
+            if not drain_master():
+                break
         flush(force=True)
+        try:
+            os.close(master)
+        except OSError:
+            pass
         code = proc.returncode
         scan.exit_code = code
         if scan.cancel_requested:

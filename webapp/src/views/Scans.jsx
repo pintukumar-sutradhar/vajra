@@ -12,6 +12,15 @@ export default function Scans({ onOpen }) {
   }
   useEffect(load, [])
 
+  // Refresh while any scan is live so progress bars move without reloading.
+  useEffect(() => {
+    if (!scans) return
+    const live = scans.some((s) => !TERMINAL[s.status])
+    if (!live) return
+    const t = setInterval(load, 4000)
+    return () => clearInterval(t)
+  }, [scans])
+
   return (
     <div className="card">
       {!scans
@@ -31,8 +40,13 @@ export default function Scans({ onOpen }) {
                     <td>{s.target}</td>
                     <td className="muted">{s.profile}</td>
                     <td><ScanStatus value={s.status} /></td>
-                    <td style={{ minWidth: 90 }}>
-                      <div className="progress"><i style={{ width: (s.progress || 0) + '%' }} /></div>
+                    <td style={{ minWidth: 110 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div className="progress" style={{ flex: 1, minWidth: 60 }}>
+                          <i style={{ width: (s.progress || 0) + '%' }} />
+                        </div>
+                        <span className="mono muted" style={{ fontSize: 11 }}>{Math.round(s.progress || 0)}%</span>
+                      </div>
                     </td>
                     <td className="muted">{(s.stats && s.stats.findings) || '—'}</td>
                     <td className="muted">{new Date(s.created_at).toLocaleString()}</td>
@@ -44,3 +58,5 @@ export default function Scans({ onOpen }) {
     </div>
   )
 }
+
+const TERMINAL = { completed: 1, failed: 1, canceled: 1 }

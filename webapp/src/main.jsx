@@ -273,7 +273,7 @@ function HelpOverlay({ onClose }) {
 }
 
 function getProduct() {
-  return getBrand().edition || 'Professional'
+  return getBrand().edition || getBrand().product || 'VAJRA'
 }
 
 createRoot(document.getElementById('root')).render(

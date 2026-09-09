@@ -4,8 +4,8 @@ import { Logo } from '../components.jsx'
 
 const FEATURES = [
   { icon: '◈', title: 'All scan types', text: 'Web app, API, infrastructure, Active Directory and external attack surface — one console.' },
-  { icon: '⚡', title: 'Automated exploitation', text: 'Proof-gated exploitation of confirmed issues with real PoC evidence and screenshots.' },
-  { icon: '▤', title: 'Professional reporting', text: 'Branded HTML and PDF reports with executive synthesis and remediation playbooks.' },
+  { icon: '⚡', title: 'Automated exploitation', text: 'Exploitation of confirmed issues with real PoC evidence and screenshots.' },
+  { icon: '▤', title: 'HTML & PDF reporting', text: 'Branded reports with executive summary and remediation guidance.' },
 ]
 
 export default function Login({ onLogin }) {
@@ -49,10 +49,10 @@ export default function Login({ onLogin }) {
             <Logo size={52} />
             <div>
               <div className="bname">{brand.product}</div>
-              <div className="bedition">{brand.edition} · {brand.tagline}</div>
+              <div className="bedition">{brand.edition ? brand.edition + ' · ' : ''}{brand.tagline}</div>
             </div>
           </div>
-          <h1 className="login-head">Enterprise offensive security platform</h1>
+          <h1 className="login-head">Offensive security platform</h1>
           <p className="login-sub">
             Plan, launch and track every type of engagement — credentialed or
             unauthenticated — with automated exploitation and evidence-backed
@@ -107,8 +107,7 @@ export default function Login({ onLogin }) {
             </div>
           </form>
           <div className="login-foot">
-            Authorized use only. Every scan requires an explicit authorized-scope
-            reference.
+            Authorized use only.
           </div>
         </section>
       </div>

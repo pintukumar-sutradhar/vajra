@@ -64,8 +64,8 @@ tools/netkit.py scan 10.0.0.5     # async port scan + banners
 tools/fuzzurl.py http://app.local/ -w wordlists -t 8
 tools/cve.py apache 2.4.49        # offline CVE correlation
 tools/pocgen.py xss -u http://app.local/search -p q -P '<svg/onload=1>'
-tools/rawhttp.py -t app.local -P 80 -m GET /admin -H 'Host: evil.example'
-tools/dnsrecon.py example.com -w wordlists/subs.fast.txt
+tools/rawhttp.py -t app.local -P 80 -m GET /admin -H 'Host: evil.sample'
+tools/dnsrecon.py sample.com -w wordlists/subs.fast.txt
 tools/hashid.py 'NT_HASH_OR_SHA_OR_BCRYPT...'
 tools/listener.py --render-only --lhost 10.0.0.5 --lport 4444
 tools/wordlists.py info passwords

@@ -1,8 +1,8 @@
 {
   "_meta": {
-    "purpose": "Example runtime config. Drop a file like this next to the CLI as config.json to change default behaviour.",
+    "purpose": "Sample runtime config. Drop a file like this next to the CLI as config.json to change default behaviour.",
     "usage": "profiles (config/profiles.json) take precedence over these keys; CLI flags override both.",
-    "copy": "cp examples/example_config.json config/config.json   (then edit)"
+    "copy": "cp scenarios/sample_config.json config/config.json   (then edit)"
   },
   "threads": 40,
   "scan_concurrency": 800,

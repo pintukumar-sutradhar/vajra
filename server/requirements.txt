@@ -5,10 +5,14 @@ fastapi>=0.141
 uvicorn[standard]>=0.31
 SQLAlchemy>=2.0
 python-multipart>=0.0.9
+cryptography>=42.0
 
 # Branded PDF report generation (pure Python, no system deps).
 fpdf2>=2.8
 pillow>=10.0
+
+# Test client used by server/smoke.py (the harness).
+httpx2>=0.1.0
 
 # PoC screenshots (headless Chromium). Browsers: `.venv/bin/python -m playwright install chromium`
 playwright>=1.40

@@ -9,7 +9,7 @@ ENGINES = {
     "webapp": {
         "label": "Web Application",
         "icon": "app-web",
-        "description": "Complete web application security assessment — crawling, vulnerability detection, and automated exploitation with PoC evidence.",
+        "description": "Web application security scanning with automated exploitation and PoC evidence.",
         "target_kinds": ["url"],
         "profiles": ["quick", "full", "deep"],
         "params_schema": {
@@ -30,7 +30,7 @@ ENGINES = {
     "api": {
         "label": "API & Microservice",
         "icon": "app-api",
-        "description": "REST/GraphQL API security assessment — OpenAPI inventory, BOLA/IDOR, JWT audit, SAML, and injection testing with automated exploitation.",
+        "description": "API and microservice security scanning with automated exploitation.",
         "target_kinds": ["url"],
         "profiles": ["quick", "full", "deep"],
         "params_schema": {
@@ -51,7 +51,7 @@ ENGINES = {
     "infrastructure": {
         "label": "Infrastructure",
         "icon": "app-infra",
-        "description": "Network and host security assessment — port/service discovery, TLS analysis, service CVE mapping, and credentialed checks.",
+        "description": "Network, host and service security assessment.",
         "target_kinds": ["ip", "cidr", "hostname", "domain"],
         "profiles": ["quick", "full"],
         "params_schema": {
@@ -70,7 +70,7 @@ ENGINES = {
     "active_directory": {
         "label": "Active Directory",
         "icon": "app-ad",
-        "description": "AD security assessment — domain discovery, LDAP/Kerberos enumeration, AS-REP roasting, kerberoasting, ACL/DACL abuse, ADCS, and privilege escalation paths.",
+        "description": "Active Directory security assessment.",
         "target_kinds": ["domain", "hostname", "ip"],
         "profiles": ["full", "deep"],
         "params_schema": {
@@ -89,7 +89,7 @@ ENGINES = {
     "external": {
         "label": "External Attack Surface",
         "icon": "app-external",
-        "description": "External reconnaissance — DNS, WHOIS, subdomain enumeration, and AXFR to map the exposed attack surface.",
+        "description": "External attack-surface reconnaissance.",
         "target_kinds": ["domain", "url"],
         "profiles": ["recon"],
         "params_schema": {

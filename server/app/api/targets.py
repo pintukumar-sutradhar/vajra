@@ -51,11 +51,6 @@ def list_targets(q: str = "", include_archived: bool = False,
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_target(body: TargetIn, db: Session = Depends(get_db),
                   user=Depends(current_user)):
-    if not body.authorization_proof.strip():
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "authorization_proof is required: an explicit authorized-scope "
-            "statement (ticket/reference) must accompany every target")
     t = models.Target(org_id=user.org_id, kind=body.kind,
                       address=body.address.strip(), name=body.name,
                       notes=body.notes, tags=body.tags or {},

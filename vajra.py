@@ -140,7 +140,7 @@ def parse_args():
                     "medium/low with a\n"
                     "[Bounded] note until re-confirmed .",
         formatter_class=argparse.RawTextHelpFormatter,
-        epilog="""examples:
+        epilog="""sample invocations:
   python3 vajra.py -t 10.10.10.5 --profile full --yes
   python3 vajra.py -t https://example.org --profile quick
   python3 vajra.py -t 192.168.1.0/24 -p top1000 -o reports

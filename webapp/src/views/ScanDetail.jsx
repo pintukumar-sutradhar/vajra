@@ -51,6 +51,13 @@ export default function ScanDetail({ id }) {
 
   const running = scan && !TERMINAL[scan.status]
 
+  // Poll while running so the progress bar moves; the SSE stream only carries events.
+  useEffect(() => {
+    if (!running) return
+    const t = setInterval(load, 5000)
+    return () => clearInterval(t)
+  }, [id, scan && scan.status])
+
   async function downloadPdf() {
     try {
       const blob = await apiBlob('/v1/reports/' + id + '/pdf')

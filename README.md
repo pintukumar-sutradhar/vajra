@@ -28,8 +28,7 @@
 
 > ⚠️ **Authorized use only.** VAJRA is an offensive security assessment
 > platform. Running it against systems you do not own or lack written
-> permission to test is illegal. An authorization gate is enforced on every
-> scan.
+> permission to test is illegal.
 
 ---
 
@@ -54,8 +53,7 @@
 
 ## Overview
 
-VAJRA is a **fully automated penetration-testing platform** — the class of
-tool used by vendors like Acunetix, Tenable, Qualys and Ridgebot, delivered
+VAJRA is a **fully automated penetration-testing platform**, delivered
 entirely through a modern web interface.
 
 Every capability — creating targets, configuring and launching scans,
@@ -71,7 +69,6 @@ UI. **There is no terminal workflow.**
 | **Evidence** | Per-finding text proof + headless-browser **screenshots** of the compromised surface |
 | **Reporting** | Branded **HTML** and **PDF** export, executive summary, compliance playbook, remediation guidance |
 | **Findings lifecycle** | Open → triaged → false positive → accepted risk → fixed, per finding |
-| **Authorization control** | Every target must carry an explicit authorized-scope reference before it can be scanned |
 
 ---
 
@@ -91,16 +88,6 @@ profiles and can run **credentialed or unauthenticated** (see below).
 
 Each grid card shows the engine's exact profiles and target kinds, and the
 launch dialog reflects the real engine surface — no fake options.
-
-### Operation modes
-
-The launch dialog offers an **operation mode** for every scan instead of
-forcing you to know profile internals:
-
-- **Stealthy / read-only** — non-intrusive recon and checks, no exploitation
-- **Active & auto-exploit** — proof-gated automated exploitation of confirmed issues
-- **Deep coverage** — larger crawl + injection surface
-- **Intrusive (aggressive)** — CVE RCE runners, brute force, exploitation channels
 
 ---
 
@@ -191,8 +178,8 @@ cd server
 | Page | What it does |
 |---|---|
 | **Dashboard** | Risk posture, findings by severity, latest scans and targets |
-| **Targets** | Asset inventory with authorization-proof gate per target |
-| **Engines** | Scan-type catalog; launch any scan with your choice of profile, mode and credentials |
+| **Targets** | Asset inventory under test |
+| **Engines** | Scan-type catalog; launch any scan with your choice of profile and credentials |
 | **Scans** | Live queue with SSE progress; open any scan to watch events, findings and the report |
 | **Findings** | Cross-scan triage: severity, confidence, status workflow, PoC screenshots |
 | **Audit** | Immutable activity log |
@@ -209,9 +196,8 @@ Scan detail shows:
 
 ## Reporting
 
-Every completed scan produces a branded, brand-colored report:
+Every completed scan produces a branded report:
 
-- **Analysis Authorisation** line (target authorization proof) on the cover
 - Assessment summary with an executive narrative and severity matrix
 - Per-finding detail: description, evidence, request/response, screenshots,
   remediation and current triage status
@@ -227,17 +213,12 @@ issue (URL auto-derived from evidence) and embedded in both exports.
 
 ## Capabilities
 
-Feature set matching commercial platforms (Acunetix · Tenable · Qualys ·
-Ridgebot):
-
 - **Multi-engine coverage** — web, API, infrastructure, Active Directory,
   external attack surface under one console.
 - **Credentialed & unauthenticated** operation for every scan type.
 - **Automated exploitation with proof** — confirmed issues are exploited and
-  the capture is kept as evidence (not just a scanner's "potential"
-  findings).
+  the capture is kept as evidence.
 - **Real PoC screenshots** rendered into HTML and PDF reports.
-- **Asset + target inventory** with a mandatory authorization gate.
 - **Live streaming** of scan events over SSE (no page polling).
 - **Findings lifecycle** and triage workflow (table + Kanban views).
 - **Branded reports** with executive and technical sections.
@@ -254,7 +235,7 @@ The UI speaks to a FastAPI control plane. Quick reference:
 |---|---|---|
 | `/api/v1/auth/login` | POST | Bearer token (default `admin` / `admin`) |
 | `/api/v1/engines` | GET | Scan-type catalog with profiles + params schema |
-| `/api/v1/targets` | GET/POST | Assets with authorization proof |
+| `/api/v1/targets` | GET/POST | Asset inventory |
 | `/api/v1/scans` | POST | Launch a scan (engine, profile, params/creds) |
 | `/api/v1/scans/{id}` | GET | Status + progress + findings count |
 | `/api/v1/scans/{id}/events` | GET | SSE live event stream |
@@ -309,33 +290,11 @@ release gate; it is not a user workflow.
 
 ## Engine capability
 
-The engine behind the platform is a full attack framework. Condensed view:
-
-- **Web** — crawler (robots/sitemap aware) · dirbuster (soft-404 aware) ·
-  login-form auth with CSRF + session adoption · 16-class injection suite
-  (XSS, SQLi incl. time/blind, LFI, command injection, SSTI, NoSQL, XXE,
-  LDAP/XPath, HPP, open redirect, CRLF, Host-header/cache-poisoning, stored
-  XSS) · SSRF with OOB confirmation + internal pivot · API surface
-  (OpenAPI/Swagger, BOLA/IDOR, JWT, OAuth/OIDC) · race conditions ·
-  upload handling · wire tests (smuggling signals) · cloud exposure ·
-  WAF fingerprinting · tech/CVE correlation.
-- **API** — endpoint inventory, object-level authz sweep, token/JWT audit,
-  SAML surface, injection suite against API bodies.
-- **Infrastructure** — async/SYN port sweep, service fingerprinting,
-  deep binary handshakes, TLS audit, OS detection, SNMP/UDP probes,
-  unauth-exposure sweeps (Redis, Docker API, k8s, Elasticsearch, memcached…).
-- **Active Directory** — KDC user enum, AS-REP roast, kerberoasting, DACL
-  parsing (BloodHound-lite), ADCS ESC1–8 playbooks, DC-Sync, lateral-movement
-  command channels, NTLM relay.
-- **Exploitation** — SQLi extraction, RCE channels, reverse sessions, JWT
-  forgery, auth-bypass family, default credentials (20+ platforms, catalog
-  driven), password spray, CVE exposure probes and aggressive-gated exploit
-  runners with live PoC capture.
-- **Post-exploitation** — privesc path analysis, loot surveys, persistence
-  plans, cloud credential validation — all step-and-gated and reversible.
-- **Intelligence** — 12,800+ product CVE knowledge base (offline) with live
-  OSV update, MITRE ATT&CK tagging, risk scoring, AI-assisted remediation
-  (local Ollama, optional).
+The engine behind the platform is a full attack framework covering web, API,
+infrastructure, Active Directory and external attack surface: discovery and
+crawling, vulnerability detection across application, network, wire and cloud
+surfaces, proof-gated exploitation, post-exploitation paths and offline CVE
+intelligence.
 
 Every finding is proof-tested (Certain / Firm / Tentative) before it appears in
 a report, and every scan ends with an evidence folder of text proofs + PoC

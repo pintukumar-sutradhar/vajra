@@ -40,10 +40,9 @@ export default function Targets() {
                       <td className="mono">{t.address}</td>
                       <td><span className="tag">{t.kind}</span></td>
                       <td>
-                        <span className={"auth-badge " + (t.authorization_proof ? 'ok' : 'warn')}
-                          title={t.authorization_proof}>
-                          {t.authorization_proof ? '✓ authorized' : '✗ missing'}
-                        </span>
+                        {t.authorization_proof
+                          ? <span className="auth-badge ok" title={t.authorization_proof}>✓ authorized</span>
+                          : <span className="muted">—</span>}
                       </td>
                       <td className="muted">{(t.tags && Object.keys(t.tags).join(', ')) || '—'}</td>
                       <td className="muted">{new Date(t.created_at).toLocaleDateString()}</td>
@@ -108,7 +107,7 @@ function NewTarget({ onClose, onDone }) {
         <div className="field">
           <label>Address / target</label>
           <input value={form.address} onChange={set('address')}
-            placeholder={form.kind === 'url' ? 'https://app.example.com' : form.kind === 'cidr' ? '10.0.0.0/16' : 'example.com'} />
+            placeholder={form.kind === 'url' ? 'https://portal.company.com' : form.kind === 'cidr' ? '10.0.0.0/16' : 'portal.company.com'} />
         </div>
         <div className="field">
           <label>Name (optional)</label>
@@ -119,10 +118,10 @@ function NewTarget({ onClose, onDone }) {
           <input value={form.tags} onChange={set('tags')} placeholder="env=prod,owner=payments" />
         </div>
         <div className="field">
-          <label>Authorization proof (required)</label>
+          <label>Authorization proof (optional)</label>
           <textarea rows={3} value={form.authorization_proof} onChange={set('authorization_proof')}
-            placeholder="Explicit authorized-scope reference, e.g. engagement ID / ticket / signed scope statement." />
-          <div className="hint">VAJRA refuses to scan a target without an explicit authorized-scope reference. This is recorded in the audit log with every scan.</div>
+            placeholder="Engagement ID / ticket / authorized scope reference" />
+          <div className="hint">Optional reference stored with the target for the record.</div>
         </div>
       </form>
     </Modal>
@@ -146,7 +145,7 @@ function BulkImport({ onClose, onDone }) {
         await api('/v1/targets', {
           method: 'POST', body: {
             kind, address, name: name || address,
-            authorization_proof: auth || 'Bulk import — per-line auth proof required for scans',
+            authorization_proof: auth || '',
             tags: {},
           },
         })
@@ -167,11 +166,11 @@ function BulkImport({ onClose, onDone }) {
           <label>Paste lines (one per target)</label>
           <textarea rows={12} value={text} onChange={(e) => setText(e.target.value)}
             placeholder={[
-              "url|https://app.example.com|Customer Portal|Engagement-123",
-              "cidr|10.0.0.0/16|Internal Network|Engagement-123",
-              "domain|example.com|External Surface|Engagement-123",
+              "url|https://portal.company.com|Customer Portal|ENG-123",
+              "cidr|10.0.0.0/16|Internal Network|ENG-123",
+              "domain|company.com|External Surface|ENG-123",
             ].join('\n')} />
-          <div className="hint">Format: <code>kind|address|name|authorization_proof</code> — fields separated by <code>|</code>. Comment lines start with <code>#</code>. Valid kinds: url, ip, cidr, hostname, domain.</div>
+          <div className="hint">Format: <code>kind|address|name|authorization_proof</code> — fields separated by <code>|</code>. Only <code>kind</code> and <code>address</code> are required. Comment lines start with <code>#</code>. Valid kinds: url, ip, cidr, hostname, domain.</div>
         </div>
       </form>
     </Modal>

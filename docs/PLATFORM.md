@@ -1,9 +1,9 @@
-# VAJRA Platform — Commercial Pentest Platform (Plan)
+# VAJRA Platform — Pentest Platform (Plan)
 
 Status: v0.1 draft — approved direction (2026-09-08)
-Goal: turn the currently CLI-only VAJRA core into a commercial, branded,
-multi-engine penetration testing platform in the class of Acunetix, Tenable
-and Qualys — with proper PoC, triage and retest, not "just a vuln scanner".
+Goal: turn the currently CLI-only VAJRA core into a branded, multi-engine
+penetration testing platform with proper PoC, triage and retest, not "just a
+vuln scanner".
 
 ---
 
@@ -25,7 +25,7 @@ VAJRA sells itself as a **penetration testing platform**, not a checker:
 | Area | State |
 |---|---|
 | Scan core | `core/engine.py` runs a full scan on one target; module sets in `modules/{web,ad,network,exploit,post,recon}` (~73 files) |
-| Reports | `core/report.py` renders professional HTML/MD/XLSX with PoC blocks, VULN refs, CVE-per-tech, screenshots |
+| Reports | `core/report.py` renders branded HTML/MD/XLSX with PoC blocks, VULN refs, CVE-per-tech, screenshots |
 | Data | Per-target SQLite + workspace JSON |
 | Server/API/UI | None |
 | Self-test | `core/selftest.py`, 56/56 green — must stay green during platform work |
@@ -75,7 +75,7 @@ Decisions (approved):
 
 ## 4. The "scan engine" abstraction
 
-Each engine is a declarative template (mirrors Acunetix "scan templates"):
+Each engine is a declarative template (standard "scan template" model):
 
 ```yaml
 id: webapp
@@ -88,8 +88,8 @@ default_rps: 20
 risk: "active but safe by default; exploit needs authorization flag"
 ```
 
-- `id: webapp`   — crawl + vuln + PoC + WAF (Acunetix-style)
-- `id: infrastructure` — ports/services/CVE/config/credentials (Tenable-style)
+- `id: webapp`   — crawl + vuln + PoC + WAF
+- `id: infrastructure` — ports/services/CVE/config/credentials
 - `id: active_directory` — AD recon, chain, DACL, privesc, lateral (hallmark
   differentiator; needs domain-member/credential inputs)
 - `id: external` — DNS/subdomains/WHOIS/attack-surface first pass (fast, cheap)
@@ -98,7 +98,7 @@ Workers load an engine template -> build the module list -> run the headless
 scan driver (new: `core/driver.py` or a thin CLI subprocess) -> write
 findings/evidence/events into Postgres.
 
-## 5. Findings model (commercial-grade)
+## 5. Findings model
 
 - identity: id, org, target, engine, source module, checkpoint
 - severity/confidence (existing anti-FP cap retained: critical only on
@@ -129,7 +129,7 @@ findings/evidence/events into Postgres.
   printed HTML report header/footer.
 - engine cards carry their own icon/badge in the Library page.
 
-## 8. Security & ethics guardrails (non-negotiable for a commercial product)
+## 8. Security & ethics guardrails (non-negotiable)
 
 - every scan records a **scan identity**: who started it, why (scope proof),
   target, engine, timestamp; the authorization-gate stays mandatory.
@@ -201,9 +201,9 @@ viewer + screenshot); report download; first real dashboards (open by
 severity, engines activity).
 
 **STATUS: DONE (2026-09-08)** — React 18 + Vite 5 SPA in `webapp/`.
-Built: branded login + app shell (dark commercial theme, design tokens in
+Built: branded login + app shell (dark theme, design tokens in
 `webapp/src/theme.css`), dashboard (counts + severity split + recent
-scans), targets (create with mandatory authorization-proof), engine cards
+scans), targets (create with optional authorization-proof), engine cards
 (4 templates), scans list with live progress pills, scan detail with live
 SSE event log streamed to completion + branded report iframe, findings
 triage table (filter by severity/status, modal with evidence/PoC, guards
@@ -218,7 +218,7 @@ scan templates/profiles/scheduling/retest; infra + AD engines parity with
 web; dedup + asset correlation; CVSS normalization; false-positive and
 accepted-risk workflow end-to-end; PDF export via report pipeline.
 
-### Phase 4 — Product polish for commercial release
+### Phase 4 — Product polish for release
 usage/KPI dashboards, e-mail notifications, API docs portal, audit exports;
 pack full docker-compose (api/workers/migrations/web/nginx) + one-command
 installer; edition gating (Community vs Pro) via license key.

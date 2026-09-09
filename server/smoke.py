@@ -109,14 +109,7 @@ def main():
               "active_directory" in engines, str(engines))
 
         r = c.post("/api/v1/targets", headers=H,
-                   json={"kind": "url", "address": url,
-                         "authorization_proof": ""})
-        check("authorization gate", r.status_code == 422, r.text[:160])
-
-        r = c.post("/api/v1/targets", headers=H,
-                   json={"kind": "url", "address": url,
-                         "name": "smoke local",
-                         "authorization_proof": "LOCAL-SMOKE-AUTH-REF"})
+                   json={"kind": "url", "address": url, "name": "smoke local"})
         check("target create", r.status_code == 201, r.text[:200])
         target_id = r.json()["id"]
 

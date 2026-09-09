@@ -67,8 +67,8 @@ them**; the handler accepts a single TCP session and streams output.
 ## tools/dnsrecon.py — DNS recon (raw DNS over TCP)
 
 ```
-dnsrecon.py example.com                          # A/AAAA/MX/NS/TXT/SOA
-dnsrecon.py example.com -w names.txt             # subdomain brute
+dnsrecon.py portal.company.com                          # A/AAAA/MX/NS/TXT/SOA
+dnsrecon.py portal.company.com -w names.txt             # subdomain brute
 ```
 
 No third-party DNS dependency — builds and parses DNS messages on the wire.
@@ -112,7 +112,7 @@ quoted, not executed) into a dated file under `Outputs/`.
 ## tools/rawhttp.py — raw HTTP crafting
 
 ```
-rawhttp.py -t app.local -P 80 -m GET /admin -H 'Host: evil.example'
+rawhttp.py -t app.local -P 80 -m GET /admin -H 'Host: evil.site'
 rawhttp.py -t app.local -P 443 --tls -m POST /login -b 'user=x&pass=y'
 rawhttp.py -t app.local -P 80 --raw 'GET / HTTP/1.1\r\nHost: x'
 rawhttp.py -t app.local -P 80 --socks5 127.0.0.1:1080 /admin

@@ -9,7 +9,7 @@ export const token = {
 let _brand = {
   product: 'VAJRA',
   tagline: 'Offensive security platform',
-  edition: 'Professional',
+  edition: '',
   logo_svg: '',
   colors: {},
 }

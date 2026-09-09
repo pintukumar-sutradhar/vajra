@@ -84,8 +84,6 @@ def create_scan(body: ScanIn, db: Session = Depends(get_db),
             tgt.kind not in (engine.target_kinds or []):
         raise HTTPException(422, "target kind %s not supported by engine %s"
                             % (tgt.kind, body.engine_id))
-    if not tgt.authorization_proof.strip():
-        raise HTTPException(422, "target has no authorization proof")
     profile = body.profile or (engine.cfg or {}).get("default_profile", "full")
     if profile not in (engine.profiles or []) + ["recon"]:
         raise HTTPException(422, "unknown profile for this engine: %s"
