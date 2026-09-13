@@ -1,8 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { api } from '../api.js'
-import { ScanStatus, Empty } from '../components.jsx'
+import {
+  Severity, Confidence, Status, Empty, Spinner, Modal, useToast,
+} from '../components.jsx'
 
 const COLUMNS = ['new', 'triaged', 'confirmed', 'remediated', 'wont_fix']
+const SEV_ORDER = ['critical', 'high', 'medium', 'low', 'info']
 
 export default function Findings() {
   const [rows, setRows] = useState(null)
@@ -10,8 +13,11 @@ export default function Findings() {
   const [status, setStatus] = useState('')
   const [q, setQ] = useState('')
   const [mod, setMod] = useState('')
+  const [conf, setConf] = useState('')
+  const [hideInfo, setHideInfo] = useState(true)
   const [view, setView] = useState('table')
   const [sel, setSel] = useState(null)
+  const shout = useToast()
 
   function load() {
     const p = new URLSearchParams()
@@ -23,31 +29,58 @@ export default function Findings() {
   }
   useEffect(load, [sev, status, mod, q])
 
+  const filtered = useMemo(() => {
+    if (!rows) return null
+    let out = rows
+    if (hideInfo) out = out.filter((f) => (f.severity || 'info').toLowerCase() !== 'info')
+    if (conf) out = out.filter((f) => (f.confidence || '') === conf)
+    return out
+  }, [rows, hideInfo, conf])
+
+  const byCount = useMemo(() => {
+    const c = { critical: 0, high: 0, medium: 0, low: 0, info: 0, total: 0 }
+    ;(rows || []).forEach((f) => {
+      const k = (f.severity || 'info').toLowerCase()
+      if (k in c) c[k] += 1
+      c.total += 1
+    })
+    return c
+  }, [rows])
+
   const kanban = useMemo(() => {
     const buckets = {}
     COLUMNS.forEach((c) => buckets[c] = [])
-    if (!rows) return buckets
-    rows.forEach((f) => {
+    if (!filtered) return buckets
+    filtered.forEach((f) => {
       const col = COLUMNS.includes(f.status) ? f.status : 'new'
       buckets[col].push(f)
     })
     return buckets
-  }, [rows])
+  }, [filtered])
+
+  async function quickTriage(f, nextStatus, note) {
+    try {
+      await shout.api(() => api('/v1/findings/' + f.id, {
+        method: 'PATCH', body: { status: nextStatus, note: note || f.state_note || '' },
+      }))
+      load()
+    } catch (e) { /* toast shows error */ }
+  }
 
   function renderTable() {
-    if (!rows) return <div className="muted"><Spinner /> loading…</div>
-    if (rows.length === 0) return <Empty icon="🛡️" text="No findings match." />
+    if (!filtered) return <div className="muted"><Spinner /> loading…</div>
+    if (filtered.length === 0) return <Empty text="No findings match your filters." />
     return (
       <div className="card">
         <table className="vt">
           <thead>
-            <tr><th>Severity</th><th>Title</th><th>Asset</th><th>Status</th><th>Confidence</th><th>Last seen</th></tr>
+            <tr><th>Severity</th><th>Title</th><th>Asset</th><th>Status</th><th>Confidence</th><th>Last seen</th><th></th></tr>
           </thead>
           <tbody>
-            {rows.map((f) => (
+            {filtered.map((f) => (
               <tr key={f.id} style={{ cursor: 'pointer' }} onClick={() => setSel(f)}>
                 <td><Severity value={f.severity} /></td>
-                <td style={{ maxWidth: 460 }}>
+                <td style={{ maxWidth: 420 }}>
                   <div style={{ fontWeight: 600 }}>{f.title}</div>
                   <div className="muted mono" style={{ fontSize: 11.5 }}>{f.ref} · {f.source_module}</div>
                 </td>
@@ -55,6 +88,15 @@ export default function Findings() {
                 <td><Status value={f.status} /></td>
                 <td><Confidence value={f.confidence} /></td>
                 <td className="muted">{new Date(f.last_seen).toLocaleDateString()}</td>
+                <td>
+                  {f.status !== 'false-positive' && (
+                    <button className="btn sm"
+                      title="Mark as false positive"
+                      onClick={(e) => { e.stopPropagation(); quickTriage(f, 'false-positive', 'False positive — quick triage from findings list.') }}>
+                      Mark FP
+                    </button>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -64,7 +106,7 @@ export default function Findings() {
   }
 
   function renderKanban() {
-    if (!rows) return <div className="muted"><Spinner /> loading…</div>
+    if (!filtered) return <div className="muted"><Spinner /> loading…</div>
     return (
       <div className="grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)', gap: 16 }}>
         {COLUMNS.map((c) => (
@@ -98,35 +140,53 @@ export default function Findings() {
   return (
     <>
       <div className="toolbar">
-        <input style={{ maxWidth: 320 }} placeholder="Search title / asset…"
+        <input style={{ maxWidth: 260 }} placeholder="Search title / asset…"
           value={q} onChange={(e) => setQ(e.target.value)} />
         <select value={sev} onChange={(e) => setSev(e.target.value)} style={{ width: 130 }}>
           <option value="">All severities</option>
-          {['critical', 'high', 'medium', 'low', 'info'].map((s) => <option key={s}>{s}</option>)}
+          {SEV_ORDER.map((s) => <option key={s}>{s}</option>)}
         </select>
         <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ width: 150 }}>
           <option value="">All statuses</option>
           {['open', 'triaged', 'false-positive', 'accepted-risk', 'fixed'].map((s) => <option key={s}>{s}</option>)}
         </select>
+        <select value={conf} onChange={(e) => setConf(e.target.value)} style={{ width: 130 }}>
+          <option value="">All confidence</option>
+          {['certain', 'firm', 'tentative'].map((s) => <option key={s}>{s}</option>)}
+        </select>
         <select value={mod} onChange={(e) => setMod(e.target.value)} style={{ width: 130 }}>
           <option value="">All modules</option>
           {['webapp', 'api', 'infrastructure', 'active_directory', 'external'].map((m) => <option key={m}>{m}</option>)}
         </select>
+        <label className="switch" title="Hide informational observations from the list">
+          <input type="checkbox" checked={hideInfo} onChange={(e) => setHideInfo(e.target.checked)} />
+          <span className="slider" />
+          <span className="switch-label">Hide info</span>
+        </label>
         <div className="spacer" />
+        <span className="chip">found {byCount.total}</span>
         <div style={{ display: 'flex', gap: 6 }}>
           <button className="btn" onClick={() => setView('table')} disabled={view === 'table'}>Table</button>
           <button className="btn" onClick={() => setView('kanban')} disabled={view === 'kanban'}>Kanban</button>
         </div>
       </div>
 
+      <div className="sev-summary">
+        {SEV_ORDER.map((s) => (
+          <span key={s} className={'sev-sum ' + s}>
+            <i style={{ background: 'var(--sev-' + s + ')' }} />
+            {s} <b>{byCount[s]}</b>
+          </span>
+        ))}
+      </div>
+
       {view === 'table' ? renderTable() : renderKanban()}
 
-      {sel && <TriageModal finding={sel} onClose={() => setSel(null)} onChanged={(f) => { setSel(f); load() }} />}
+      {sel && <TriageModal finding={sel} onClose={() => setSel(null)}
+        onChanged={(f) => { setSel(f); load() }} />}
     </>
   )
 }
-
-function Spinner() { return <span className="spin" style={{ display: 'inline-block' }} /> }
 
 function TriageModal({ finding: f, onClose, onChanged }) {
   const [note, setNote] = useState(f.state_note || '')
@@ -157,11 +217,11 @@ function TriageModal({ finding: f, onClose, onChanged }) {
   }
 
   return (
-    <Modal title={`${detail.ref} — ${detail.severity.toUpperCase()}`} onClose={onClose} wide
+    <Modal title={`${detail.ref} — ${(detail.severity || 'info').toUpperCase()}`} onClose={onClose} wide
       foot={<>
         <button className="btn" onClick={() => setStatus(detail.status)} disabled={status === detail.status}>Reset</button>
         <button className="btn" onClick={onClose}>Close</button>
-        <button className="btn primary" onClick={save} disabled={busy || status === detail.status && note === (detail.state_note || '')}>
+        <button className="btn primary" onClick={save} disabled={busy || (status === detail.status && note === (detail.state_note || ''))}>
           {busy ? 'Saving…' : 'Save'}
         </button>
       </>}>
@@ -175,7 +235,7 @@ function TriageModal({ finding: f, onClose, onChanged }) {
       </div>
 
       <div className="section-title">Title</div>
-      <div className="muted" style={{ marginBottom: 12, fontSize: 15, color: 'var(--text)' }}>{detail.title}</div>
+      <div style={{ marginBottom: 12, fontSize: 15, color: 'var(--text)' }}>{detail.title}</div>
 
       {detail.detail && <>
         <div className="section-title">Detail</div>
@@ -212,7 +272,7 @@ function TriageModal({ finding: f, onClose, onChanged }) {
       <div className="field">
         <label>Internal note</label>
         <textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)}
-          placeholder="e.g. false positive — split DNS resolver returns 200 for arbitrary vhost" />
+          placeholder="Reason for the status change, e.g. false positive — resolver returns 200 for arbitrary vhosts" />
       </div>
     </Modal>
   )

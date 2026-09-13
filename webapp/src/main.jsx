@@ -98,38 +98,33 @@ function Shell() {
   }
 
   function pressSeq(key) {
-    console.log('[pressSeq] seqKey.current=', seqKey.current, 'key=', key);
     const map = { d: 'dashboard', t: 'targets', s: 'scans', e: 'engines', f: 'findings', a: 'audit' }
     if (seqKey.current === 'g' && map[key]) {
-      console.log('[pressSeq] calling nav for', map[key]);
       nav(map[key])
     }
     if (seqKey.current === 'n') {
-      if (key === 't') { console.log('[pressSeq] calling nav for targets'); nav('targets') }
-      if (key === 's') { console.log('[pressSeq] calling nav for engines'); nav('engines') }
+      if (key === 't') nav('targets')
+      if (key === 's') nav('engines')
     }
     clearTimeout(seqTimer.current)
     seqKey.current = null
   }
 
   useEffect(() => {
-    console.log('[hotkey] useEffect MOUNT, route.page=', route?.page);
     function onKey(e) {
-      console.log('[hotkey] keydown', e.key, 'seqKey=', seqKey.current);
       if (e.key === 'Escape') { setPalette(false); setHelp(false); return }
       const t = e.target
       const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' ||
         t.tagName === 'SELECT' || (t.isContentEditable === true))
-      if (typing) { console.log('[hotkey] typing, ignoring'); return }
+      if (typing) return
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault(); console.log('[hotkey] Ctrl+K -> palette'); setPalette((p) => !p); return
+        e.preventDefault(); setPalette((p) => !p); return
       }
-      if (e.key === '?') { console.log('[hotkey] ? -> help'); setHelp((h) => !h); return }
-      if (seqKey.current) { console.log('[hotkey] seqKey active, pressSeq', e.key); pressSeq(e.key); return }
+      if (e.key === '?') { setHelp((h) => !h); return }
+      if (seqKey.current) { pressSeq(e.key); return }
       if (e.key === 'g' || e.key === 'n') {
-        console.log('[hotkey] setting seqKey', e.key);
         seqKey.current = e.key
-        seqTimer.current = setTimeout(() => { console.log('[hotkey] seqKey timeout'); seqKey.current = null }, 1200)
+        seqTimer.current = setTimeout(() => { seqKey.current = null }, 1200)
       }
     }
     window.addEventListener('keydown', onKey)

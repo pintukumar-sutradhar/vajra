@@ -386,3 +386,54 @@ details.poc .inner { padding: 12px 14px; }
 /* Auth badge (fallback for :has unsupported) */
 .auth-badge.ok { background: rgba(34, 197, 94, 0.14); color: var(--ok); }
 .auth-badge.warn { background: rgba(225, 29, 72, 0.14); color: var(--danger); }
+
+/* ---------- live scan tracker ---------- */
+.tracker { display: flex; flex-direction: column; gap: 10px; }
+.tracker-slot { display: flex; align-items: center; gap: 14px; }
+.progress.lg { height: 12px; border-radius: 7px; }
+.progress.lg > i { transition: width 0.6s ease; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+.tracker .pct { font-size: 16px; font-weight: 700; min-width: 44px; text-align: right; color: var(--accent-2); }
+.tracker-meta { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ---------- KPI cards ---------- */
+.statcard.kpi { border-top: 3px solid rgba(0, 115, 255, 0.55); }
+
+/* ---------- severity summary / bars ---------- */
+.sev-summary { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.sev-sum { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; background: var(--surface); }
+.sev-sum i { width: 9px; height: 9px; border-radius: 50%; }
+.sev-sum b { color: var(--text); font-size: 13px; }
+.sevrow { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.sev-lbl { width: 78px; font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+.sevrow .track { flex: 1; height: 10px; background: var(--surface-2); border-radius: 5px; overflow: hidden; }
+.sevrow .track i { display: block; height: 100%; border-radius: 5px; transition: width 0.6s ease; }
+.sevcnt { width: 30px; text-align: right; font-weight: 700; color: var(--muted); font-size: 13px; }
+
+/* ---------- weekly bar chart ---------- */
+.hchart { display: flex; align-items: flex-end; gap: 10px; height: 160px; padding-top: 8px; }
+.hcol { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 6px; }
+.hbar { width: 100%; max-width: 42px; background: linear-gradient(180deg, var(--accent-2), var(--accent));
+  border-radius: 6px 6px 0 0; display: flex; align-items: flex-start; justify-content: center; position: relative; }
+.hbar span { font-size: 11px; font-weight: 700; color: var(--text); margin-top: 4px; }
+.hday { font-size: 10.5px; color: var(--muted-2); text-align: center; white-space: nowrap; }
+
+/* ---------- engines capabilities ---------- */
+.cap { padding: 10px 2px; border-bottom: 1px solid var(--border); }
+.cap:last-child { border-bottom: none; }
+.cap-name { font-weight: 600; font-size: 13.5px; }
+.cap-desc { color: var(--muted); font-size: 12.5px; margin-top: 2px; line-height: 1.5; }
+
+/* ---------- live row highlight ---------- */
+table.vt tr.row-live td { background: rgba(0, 115, 255, 0.06); }
+
+/* ---------- toggle switch ---------- */
+.switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+.switch input { display: none; }
+.switch .slider { position: relative; width: 36px; height: 20px; background: var(--surface-3); border: 1px solid var(--border-2);
+  border-radius: 999px; transition: background 0.2s; }
+.switch .slider::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
+  border-radius: 50%; background: var(--muted); transition: transform 0.2s, background 0.2s; }
+.switch input:checked + .slider { background: rgba(0, 115, 255, 0.35); border-color: var(--accent); }
+.switch input:checked + .slider::after { transform: translateX(16px); background: var(--accent-2); }
+.switch-label { font-size: 12.5px; color: var(--muted); }
