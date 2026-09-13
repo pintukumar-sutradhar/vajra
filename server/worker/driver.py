@@ -15,16 +15,59 @@ import sys
 import time
 from pathlib import Path
 
-ANSI = re.compile(r"\x1b\[[0-9;]*m")
+import codecs
+
+ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 BANNER = re.compile(r"VAJRA v[\d.]+")
 # engine progress: "42.5%" from the live meter or "42/100 (42.0%)"" lines
 _PROGRESS = re.compile(r"(\d{1,3}(?:\.\d+)?)%")
 _BLANK = re.compile(r"^[\s\-_=]*$", re.M)
+# the engine's ASCII-art splash banner: pure box-drawing noise in the live log
+_ART = re.compile(r"^[\s█▀▄▌▐░▒▓┌┐└┘│├┤┬┴┼╔╗╚╝║╠╣═╤╧╩╦─]+$", re.M)
+# engine line prefix: "[07:31:22] [INFO   ] text"
+_REC = re.compile(r"^\[[\d:]{8}\]\s+\[(\w+)\s*\]\s*(.*)$")
 # engine chatter that just leaks local filesystem layout into the UI
 _NOISE = re.compile(r"output root ->|report ->|snapshot persisted|"
                     r"workspace snapshot", re.I)
+# repetitive meter line the engine emits with every phase frame: no event value
+_METER = re.compile(r"(?:scan .+? \d+/\d+\s*\(\s*[\d.]+%\)\s*ETA|"
+                    r"scan .+? \[\s*[█▀▄▌▐░▒▓\s]+\]\s*(?:[\d.]+%|\d+/\d+)?)",
+                    re.I)
+# "[PHASE  ] >>> PHASE: RECON"  ->  give the UI a clean section marker
+_PHASE = re.compile(r">>>\s*PHASE:\s*(.*)", re.I)
 
 _INTERVAL = 1.0
+
+# scan_id -> running engine subprocess, for graceful termination when the
+# worker itself is stopped (SIGTERM) or restarting.
+ACTIVE = {}
+
+
+def kill_engine(scan_id):
+    """Best-effort terminate any engine process still running this scan's
+    run dir (covers engines orphaned by a previously hard-killed worker)."""
+    import signal as _signal
+    needle = "runs/%d/Outputs" % scan_id
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return
+    for pid_s in entries:
+        if not pid_s.isdigit():
+            continue
+        try:
+            with open("/proc/%s/cmdline" % pid_s, "rb") as fh:
+                cmd = fh.read().decode("utf-8", "replace")
+        except Exception:
+            continue
+        if needle not in cmd:
+            continue
+        if pid_s == str(os.getpid()):
+            continue
+        try:
+            os.kill(int(pid_s), _signal.SIGTERM)
+        except OSError:
+            continue
 
 
 def _classify(line):
@@ -90,19 +133,50 @@ def _utcnow():
     return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
 
 
+def _commit_retry(session, tries=6, pause=0.5):
+    """Commit a session, retrying on sqlite 'database is locked'.
+
+    The API process and the worker write the same file; under load a commit
+    can momentarily collide. A short backoff makes the run resilient instead
+    of crashing the driver (which used to orphan the engine mid-crawl)."""
+    from sqlalchemy.exc import OperationalError
+    for attempt in range(tries):
+        try:
+            session.commit()
+            return
+        except OperationalError as exc:
+            if "locked" in str(exc).lower():
+                session.rollback()
+                time.sleep(pause * (attempt + 1))
+                continue
+            raise
+    raise RuntimeError("db still locked after %d retries" % tries)
+
+
 def _push_events(scan_id, lines):
     from ..app import models
     from ..app.db import SessionLocal
+    from sqlalchemy.exc import OperationalError
     if not lines:
         return
-    session = SessionLocal()
-    try:
-        for lvl, msg in lines:
-            session.add(models.ScanEvent(scan_id=scan_id, level=lvl,
-                                         message=msg[:2000]))
-        session.commit()
-    finally:
-        session.close()
+    for _ in range(6):
+        session = SessionLocal()
+        try:
+            for lvl, msg in lines:
+                session.add(models.ScanEvent(scan_id=scan_id, level=lvl,
+                                             message=msg[:2000]))
+            session.commit()
+            return
+        except OperationalError as exc:
+            session.rollback()
+            session.close()
+            if "locked" in str(exc).lower():
+                time.sleep(0.5)
+                continue
+            raise
+        finally:
+            session.close()
+    raise RuntimeError("event db still locked after 6 attempts")
 
 
 def _log(scan_id, msg, lvl="info"):
@@ -241,12 +315,17 @@ def run_scan(scan_id):
                                     stdout=slave, stderr=subprocess.STDOUT)
         finally:
             os.close(slave)
+        ACTIVE[scan_id] = proc
         sel = selectors.DefaultSelector()
         sel.register(master, selectors.EVENT_READ)
         lines = []
         buf = ""
         last_event = 0.0
         last_commit = 0.0
+        last_milestone = 0
+        last_line = None
+        last_line_at = 0.0
+        utf8 = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
         def flush(force=False):
             nonlocal lines, last_event
@@ -258,56 +337,92 @@ def run_scan(scan_id):
                 last_event = now
 
         def handle(raw):
-            if "\r" in raw:                 # live meter redraw — never log
+            # The child writes through a pty, so the terminal driver turns
+            # every "\n" into "\r\n" — almost every real line carries a "\r".
+            # Strip it instead of dropping those lines (that older shortcut
+            # hid the whole live log). Meter-line filtering + cadence dedupe
+            # keep the stream readable rather than a firehose.
+            nonlocal last_line, last_line_at
+            clean = ANSI.sub("", raw).replace("\r", "").strip()
+            if not clean or BANNER.search(clean) or _NOISE.search(clean) or \
+                    _METER.search(clean):
                 return
-            clean = ANSI.sub("", raw).strip()
-            if not clean or BANNER.search(clean) or _BLANK.match(clean) or \
-                    _NOISE.search(clean):
+            m = _REC.match(clean)
+            if m:
+                tag = _classify(clean) if m.group(1).lower() in (
+                    "critical", "fatal", "error", "warn", "warning") else ""
+                body = m.group(2).strip()
+                if not body or _BLANK.match(body) or _ART.match(body):
+                    return
+                if m.group(1).lower().startswith("phase"):
+                    pm = _PHASE.search(body)
+                    clean = "== %s ==" % pm.group(1).strip() if pm else body
+                    level = "info"
+                else:
+                    clean = body
+                    level = tag or _classify(body)
+            else:
+                if _ART.match(clean):
+                    return
+                level = _classify(clean)
+            now = time.monotonic()
+            if clean == last_line and now - last_line_at < 2.0:
                 return
-            lines.append((_classify(clean), clean))
+            last_line, last_line_at = clean, now
+            lines.append((level, clean[:400]))
 
         def drain_master():
+            nonlocal buf, last_milestone
             try:
                 data = os.read(master, 65536)
             except OSError:
                 data = b""
             if not data:
                 return False
-            nonlocal buf
-            buf += data.decode("latin1", errors="replace")
+            buf += utf8.decode(data, final=False)
             while "\n" in buf:
                 line, buf = buf.split("\n", 1)
-                handle(line + "\n")
+                handle(line)
             tail = buf.split("\r")[-1]
             m = _PROGRESS.search(ANSI.sub("", tail))
             if m:
                 pct = float(m.group(1))
                 if pct <= 100.0:
                     scan.progress = min(99.0, pct)
+                    ms = int(scan.progress // 10)
+                    if ms > last_milestone:
+                        last_milestone = ms
+                        lines.append(("info", "progress %d%%" % (ms * 10)))
             return True
 
         while proc.poll() is None:
             for key, _ in sel.select(timeout=0.25):
                 drain_master()
             flush()
-            # Persist progress heartbeats so the UI sees the running percent
-            # live instead of stuck at 0% until the very end.
             now = time.monotonic()
             if now - last_commit >= 2.0:
-                db.commit()
+                job = db.query(models.JobItem).filter(
+                    models.JobItem.scan_id == scan_id).first()
+                if job is not None:
+                    job.heartbeat_at = _utcnow()
+                _commit_retry(db)
                 last_commit = now
             if scan.cancel_requested:
-                proc.terminate()
                 try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+                except Exception:
+                    pass
                 scan.status = "canceled"
                 scan.progress = 100.0
                 scan.finished_at = _utcnow()
-                db.commit()
+                _commit_retry(db)
                 _log(scan_id, "cancel requested by operator", "warning")
-                return
+                break
         # drain whatever the child left behind just before it exited
         while True:
             sel.select(timeout=0.05)
@@ -334,14 +449,40 @@ def run_scan(scan_id):
                 scan.error = "engine exited (%d) without a report" % code
                 _log(scan_id, scan.error, "error")
         scan.finished_at = _utcnow()
-        db.commit()
+        _commit_retry(db)
     except Exception as exc:
-        scan = db.get(models.Scan, scan_id)
-        if scan is not None:
-            scan.status = "failed"
-            scan.error = str(exc)[:2000]
-            scan.finished_at = _utcnow()
-            db.commit()
+        # The engine must never be orphaned when the driver dies: kill the
+        # child so a crawl can't keep hammering a target for 20+ minutes.
+        try:
+            proc = locals().get("proc")
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except Exception:
+                    proc.kill()
+                    proc.wait()
+        except Exception:
+            pass
+        try:
+            os.close(master)
+        except Exception:
+            pass
+        # Persist the terminal state from a fresh session: the crashed one may
+        # hold rolled-back/bloated transaction state and would just fail again.
+        fresh = SessionLocal()
+        try:
+            s = fresh.get(models.Scan, scan_id)
+            if s is not None and s.status not in ("completed", "canceled"):
+                s.status = "failed"
+                s.error = str(exc)[:2000]
+                s.finished_at = _utcnow()
+            _commit_retry(fresh)
+        except Exception:
+            pass
+        finally:
+            fresh.close()
         _log(scan_id, "worker error: %s" % exc, "error")
     finally:
+        ACTIVE.pop(scan_id, None)
         db.close()
