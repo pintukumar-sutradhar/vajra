@@ -12,6 +12,7 @@ from .. import models
 from ..audit import log as audit_log
 from ..db import get_db
 from ..security import encrypt_creds
+from . import ops
 from .deps import current_user
 from .engines import available_engines
 
@@ -118,6 +119,22 @@ def get_scan(scan_id: int, db: Session = Depends(get_db),
     if not s or s.org_id != user.org_id:
         raise HTTPException(404, "not found")
     return _out(s)
+
+
+@router.delete("/{scan_id}")
+def delete_scan(scan_id: int, db: Session = Depends(get_db),
+                user=Depends(current_user)):
+    s = db.get(models.Scan, scan_id)
+    if not s or s.org_id != user.org_id:
+        raise HTTPException(404, "not found")
+    addr = s.target.address if s.target else scan_id
+    ok, _ = ops.delete_scan(db, s)
+    if not ok:
+        raise HTTPException(
+            409, "scan is still running — cancel it first")
+    audit_log(db, user.username, "scan.delete", "scan", scan_id,
+              {"engine": s.engine_id, "target": addr})
+    return {"ok": True}
 
 
 @router.post("/{scan_id}/cancel")

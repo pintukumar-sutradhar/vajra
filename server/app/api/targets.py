@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..audit import log as audit_log
 from ..db import get_db
+from . import ops
 from .deps import current_user
 
 router = APIRouter(prefix="/api/v1/targets", tags=["targets"])
@@ -92,12 +93,18 @@ def update_target(target_id: int, body: TargetIn,
 
 
 @router.delete("/{target_id}")
-def archive_target(target_id: int, db: Session = Depends(get_db),
-                   user=Depends(current_user)):
+def delete_target(target_id: int, db: Session = Depends(get_db),
+                  user=Depends(current_user)):
     t = db.get(models.Target, target_id)
     if not t or t.org_id != user.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
-    t.archived = True
+    ok, blocker = ops.delete_target(db, t)
+    if not ok:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "target has a live scan (#%d) — cancel or wait for it first"
+            % blocker.id)
+    audit_log(db, user.username, "target.delete", "target", t.id,
+              {"address": t.address, "kind": t.kind})
     db.commit()
-    audit_log(db, user.username, "target.archive", "target", t.id)
     return {"ok": True}

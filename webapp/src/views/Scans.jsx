@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api.js'
-import { ScanStatus, Spinner } from '../components.jsx'
+import { Modal, ScanStatus, Spinner, useToast } from '../components.jsx'
 
 const ENGINE = { webapp: 'Web', infrastructure: 'Infra', active_directory: 'AD', external: 'External' }
 const TERMINAL = { completed: 1, failed: 1, canceled: 1 }
@@ -29,6 +29,8 @@ function fmtFixed(start, end) {
 export default function Scans({ onOpen }) {
   const [scans, setScans] = useState(null)
   const [, tick] = useState(0)
+  const [toDelete, setToDelete] = useState(null)
+  const shout = useToast()
 
   function load() {
     api('/v1/scans?limit=50').then(setScans).catch(() => {})
@@ -68,7 +70,7 @@ export default function Scans({ onOpen }) {
             : (
               <table className="vt">
                 <thead>
-                  <tr><th>#</th><th>Engine</th><th>Target</th><th>Profile</th><th>Status</th><th>Progress</th><th>Findings</th><th>Elapsed</th><th>Started</th></tr>
+                  <tr><th>#</th><th>Engine</th><th>Target</th><th>Profile</th><th>Status</th><th>Progress</th><th>Findings</th><th>Elapsed</th><th>Started</th><th></th></tr>
                 </thead>
                 <tbody>
                   {scans.map((s) => {
@@ -95,6 +97,9 @@ export default function Scans({ onOpen }) {
                           {running ? fmtElapsed(s.started_at) : fmtFixed(s.started_at || s.created_at, s.finished_at)}
                         </td>
                         <td className="muted">{new Date(s.created_at).toLocaleString()}</td>
+                        <td style={{ textAlign: 'right' }}>
+                          <button className="btn danger sm" onClick={(e) => { e.stopPropagation(); setToDelete(s) }}>Delete</button>
+                        </td>
                       </tr>
                     )
                   })}
@@ -102,6 +107,41 @@ export default function Scans({ onOpen }) {
               </table>
             )}
       </div>
+      {toDelete && <DeleteScan
+        scan={toDelete}
+        onClose={() => setToDelete(null)}
+        onDone={() => { setToDelete(null); load() }} />}
     </div>
+  )
+}
+
+function DeleteScan({ scan, onClose, onDone }) {
+  const shout = useToast()
+  const [busy, setBusy] = useState(false)
+
+  async function del(e) {
+    e.preventDefault()
+    setBusy(true)
+    try {
+      await shout.api(() => api(`/v1/scans/${scan.id}`, { method: 'DELETE' }))
+      shout.push(`Scan #${scan.id} removed`)
+      onDone()
+    } catch (err) { setBusy(false) }
+  }
+
+  return (
+    <Modal title="Delete scan" onClose={onClose}
+      foot={<>
+        <button className="btn" onClick={onClose}>Cancel</button>
+        <button className="btn danger" onClick={del} disabled={busy}>{busy ? 'Deleting…' : `Delete scan #${scan.id}`}</button>
+      </>}>
+      <p>
+        Delete scan <b>#{scan.id}</b> ({scan.engine_id} on {scan.target})?
+      </p>
+      <p className="muted" style={{ marginTop: 4 }}>
+        Its findings, events and run artifacts are removed permanently. This
+        cannot be undone.
+      </p>
+    </Modal>
   )
 }

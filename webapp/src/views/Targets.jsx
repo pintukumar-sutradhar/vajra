@@ -9,6 +9,7 @@ export default function Targets() {
   const [targets, setTargets] = useState(null)
   const [open, setOpen] = useState(false)
   const [bulkOpen, setBulkOpen] = useState(false)
+  const [toDelete, setToDelete] = useState(null)
   const shout = useToast()
 
   function load() {
@@ -31,7 +32,7 @@ export default function Targets() {
             <div className="card">
               <table className="vt">
                 <thead>
-                  <tr><th>Name</th><th>Address</th><th>Kind</th><th>Auth proof</th><th>Tags</th><th>Added</th></tr>
+                  <tr><th>Name</th><th>Address</th><th>Kind</th><th>Auth proof</th><th>Tags</th><th>Added</th><th></th></tr>
                 </thead>
                 <tbody>
                   {targets.map((t) => (
@@ -46,6 +47,9 @@ export default function Targets() {
                       </td>
                       <td className="muted">{(t.tags && Object.keys(t.tags).join(', ')) || '—'}</td>
                       <td className="muted">{new Date(t.created_at).toLocaleDateString()}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <button className="btn danger sm" onClick={() => setToDelete(t)}>Delete</button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -55,7 +59,41 @@ export default function Targets() {
 
       {open && <NewTarget onClose={() => setOpen(false)} onDone={() => { setOpen(false); load() }} />}
       {bulkOpen && <BulkImport onClose={() => setBulkOpen(false)} onDone={() => { setBulkOpen(false); load() }} />}
+      {toDelete && <DeleteTarget
+        target={toDelete}
+        onClose={() => setToDelete(null)}
+        onDone={() => { setToDelete(null); load() }} />}
     </>
+  )
+}
+
+function DeleteTarget({ target, onClose, onDone }) {
+  const shout = useToast()
+  const [busy, setBusy] = useState(false)
+
+  async function del(e) {
+    e.preventDefault()
+    setBusy(true)
+    try {
+      await shout.api(() =>
+        api(`/v1/targets/${target.id}`, { method: 'DELETE' }))
+      shout.push(`Target removed`)
+      onDone()
+    } catch (err) { setBusy(false) }
+  }
+
+  return (
+    <Modal title="Delete target" onClose={onClose}
+      foot={<>
+        <button className="btn" onClick={onClose}>Cancel</button>
+        <button className="btn danger" onClick={del} disabled={busy}>{busy ? 'Deleting…' : `Delete ${target.name || target.address}`}</button>
+      </>}>
+      <p>
+        Delete <b>{target.name || target.address}</b> and everything derived
+        from it — its scans, findings and run history are removed permanently.
+      </p>
+      <p className="muted" style={{ marginTop: 4 }}>This cannot be undone.</p>
+    </Modal>
   )
 }
 
