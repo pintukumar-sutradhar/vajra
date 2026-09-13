@@ -3,12 +3,13 @@
 
 Run once after cloning, then forever with a single command:
 
-    ./vajra-launcher       # installs if needed, starts the platform, opens the browser
-    vajra                  # symlinked on first run to ~/.local/bin
+    ./setup.sh             # full install + run the platform in the background
+    vajra                  # shows the UI port (reuses the saved port)
 
 The engine's vajra.py is intentionally not called directly; this launcher is the
 official entry point and every scan/credentialed mode runs through the UI.
-Options: ./vajra-launcher [--help] [--version] [--update] [--no-browser] [--port N]
+Options: ./vajra-launcher [--help] [--version] [--update] [--setup]
+                         [--no-browser] [--port N] [--stop] [--check]
 """
 
 from __future__ import annotations
@@ -21,7 +22,6 @@ import subprocess
 import sys
 import time
 import urllib.request
-import webbrowser
 from pathlib import Path
 import socket
 import shlex
@@ -69,6 +69,24 @@ def run_bg(args, cwd, env, log) -> int:
                          start_new_session=True)
     return p.pid
 
+
+def _open_url(url: str):
+    """Open the UI without ever blocking the CLI (headless boxes hang on
+    webbrowser.open via xdg-open)."""
+    if not shutil.which("xdg-open") and not shutil.which("open"):
+        return
+    try:
+        subprocess.Popen([sys.executable, "-c",
+                          "import sys,webbrowser;webbrowser.open(sys.argv[1])",
+                          url],
+                         stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL,
+                         start_new_session=True,
+                         close_fds=True)
+    except Exception:
+        pass
+
 def is_vajra_health(port: int) -> bool:
     url = f"http://127.0.0.1:{port}/health"
     try:
@@ -88,17 +106,41 @@ def free_port(port: int) -> bool:
         except Exception:
             return True
 
+
+def _write_port(p: int):
+    PORT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PORT_FILE.write_text(str(p))
+
+
+def _ask_port(hint: int) -> int | None:
+    """Interactively ask which port to use (STDIN must be a terminal)."""
+    for _ in range(3):
+        try:
+            raw = input(f"\n  Which port should the UI use? (default {hint}) → ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        try:
+            p = int(raw) if raw else hint
+        except ValueError:
+            _w(f"'{raw}' is not a number — try again")
+            continue
+        if not (0 < p < 65536):
+            _w("port must be between 1 and 65535 — try again")
+            continue
+        return p
+    return None
+
+
 def choose_port(explicit: str | None) -> int:
     if explicit:
         try:
             p = int(explicit)
-            PORT_FILE.parent.mkdir(parents=True, exist_ok=True)
-            PORT_FILE.write_text(str(p))
+            _write_port(p)
             return p
         except ValueError:
-            _w(f"invalid port '{explicit}', using default")
+            _w(f"invalid port '{explicit}', choosing automatically")
             explicit = None
-    # saved port
+    # saved port: reuse it while it's still valid (running or free)
     if PORT_FILE.exists():
         try:
             p = int(PORT_FILE.read_text().strip())
@@ -106,14 +148,22 @@ def choose_port(explicit: str | None) -> int:
                 return p
         except Exception:
             pass
-    for p in CANDIDATE_PORTS:
-        if is_vajra_health(p) or free_port(p):
-            PORT_FILE.parent.mkdir(parents=True, exist_ok=True)
-            PORT_FILE.write_text(str(p))
-            return p
-    PORT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    PORT_FILE.write_text("8000")
-    return 8000
+    # default port free -> use the default without asking
+    if is_vajra_health(8000) or free_port(8000):
+        _write_port(8000)
+        return 8000
+    # default port is in conflict -> let the user pick (fall back silently
+    # when there is no terminal, e.g. cron/CI)
+    hint = next((p for p in CANDIDATE_PORTS if p != 8000 and free_port(p)),
+                None) or 8130
+    p = None
+    if sys.stdin.isatty():
+        _w("default port 8000 is already in use by another service")
+        p = _ask_port(hint)
+    if p is None:
+        p = hint
+    _write_port(p)
+    return p
 
 def ensure_runnable(port: int):
     VAR.mkdir(parents=True, exist_ok=True)
@@ -246,10 +296,10 @@ def start(port: int, open_browser: bool = True, timeout: int = 60):
     url = f"http://127.0.0.1:{port}"
     if is_vajra_health(port):
         _a(f"platform already running at {url}")
-        if open_browser:
-            webbrowser.open(url)
         print(f"\n  UI  {url}   (login admin / {DEFAULT_CREDS[1]})")
         print(f"  API {url}/health  /  {url}/api/v1/...  /  docs {url}/docs\n")
+        if open_browser:
+            _open_url(url)
         return url
     # api
     api_pid = run_bg([py, str(REPO / "server" / "run_api.py")],
@@ -276,15 +326,11 @@ def start(port: int, open_browser: bool = True, timeout: int = 60):
                       cwd=str(REPO), env=env, log=str(WORKER_LOG))
         WORKER_PID.write_text(str(wpid))
     link_self()
-    if open_browser:
-        try:
-            webbrowser.open(url)
-        except Exception:
-            pass
     print(f"\n  UI  {url}   (login admin / {DEFAULT_CREDS[1]})")
     print(f"  API {url}/api/v1/…  ·  docs {url}/docs")
     if open_browser:
         _a(f"opening {url} in your browser (use --no-browser to skip)")
+        _open_url(url)
     return url
 
 def do_update():
@@ -303,6 +349,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="VAJRA platform — launcher")
     ap.add_argument("--port", help="API/UI port (default: auto 8000/8130/8080)", default=None)
     ap.add_argument("--no-browser", action="store_true", help="start the platform but don't open the browser")
+    ap.add_argument("--setup", action="store_true", help="full first-time install, then run in the background")
     ap.add_argument("--link", action="store_true", help="install & symlink ~/.local/bin/vajra, then exit")
     ap.add_argument("--update", action="store_true", help="git pull --ff-only + reinstall & rebuild")
     ap.add_argument("--version", action="store_true", help="print version & exit")
@@ -318,7 +365,9 @@ def main(argv=None):
             print(f"  {name}: {shutil.which(name) or 'missing'}")
         return 0
     if args.check:
-        for p in CANDIDATE_PORTS:
+        candidates = [int(PORT_FILE.read_text().strip())] \
+            if PORT_FILE.exists() else []
+        for p in (*candidates, *CANDIDATE_PORTS):
             if is_vajra_health(p):
                 print(f"running at http://127.0.0.1:{p}")
                 return 0
@@ -336,6 +385,16 @@ def main(argv=None):
         return 0
     if args.update:
         return do_update()
+    if args.setup:
+        _a("running first-time setup (install all components)...")
+        ensure_install()
+        link_self()
+        port = choose_port(args.port)
+        start(port, open_browser=False)
+        print("\n  VAJRA is now running in the background.")
+        print(f"  UI      http://127.0.0.1:{port}   (login admin / {DEFAULT_CREDS[1]})")
+        print("  Run `vajra` any time to show the port again, `vajra --stop` to stop.\n")
+        return 0
     if args.link:
         ensure_install()
         link_self()

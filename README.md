@@ -120,20 +120,30 @@ directories.
 
 ## Run — one command
 
-Clone the repo, then run the single launcher file. On the first run it
-installs everything (Python venv + platform deps, builds the web UI, forges
-the wordlists, symlinks the `vajra` command to `~/.local/bin`), starts the API
-+ scan worker, and opens the browser:
+Clone the repo, then run `setup.sh` once. It installs everything (Python venv
++ platform deps, builds the web UI, forges the wordlists, symlinks the `vajra`
+command to `~/.local/bin`), starts the API + scan worker in the background,
+and prints the port the UI is on:
 
 ```bash
 git clone <your-repo-url> && cd vajra
-./vajra-launcher         # one file — installs once, starts platform, opens browser
+./setup.sh        # full install + run in the background (UI shows the port)
 ```
 
 From then on every session is an even shorter one command:
 
 ```bash
-vajra                   # opens http://127.0.0.1:8000 (auto port) in your browser
+vajra             # prints the running UI port (reuses the saved port)
+vajra --stop      # stop the api + worker
+vajra --check     # prints the port if the platform is already running
+```
+
+If the default port (8000) is already in use by another service, VAJRA asks
+which port you want to use and remembers it:
+
+```text
+[VAJRA] default port 8000 is already in use by another service
+  Which port should the UI use? (default 8130) → 9123
 ```
 
 For development (hot-reload UI against a running API):

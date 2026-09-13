@@ -1,44 +1,18 @@
 #!/usr/bin/env bash
-set -e
+# VAJRA — one-shot setup: installs everything, starts the platform in the
+# background, and tells you which port the UI is on.
+#
+#   ./setup.sh          full first-time install + start in the background
+#
+# After setup, use `vajra` to show the port/status again and `vajra --stop`
+# to stop it. Run this from the repository root.
+set -euo pipefail
+
 cd "$(dirname "$0")"
 
-echo "[*] VAJRA installer"
-if [[ "${1:-}" == "--system" ]]; then
-    echo "[*] installing optional deps system-wide"
-    pip3 install --break-system-packages -r requirements.txt || \
-        pip3 install -r requirements.txt || echo "[!] some extras failed - VAJRA still works on stdlib"
-else
-    if [[ ! -d .venv ]]; then
-        python3 -m venv .venv
-    fi
-    # shellcheck disable=SC1091
-    source .venv/bin/activate
-    pip install -q --upgrade pip || true
-    pip install -q -r requirements.txt || echo "[!] extras failed - stdlib fallback active"
+if [ ! -f vajra-launcher ]; then
+    echo "setup.sh must be run from the VAJRA repository root" >&2
+    exit 1
 fi
 
-chmod +x vajra-launcher
-chmod +x vajra.py
-if [[ ! -f wordlists/passwords_full.txt ]]; then
-    echo "[*] forging deep wordlists (~265k entries)"
-    if [[ -d .venv ]]; then
-        .venv/bin/python tools/gen_wordlists.py
-    else
-        python3 tools/gen_wordlists.py
-    fi
-fi
-if [[ -d .venv ]]; then
-    .venv/bin/python vajra.py --selftest
-else
-    python3 vajra.py --selftest
-fi
-
-if [[ -w /usr/local/bin ]]; then
-    ln -sf "$(pwd)/vajra-launcher" /usr/local/bin/vajra
-    echo "[*] symlinked -> vajra (global command → opens the browser UI)"
-fi
-
-echo ""
-echo "[+] Done. Launch the platform with one command:"
-echo "      ./vajra      # installs the platform, starts it, opens the browser UI"
-echo "      vajra        # same (after the symlink above or for ~/.local/bin users)"
+exec python3 vajra-launcher --setup "$@"
