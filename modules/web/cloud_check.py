@@ -7,8 +7,8 @@ a scanner + curl would see."""
 import re
 from urllib.parse import urlparse
 
-from core.database import Finding
 
+from core import proof as P
 LIST_MARKERS = (b"<ListBucketResult", b"<Contents>", b"<Key>", b"<Blobs>",
                 b"NextMarker", b"<NextContinuationToken")
 BUCKET_RE = re.compile(r"https?://([a-z0-9][a-z0-9.\-]{2,63})\.s3\.amazonaws\.com",
@@ -130,7 +130,7 @@ def run(engine):
         if checks_done >= cap:
             break
     for prov, name, url in public:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.cloud", "verified-exposure", "critical",
             "PUBLIC CLOUD BUCKET — LISTING: %s (%s)" % (name, prov.upper()),
             detail="Anonymous HTTP read returned a full object listing at "
@@ -138,13 +138,15 @@ def run(engine):
             evidence="probe=%s\nlisting-returned" % url,
             remediation="Block anonymous access, enable bucket policy "
                         "inspection, enforce encryption/versioning.",
-            confidence="certain"))
+            cls="cloud",
+            proof=P.marker("%s\n<ListBucketResult returned>" % url,
+                           note="anonymous bucket listing served"))
         engine.log.finding("[cloud] PUBLIC LISTABLE bucket: %s [%s]"
                            % (name, prov.upper()))
     locked = [(p, n, s, u) for p, n, s, u in exists
               if n in strong and s.startswith("denied")]
     if locked:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.cloud", "exposure", "info",
             "Cloud storage bucket resolves but is locked — exact subdomain "
             "candidate: %s (%s)" % (locked[0][1], locked[0][0].upper()),
@@ -152,7 +154,9 @@ def run(engine):
                    "and denies anonymous reads. NOT an exposure by itself — "
                    "the lock is the expected secure state.",
             evidence="probe=%s\n-> %s" % (locked[0][0], locked[0][3]),
-            confidence="possible"))
+            cls="cloud",
+            proof=P.marker("probe=%s -> denied" % locked[0][0],
+                           note="bucket resolves and denies anonymous reads"))
     for prov, name, _status, url in exists:
         engine.db.add_event(t.display, "web.cloud",
                             "bucket-name %s/%s resolves (%s)" %

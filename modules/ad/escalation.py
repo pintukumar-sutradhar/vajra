@@ -17,7 +17,7 @@ itself — it identifies the opportunity and hands the operator a ready review
 path, because an actual cert request is a destructive, side-effecting act."""
 import subprocess
 
-from core.database import Finding
+from core import proof as P
 from core.utils import which_tool
 
 ESC_PLAYBOOK = [
@@ -52,24 +52,24 @@ def run(engine):
     t = engine.target
     ad = engine.state.get("ad") or {}
     if not getattr(engine.args, "aggressive", False):
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "ad.escalation", "coverage", "info",
             "ADCS / forest escalation chain skipped (requires --aggressive)",
             detail="ADCS ESC1-8 and forest-trust jumps are intrusive to "
                    "exercise; re-run with --aggressive to check them.",
-            confidence="firm"))
+            cls="ad_misconfig", proof=P.observation("--aggressive not set"))
         return
     realm = ad.get("realm") or getattr(engine, "ad_creds", {}).get("realm", "")
     host = t.scan_host()
     creds = getattr(engine, "ad_creds", {}) or {}
     dcs = [d["host"] for d in ad.get("dcs", [])] or [host]
     if not realm or not creds.get("user"):
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "ad.escalation", "coverage", "info",
             "ADCS escalation chain needs validated AD credentials",
             detail="Pass --ad-user/--ad-pass/--nthash and a realm to run "
                    "certipy find and enumerate ESC conditions.",
-            confidence="firm"))
+            cls="ad_misconfig", proof=P.observation("no AD credentials"))
         return
 
     cert = which_tool("certipy", "certipy-ad")
@@ -93,7 +93,7 @@ def run(engine):
                 ev_rel = engine.save_evidence("adcs_find.txt", out)
             except Exception:
                 ev_rel = ""
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "ad.escalation", "exploit-proof", "critical",
                 "AD Certificate Services found — ADCSC ESC1-8 audit ran on %s"
                 % target,
@@ -103,20 +103,21 @@ def run(engine):
                         % target) + ((" Saved to " + ev_rel) if ev_rel else ""),
                 evidence=ev,
                 remediation="Harden template ACLs, disable "
-                            "EDITF_ATTRIBUTESUBJECTALTNAME2, monitor cert "
+                            "EDITF_ATTRIBUTESSUBJECTALTNAME2, monitor cert "
                             "requests, patch ESC8 relay endpoints.",
-                confidence="firm"))
+                cls="ad_misconfig", proof=P.observation("CA %s" % target))
         else:
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "ad.escalation", "coverage", "info",
                 "ADCS audit ran but certipy returned no misconfiguration",
                 detail="certipy find produced no vulnerable output on %s. "
                        "Happy posture." % target,
-                evidence=out[:800], confidence="firm"))
+                evidence=out[:800], cls="ad_misconfig",
+                proof=P.observation("certipy find clean on %s" % target))
     elif ca_present:
         # No tool but a CA is hinted -> hand the operator the playbook.
         play = "\n".join("  %s: %s" % e for e in ESC_PLAYBOOK)
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "ad.escalation", "post-recon", "high",
             "AD CS likely present — ESC1-8 escalation chain READY to run",
             detail=("Enterprise CA hinted at %s. Tool certipy-ad not "
@@ -125,12 +126,13 @@ def run(engine):
                     % (", ".join(ca_hint), play)),
             evidence=("realm=%s dc=%s" % (realm, ", ".join(dcs))),
             remediation="Same as full audit above.",
-            confidence="firm"))
+            cls="ad_misconfig", proof=P.observation(
+                "CA hinted at %s" % ", ".join(ca_hint)))
 
     # Forest-trust escalation note (already-discovered trusts).
     trusts = ad.get("trusts") or []
     if trusts:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "ad.escalation", "post-recon", "high",
             "Forest trust escalation path available (%d trust(s))" % len(trusts),
             detail=("Cross-forest trusts can be jumped via SIDHistory "
@@ -139,4 +141,4 @@ def run(engine):
             evidence="realm=%s trusts=%s" % (realm, ", ".join(trusts[:8])),
             remediation="Review trust direction/filtering; disable SID "
                         "filtering exemptions; monitor inter-realm auth.",
-            confidence="firm"))
+            cls="ad", proof=P.marker(trusts[0][:120]))

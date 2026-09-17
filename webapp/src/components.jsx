@@ -110,3 +110,83 @@ export function Elapsed({ at, done }) {
   const fmt = (x) => (x >= 60 ? Math.floor(x / 60) + 'm' : Math.floor(x) + 's')
   return <span className="muted">{s < 60 && s > 0 ? fmt(s) : s >= 60 ? fmt(s) : '—'} {done ? '' : 'ago'}</span>
 }
+
+/* ---------- progress ---------- */
+/* `tone` switches the fill: paused runs are amber so a stopped-but-live scan
+   never reads as "still working". */
+export function ProgressBar({ value, tone, large }) {
+  const pct = Math.max(0, Math.min(100, Number(value) || 0))
+  return (
+    <div className={'progress' + (large ? ' lg' : '') + (tone ? ' tone-' + tone : '')}>
+      <i style={{ width: pct + '%' }} />
+    </div>
+  )
+}
+
+export function StatTile({ label, value, sub, tone, onClick }) {
+  return (
+    <div className={'statcard kpi stat-tile' + (onClick ? ' clickable' : '')}
+      onClick={onClick} role={onClick ? 'button' : undefined} tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? (e) => { if (e.key === 'Enter') onClick() } : undefined}>
+      <div className={'num' + (tone ? ' tone-' + tone : '')}>{value}</div>
+      <div className="lbl">{label}</div>
+      {sub && <div className="stat-sub">{sub}</div>}
+    </div>
+  )
+}
+
+/* ---------- tabs ---------- */
+export function Tabs({ tabs, value, onChange }) {
+  return (
+    <div className="toolbar tabs" role="tablist">
+      {tabs.map((t) => (
+        <button key={t.id} role="tab" aria-selected={value === t.id}
+          className={'btn ' + (value === t.id ? 'primary' : '')}
+          onClick={() => onChange(t.id)} disabled={t.disabled}>
+          {t.icon}{t.label}
+          {t.count !== undefined && t.count !== null && (
+            <span className={'tab-count' + (t.tone ? ' tone-' + t.tone : '')}>{t.count}</span>
+          )}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/* ---------- toggle ---------- */
+export function Toggle({ checked, onChange, label, title }) {
+  return (
+    <label className="switch" title={title}>
+      <input type="checkbox" checked={!!checked} onChange={(e) => onChange(e.target.checked)} />
+      <span className="slider" />
+      {label && <span className="switch-label">{label}</span>}
+    </label>
+  )
+}
+
+/* ---------- confirm ---------- */
+/* Destructive actions ask first. `note` carries the reassurance the operator
+   needs before pulling the trigger (what survives the action). */
+export function ConfirmDialog({ title, body, note, confirmLabel, tone, busy, onConfirm, onClose }) {
+  return (
+    <Modal title={title} onClose={onClose}
+      foot={<>
+        <button className="btn" onClick={onClose} disabled={busy}>Cancel</button>
+        <button className={'btn ' + (tone === 'danger' ? 'danger' : 'primary')}
+          onClick={onConfirm} disabled={busy}>
+          {busy ? 'Working…' : (confirmLabel || 'Confirm')}
+        </button>
+      </>}>
+      <div>{body}</div>
+      {note && <div className="confirm-note">{note}</div>}
+    </Modal>
+  )
+}
+
+/* ---------- search ---------- */
+export function SearchBox({ value, onChange, placeholder }) {
+  return (
+    <input type="text" className="searchbox" value={value} placeholder={placeholder || 'Search…'}
+      onChange={(e) => onChange(e.target.value)} />
+  )
+}

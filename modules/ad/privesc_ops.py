@@ -12,7 +12,7 @@ import re
 import time
 import subprocess
 
-from core.database import Finding
+from core import proof as P
 from core.utils import which_tool
 
 EMPTY_LM = "aad3b435b51404eeaad3b435b51404ee"
@@ -67,13 +67,14 @@ def run(engine):
         if [c for c in box if "ntds" in c[0]]:
             engine.log.finding("[ad-ops] NTDS.dit dumped — NT hashes in state")
     else:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "ad.privesc_ops", "coverage", "info",
             "Credential-dependent AD operations skipped%s"
             % (" (supplied creds rejected)" if creds.get("user") else ""),
             detail="GPP / DC-Sync / cracking need valid domain credentials "
                    "(pass --ad-user/--ad-pass/--nthash).",
-            confidence="firm"))
+            cls="ad_misconfig", proof=P.observation(
+                "no validated AD credentials"))
     _zerologon_probe(engine, host)
     _crack_harness(engine)
     engine.db.add_event(t.display, "ad.privesc_ops",
@@ -102,10 +103,11 @@ def _gpp_passwords(engine, host, realm, creds):
                                      if nthash else []) + [auth]
     out = _run_cmd(engine, argv, timeout=60)
     if not out:
-        engine.db.add_finding(Finding(
+        engine.record(
             engine.target.display, "ad.privesc_ops", "coverage", "info",
             "GPP check produced no output (tool missing or share closed)",
-            confidence="possible"))
+            cls="ad_misconfig", proof=P.observation(
+                "GPP no output (share closed)"))
         return
     found = [ln for ln in out.splitlines()
              if "PASS" in ln.upper() or "@@" in ln or "user" in ln.lower()
@@ -114,7 +116,7 @@ def _gpp_passwords(engine, host, realm, creds):
             re.search(r"(?i)(password|pass|cpassword)\s*[:=]", ln)]
     if hits:
         ev = engine.save_evidence("gpp_creds.txt", out[:4000])
-        engine.db.add_finding(Finding(
+        engine.record(
             engine.target.display, "ad.privesc_ops", "credentials", "high",
             "ADMIN CREDENTIALS in SYSVOL GPP policy (%d)" % len(hits),
             detail="Group Policy Preferences stored a 'cpassword' — the "
@@ -122,7 +124,8 @@ def _gpp_passwords(engine, host, realm, creds):
                    % ("\nEvidence: " + ev if ev else ""),
             evidence="\n".join(hits[:8])[:1200],
             remediation="Remove GPP credential settings; rotate any password "
-                        "ever shipped via SYSVOL.", confidence="firm"))
+                        "ever shipped via SYSVOL.",
+            cls="ad", proof=P.extraction(hits[0][:120]))
         engine.log.finding("[ad-ops] SYSVOL/GPP credentials recovered")
     if not found and not hits:
         engine.db.add_event(engine.target.display, "ad.privesc_ops",
@@ -145,7 +148,7 @@ def _zerologon_probe(engine, host):
     if "zerologon" not in low and "vulnerable" not in low:
         return
     if "vulnerable" in low and "not vulnerable" not in low:
-        engine.db.add_finding(Finding(
+        engine.record(
             engine.target.display, "ad.privesc_ops", "verified-exposure",
             "critical", "ZEROLOGON (CVE-2020-1472) — DC vulnerable",
             detail="nmap smb-vuln-zerologon confirmed the Netlogon "
@@ -153,7 +156,7 @@ def _zerologon_probe(engine, host):
             evidence=out[:1500],
             remediation="Apply the August 2020 security update; audit for "
                         "previous exploitation (krbtgt/DC machine account).",
-            confidence="firm"))
+            cls="ad", proof=P.marker((out or "")[:120]))
         engine.log.finding("[ad-ops] ZEROLOGON VERIFIED on %s" % host)
     else:
         engine.db.add_event(engine.target.display, "ad.privesc_ops",
@@ -165,12 +168,13 @@ def _dcsync(engine, host, realm, creds):
         return
     tool = which_tool("impacket-secretsdump", "secretsdump.py")
     if not tool:
-        engine.db.add_finding(Finding(
+        engine.record(
             engine.target.display, "ad.privesc_ops", "coverage", "info",
             "DC-Sync unavailable (impacket-secretsdump missing)",
             detail="With valid domain credentials VAJRA replays DCSync "
                    "(DRSUAPI GetNCChanges) to extract NTDS.dit hashes.",
-            confidence="firm"))
+            cls="ad_misconfig", proof=P.observation(
+                "impacket-secretsdump missing"))
         return
     dc = _dc_target(engine, host)
     user = creds.get("user", "")
@@ -193,10 +197,11 @@ def _dcsync(engine, host, realm, creds):
                 "%s\\%s@%s" % (realm, user, host)]
     out = _run_cmd(engine, argv, timeout=150)
     if not out:
-        engine.db.add_finding(Finding(
+        engine.record(
             engine.target.display, "ad.privesc_ops", "coverage", "info",
             "DC-Sync produced no output (access revoked / tool missing)",
-            confidence="possible"))
+            cls="ad_misconfig", proof=P.observation(
+                "DCSync produced no output"))
         return
     rows = NTDS_RE.findall(out)
     if rows:
@@ -212,7 +217,7 @@ def _dcsync(engine, host, realm, creds):
             if ent not in box:
                 box.append(ent)
         engine.state["ad"]["ntds_dumped"] = True
-        engine.db.add_finding(Finding(
+        engine.record(
             engine.target.display, "ad.privesc_ops", "exploit-proof",
             "critical", "[VERIFIED] DCSYNC — %d NTDS.dit NTLM hashes dumped"
             % len(unique),
@@ -226,19 +231,21 @@ def _dcsync(engine, host, realm, creds):
             remediation="Treat domain as compromised: enable LAPS, enforce "
                         "MFA, reset krbtgt twice (with safe-guard cadences), "
                         "audit privileged accounts.",
-            confidence="firm"))
+            cls="ad", proof=P.extraction(lines[0][:120]))
         engine.log.finding("[ad-ops] DCSYNC dumped %d accounts" % len(unique))
     elif any(k in out for k in ("DCERPC Runtime Error", "rpc_s_access_denied",
                                 "ACCESS_DENIED", "sAMAccountName")):
-        engine.db.add_finding(Finding(
+        engine.record(
             engine.target.display, "ad.privesc_ops", "coverage", "info",
             "DCSync denied (account lacks Replication rights)",
-            detail=out[-500:], confidence="firm"))
+            detail=out[-500:], cls="ad_misconfig",
+            proof=P.observation("DCSync access denied"))
     else:
-        engine.db.add_finding(Finding(
+        engine.record(
             engine.target.display, "ad.privesc_ops", "coverage", "info",
             "DCSync completed without harvestable hashes",
-            detail=out[-400:], confidence="possible"))
+            detail=out[-400:], cls="ad_misconfig",
+            proof=P.observation("DCSync no hashes harvested"))
 
 
 def _dc_target(engine, host):
@@ -281,14 +288,15 @@ def _crack_harness(engine):
     script.append('hashcat --potfile-path "$POT" --show "%s/%s" 2>/dev/null'
                   % (ev_dir, targets[0][0]))
     ev = engine.save_evidence("crack_chain.sh", "\n".join(script) + "\n")
-    engine.db.add_finding(Finding(
+    engine.record(
         engine.target.display, "ad.privesc_ops", "post-recon", "info",
         "Offline credential-crack harness ready (%d hash set(s))" %
         len(targets),
         detail="Points hashcat at the dumped hashes with the active "
                "wordlist tier.%s" % ("\nEvidence: " + ev if ev else ""),
         evidence="modes: %s" % ",".join(str(m) for _f, m in targets),
-        confidence="firm"))
+        cls="ad_misconfig", proof=P.observation(
+            "crack harness for %d hash set(s)" % len(targets)))
     if not hashcat or not getattr(engine.args, "aggressive", False):
         return
     _bounded_crack(engine, targets, hashcat, wl)
@@ -338,7 +346,7 @@ def _bounded_crack(engine, targets, hashcat, wl):
         if ent not in box:
             box.append(ent)
     ev = engine.save_evidence("cracked_accounts.txt", "\n".join(lines))
-    engine.db.add_finding(Finding(
+    engine.record(
         engine.target.display, "ad.privesc_ops", "credentials", "critical",
         "[VERIFIED] %d AD account password(s) CRACKED offline" % len(cracked),
         detail="Bounded hashcat pass against dumped Kerberos/NTDS material "
@@ -347,5 +355,5 @@ def _bounded_crack(engine, targets, hashcat, wl):
         evidence="\n".join(lines)[:1500],
         remediation="Rotate every cracked account immediately; crackable "
                     "passwords signal a policy problem.",
-        confidence="firm"))
+        cls="ad", proof=P.extraction(lines[0][:120]))
     engine.log.finding("[ad-ops] %d account(s) cracked offline" % len(cracked))

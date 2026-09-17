@@ -13,7 +13,7 @@ import re
 import subprocess
 import time
 
-from core.database import Finding
+from core import proof as P
 from core.utils import which_tool
 
 EMPTY_LM = "aad3b435b51404eeaad3b435b51404ee"
@@ -79,28 +79,28 @@ def run(engine):
     host = t.scan_host()
     creds = _creds(engine)
     if not getattr(engine.args, "aggressive", False):
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "ad.movement", "coverage", "info",
             "Lateral-movement skipped (requires --aggressive)",
             detail="Validated AD credentials can be turned into service-level "
                    "execution via impacket psexec/wmiexec/smbexec/atexec.",
-            confidence="firm"))
+            cls="ad_misconfig", proof=P.observation("--aggressive not set"))
         return
     if not creds.get("user"):
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "ad.movement", "coverage", "info",
             "Lateral-movement skipped (no credentials supplied)",
             detail="Pass --ad-user/--ad-pass/--nthash to attempt "
                    "psexec/wmiexec execution channels.",
-            confidence="firm"))
+            cls="ad_misconfig", proof=P.observation("no AD credentials"))
         return
     from modules.ad.privesc_ops import creds_valid
     if not creds_valid(engine, host):
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "ad.movement", "coverage", "info",
             "Lateral-movement skipped (credentials rejected by domain)",
             detail="The supplied AD principal could not authenticate.",
-            confidence="firm"))
+            cls="ad_misconfig", proof=P.observation("creds rejected by domain"))
         return
     channel = _open_channel(engine, host, creds)
     if channel is None:
@@ -108,7 +108,7 @@ def run(engine):
     engine.state.setdefault("channels", []).append(channel)
     engine.log.finding("[movement] command channel live (%s -> %s)"
                        % (channel.user, host))
-    engine.db.add_finding(Finding(
+    engine.record(
         t.display, "ad.movement", "exploit-proof", "critical",
         "COMMAND-EXECUTION CHANNEL ESTABLISHED on %s (%s)" % (host, "impacket"),
         detail=("Validated domain credentials granted a service-level "
@@ -119,7 +119,8 @@ def run(engine):
         remediation=("Assume the host is compromised. Enforce LAPS, "
                      "restrict account use to designated services, rotate "
                      "the credential."),
-        confidence="firm"))
+        cls="privilege_escalation",
+        proof=P.auth(channel._last[:120]))
     _relay_guidance(engine, host, creds)
     _potato_notes(engine)
 
@@ -164,11 +165,12 @@ def _open_channel(engine, host, creds):
 
 
 def _relay_guidance(engine, host, creds):
-    engine.db.add_finding(Finding(
+    engine.record(
         engine.target.display, "ad.movement", "coverage", "info",
         "No impacket transport yielded a channel",
         detail=last_err or "all psexec-family transports failed",
-        confidence="possible"))
+        cls="ad_misconfig", proof=P.observation(
+            "no impacket transport yielded a channel"))
     return None
 
 
@@ -189,21 +191,23 @@ def _relay_guidance(engine, host, creds):
         "# findings (SMB signing disabled) — see the finding detail.",
     ]) + "\n"
     rel = engine.save_evidence("ntlmrelay_resource.sh", rc)
-    engine.db.add_finding(Finding(
+    engine.record(
         engine.target.display, "ad.movement", "post-recon", "medium",
         "NTLM-relay path ready (operator-run)",
         detail=("Relay candidate: host speaks SMB%s%s"
                 % (" (PTH-capable)" if creds.get("nthash") else "",
                    ".\nResource: " + (rel or "-"))),
         remediation="Enable SMB signing; disable NTLMv1; patch RPC coercion "
-                    "bugs.", confidence="firm"))
+                    "bugs.",
+        cls="ad_misconfig", proof=P.observation("host speaks SMB"))
 
 
 def _potato_notes(engine):
     if not engine.state.get("channels"):
         return
-    engine.db.add_finding(Finding(
+    engine.record(
         engine.target.display, "ad.movement", "post-recon", "low",
         "Privilege-escalation candidates for the live channel",
         detail="\n".join("- " + h for h in HINTS),
-        confidence="possible"))
+        cls="ad_misconfig", proof=P.observation(
+            "live channel, privesc hints"))

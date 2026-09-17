@@ -7,7 +7,8 @@ so a filtered-but-responds host does not false-positive. Findings are
 confidence=possible signals for the operator to validate."""
 import time
 
-from core.database import Finding
+
+from core import proof as P
 
 PIVOT_PORTS = [22, 25, 80, 443, 3306, 5432, 6379, 8000, 8080, 8081, 8443,
                8888, 9000, 9200, 1433, 5901, 10000, 27017]
@@ -72,7 +73,7 @@ def run(engine):
             time.sleep(0.05)
         for port, rstatus, rlen, rtime in hits[:8]:
             total_open.append((origin, param, port, rstatus, rlen, rtime))
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "web.ssrf_pivot", "info-leak", "medium",
                 "SSRF pivot: 127.0.0.1:%d reachable (param '%s')" %
                 (port, param),
@@ -86,17 +87,28 @@ def run(engine):
                 remediation="Combine SSRF with internal firewall policy; "
                             "block egress to loopback/link-local from app "
                             "tiers.",
-                confidence="possible"))
+                cls="ssrf",
+                proof=P.differential(
+                    "method=%s origin=%s\npayload=http://127.0.0.1:%d/x" %
+                    (method, origin, port),
+                    control_clean=True,
+                    delta=round(rtime - ref_time, 2),
+                    note="port responds differently from closed-ref ports "
+                         "1,3"))
             engine.log.finding("[ssrf-pivot] %s:%d (%s) -> %s" %
                                ("127.0.0.1", port, param, origin[:60]))
         if hits:
             engine.state.setdefault("ssrf_pivot", []).append(
                 {"origin": origin, "param": param, "open": hits})
     if not total_open:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.ssrf_pivot", "coverage", "info",
             "SSRF pivot sweep (loopback, %d ports) found no reachable "
             "services" % len(PIVOT_PORTS),
             detail="Loopback is likely firewalled from the app tier; the "
                    "confirmed SSRF may still reach other internal hosts.",
-            confidence="possible"))
+            cls="other",
+            proof=P.observation(
+                "no loopback service reachable across %d ports"
+                % len(PIVOT_PORTS),
+                note="pivot sweep clean"))

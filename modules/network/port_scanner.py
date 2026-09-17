@@ -13,8 +13,8 @@ import subprocess
 import tempfile
 import time
 
-from core.database import Finding
 from core.utils import parse_ports
+from core import proof as P
 
 
 def _has_external():
@@ -206,11 +206,13 @@ def run(engine):
             engine.log.success("External port scan done in %.1fs: %d open "
                                "port(s) (%s)" % (dur, len(ext), tool))
             if not ext:
-                engine.db.add_finding(Finding(
+                engine.record(
                     t.display, "network.portscan", "network", "info",
                     "No TCP ports responded from scanned set",
                     detail="Host may be filtered/down. Tool: external scanner.",
-                    confidence="possible"))
+                    cls="other",
+                    proof=P.observation(
+                        "no TCP port responded across the scanned set"))
             return
         if use_syn and shutil.which("masscan"):
             engine.log.warn("masscan delegation failed; falling back to "
@@ -246,9 +248,11 @@ def run(engine):
                        (dur, len(result),
                         " -> " + ",".join(str(p) for p in list(result)[:20]) if result else ""))
     if not result:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "network.portscan", "network", "info",
             "No TCP ports responded from scanned set",
             detail="Host may be filtered/down or uses non-scanned ports. "
                    "Consider --profile full for all 65535 ports.",
-            confidence="possible"))
+            cls="other",
+            proof=P.observation(
+                "no TCP port responded across the scanned set"))

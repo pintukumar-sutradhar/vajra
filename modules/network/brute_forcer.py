@@ -5,8 +5,8 @@ import time
 import base64
 from concurrent.futures import ThreadPoolExecutor
 
-from core.database import Finding
 from core.utils import load_json
+from core import proof as P
 from modules.exploit.authcheck import confirm_form_auth
 
 try:
@@ -84,13 +84,17 @@ def run(engine):
         if ok is True:
             anon_ok = True
             creds_found.append(("21/ftp", "anonymous", ""))
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "network.brute", "credentials", "high",
                 "Anonymous FTP access allowed",
                 detail="Anonymous login succeeded; %s files listed." %
                        ("unknown" if nfiles < 0 else str(nfiles)),
                 remediation="Disable anonymous FTP or restrict to read-only "
-                            "chrooted shares.", confidence="firm"))
+                            "chrooted shares.",
+                cls="default_creds",
+                proof=P.auth(
+                    "anonymous FTP login succeeded; %s files listed"
+                    % ("unknown" if nfiles < 0 else str(nfiles))))
         ftp_total = len(combos)
         ftp_done = 0
         for u, p in combos:
@@ -102,11 +106,13 @@ def run(engine):
             ok, nf = _ftp_check(host, 21, u, p)
             if ok is True:
                 creds_found.append(("21/ftp", u, p))
-                engine.db.add_finding(Finding(
+                engine.record(
                     t.display, "network.brute", "credentials", "critical",
                     "FTP credentials cracked via brute force (%s:%s)" % (u, p),
                     evidence="host=%s port=21 user=%s" % (host, u),
-                    confidence="firm"))
+                    cls="brute_force",
+                    proof=P.auth(
+                        "FTP login %s:%s succeeded (230)" % (u, p)))
                 break
             if delay:
                 time.sleep(delay)
@@ -114,11 +120,13 @@ def run(engine):
     ssh_port = 22 if 22 in services else None
     if ssh_port:
         if not HAVE_PARAMIKO:
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "network.brute", "coverage", "info",
                 "SSH brute skipped - paramiko not installed",
                 detail="pip install paramiko to enable SSH credential attacks.",
-                confidence="firm"))
+                cls="other",
+                proof=P.observation(
+                    "paramiko not installed - SSH brute skipped"))
         else:
             combos = [(u, p) for u in users[:ssh_user_cap]
                       for p in pwds[:ssh_pwd_cap]]
@@ -135,11 +143,14 @@ def run(engine):
                 r = _ssh_check(host, 22, u, p)
                 if r is True:
                     creds_found.append(("22/ssh", u, p))
-                    engine.db.add_finding(Finding(
+                    engine.record(
                         t.display, "network.brute", "credentials", "critical",
                         "SSH credentials cracked via brute force (%s:%s)" % (u, p),
                         evidence="host=%s port=22 user=%s" % (host, u),
-                        confidence="firm"))
+                        cls="brute_force",
+                        proof=P.auth(
+                            "SSH login %s:%s established (paramiko)"
+                            % (u, p)))
                     stop = True
                 elif r is None and delay == 0:
                     time.sleep(0.2)
@@ -158,11 +169,15 @@ def run(engine):
                                users[:20], pwds[:min(len(pwds), form_cap // 2)])
             if hit:
                 creds_found.append(("%s%s" % (url, path), hit[0], hit[1]))
-                engine.db.add_finding(Finding(
+                engine.record(
                     t.display, "network.brute", "credentials", "high",
                     "HTTP Basic Auth cracked on %s (%s:%s)" %
                     (path, hit[0], hit[1]),
-                    evidence=url + path, confidence="firm"))
+                    evidence=url + path,
+                    cls="brute_force",
+                    proof=P.auth(
+                        "HTTP Basic login %s:%s accepted on %s"
+                        % (hit[0], hit[1], path)))
 
     forms = engine.state.get("forms", [])
     login_forms = [f for f in forms if any(
@@ -220,15 +235,18 @@ def run(engine):
             action = form["action"]
             if confirmed:
                 creds_found.append((action, found[0], found[1]))
-                engine.db.add_finding(Finding(
+                engine.record(
                     t.display, "network.brute", "credentials", "high",
                     "Login form weak password (%s:%s) at %s" %
                     (found[0], found[1], action),
                     detail="Confirmed: %s." % why,
                     evidence="%s\n%s:%s" % (action, found[0], found[1]),
-                    confidence="firm"))
+                    cls="brute_force",
+                    proof=P.auth(
+                        "form login %s:%s confirmed (%s)"
+                        % (found[0], found[1], str(why)[:120])))
             else:
-                engine.db.add_finding(Finding(
+                engine.record(
                     t.display, "network.brute", "credentials", "info",
                     "Possible login credential, unverified (%s:%s) at %s" %
                     (found[0], found[1], action),
@@ -236,7 +254,10 @@ def run(engine):
                             "not prove an authenticated session — confirm "
                             "with a real login before acting." % why),
                     evidence="%s\n%s:%s" % (action, found[0], found[1]),
-                    confidence="possible"))
+                    cls="other",
+                    proof=P.observation(
+                        "response for %s:%s differed from the login-flow "
+                        "baseline" % (found[0], found[1])))
                 engine.log.info("[brute] possible credential (UNVERIFIED): "
                                 "%s %s:%s (%s)" % (action, found[0], found[1],
                                                    why))

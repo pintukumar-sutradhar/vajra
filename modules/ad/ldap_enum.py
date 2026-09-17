@@ -16,7 +16,7 @@ between the two passes is real on genuine AD servers."""
 import re
 import socket
 
-from core.database import Finding
+from core import proof as P
 from core.crypto_mini import der, der_int, octet
 
 ATTRS_WANTED = [
@@ -209,10 +209,11 @@ def _run_pass(engine, host, base_dn, bind_req, searches, label):
     try:
         responses = _ldap_converse(host, 389, msgs)
     except Exception as e:
-        engine.db.add_finding(Finding(
+        engine.record(
             engine.target.display, "ad.ldap_enum", "coverage", "info",
             "LDAP conversation (%s) failed: %r" % (label, e),
-            confidence="possible"))
+            cls="ad_misconfig", proof=P.observation(
+                "LDAP conversation failed"))
         return None
     if not responses:
         return None
@@ -321,13 +322,16 @@ def _emit_pass(engine, domain, passres):
             pass
     if spns:
         engine.state["spn_targets"] = sorted(set(spns))
-    engine.db.add_finding(Finding(
+    artifact = (spn_txt[:200] if spns else
+                ", ".join(sorted(set(users))[:5]) or
+                (notes[0] if notes else "bind-result %s" % bind_txt))
+    engine.record(
         t.display, "ad.ldap_enum", "recon", sev, title,
         detail=detail,
         evidence=(("\n".join(notes)) if notes else "\n".join(rows)[:1500]),
         remediation="Restrict anonymous binds; audit who can read LAPS; "
                     "scrub descriptions.",
-        confidence="firm"))
+        cls="ad", proof=P.extraction(artifact))
 
 
 def run(engine):

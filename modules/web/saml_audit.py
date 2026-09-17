@@ -14,8 +14,8 @@ marker is observed in a live response.
 """
 import re
 
-from core.database import Finding
 
+from core import proof as P
 SAML_PATHS = [
     "/SAML", "/SAML/", "/saml", "/saml/",
     "/_saml_/", "/_saml2/", "/_saml_/login", "/_saml_/logout",
@@ -100,7 +100,7 @@ def run(engine):
                                                % re_sub(path), xxe)
                 except Exception:
                     rel = None
-                engine.db.add_finding(Finding(
+                engine.record(
                     t.display, "web.saml", "exploit-proof", "critical",
                     "[VERIFIED] SAML XXE — local file read at %s" % path,
                     detail="Sent a SAMLResponse crafted with an external entity "
@@ -112,14 +112,16 @@ def run(engine):
                     remediation="Disable DTD/entity expansion in the XML parser; "
                                 "use secure parser config (libxml2 \
                                 noent=false, XXE off).",
-                    confidence="firm"))
+                    cls="xxe",
+                    proof=P.marker(xxe, control_clean=None,
+                                   note="no benign XML entity control run"))
                 engine.log.finding("[saml] XXE confirmed at %s" % path)
             else:
                 report.append(path)
     # Aggregate confirmed surfaces into a SINGLE finding to avoid flooding the
     # report with one line per guessed path.
     if report:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.saml", "coverage", "info",
             "SAML SSO surface present on %d endpoint path(s)" % len(report),
             detail=("Confirmed SAML markup on %d endpoint path(s):\n%s"
@@ -127,7 +129,9 @@ def run(engine):
             evidence="\n".join(report),
             remediation="Review SAML signature validation and ACS/metadata "
                         "endpoints for trust and parser issues.",
-            confidence="firm"))
+            cls="exposure",
+            proof=P.observation("\n".join(report),
+                                note="SAML markers on endpoint paths"))
         engine.log.info("[saml] %d SAML endpoint(s) surfaced" % len(report))
 
 

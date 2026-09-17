@@ -2,7 +2,7 @@
 pass-the-hash aware, with dynamic backoff."""
 import time
 
-from core.database import Finding
+from core import proof as P
 from core.crypto_mini import SMB_STATUS
 from modules.ad.smb_recon import validate_creds
 
@@ -87,7 +87,7 @@ def run(engine):
             engine.save_evidence("ad_spray_hits.txt", listing)
         except Exception:
             pass
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display,
             "ad.spray", "credentials", "critical",
             "AD PASSWORD SPRAY SUCCEEDED: %d valid pair(s)" % len(hits),
@@ -98,7 +98,8 @@ def run(engine):
                                    if lockout_signals else base_delay),
             evidence=listing[:2000],
             remediation="Smart lockouts + MFA; alert on multi-user single-"
-                        "password patterns.", confidence="firm"))
+                        "password patterns.",
+            cls="ad", proof=P.auth("%s:%s" % hits[0]))
         box = engine.state.setdefault("creds", [])
         box.extend(("ad/smb", u, p) for u, p in hits)
     else:

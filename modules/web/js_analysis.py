@@ -10,7 +10,8 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse, urljoin
 
-from core.database import Finding
+
+from core import proof as P
 from core.utils import load_json
 
 ENDPOINT_RE = re.compile(r"""["'](/[A-Za-z0-9_\-./]{2,40})["']""")
@@ -129,14 +130,17 @@ def run(engine):
 
     if findings_secret:
         ev = "\n".join("%s :: %s" % (u, m) for u, _, m in findings_secret[:15])
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.js", "secrets", "critical",
             "Hardcoded secrets found in client-side JavaScript (%d)" % len(findings_secret),
             detail="Secrets shipped to browsers are considered public. Tied to "
                    "a SAME-ORIGIN script of %s.\n" % t.display + ev,
             evidence=ev,
             remediation="Rotate the exposed keys immediately; move secrets to "
-                        "server-side env config.", confidence="firm"))
+                        "server-side env config.",
+            cls="secrets",
+            proof=P.marker(ev,
+                           note="secret pattern matched in first-party JS"))
     if findings_internal:
         uniq = []
         seen_iv = set()
@@ -146,25 +150,31 @@ def run(engine):
                 continue
             seen_iv.add(k)
             uniq.append("%s\n  in %s" % (k, src))
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.js", "info-disclosure", "low",
             "Internal infrastructure URL string inside first-party JS",
             detail="The string below appears in a SAME-ORIGIN script of %s. "
                    "If it is only a dev default (config template), it is not "
                    "an exposure; confirm whether any endpoint actually "
                    "listens there." % t.display,
-            evidence="\n".join(uniq), confidence="possible"))
+            evidence="\n".join(uniq),
+            cls="info_leak",
+            proof=P.observation("\n".join(uniq),
+                                note="internal URL strings in first-party JS"))
     if findings_sourcemap:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.js", "info-disclosure", "low",
             "Source maps referenced in production bundles",
             evidence="\n".join(sorted(set(findings_sourcemap))[:10]),
             detail="Source maps expose original source logic to attackers "
                    "(delete from production).",
-            confidence="firm"))
+            cls="info_leak",
+            proof=P.observation(
+                "\n".join(sorted(set(findings_sourcemap))[:10]),
+                note="sourceMappingURL present in bundles"))
     if findings_domsink:
         ev = "\n".join("%s :: %s..." % f for f in findings_domsink[:10])
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.js", "potential-xss", "medium",
             "Potential DOM-XSS: dangerous sink with tainted source in JS (%d)" %
             len(findings_domsink),
@@ -174,10 +184,16 @@ def run(engine):
             evidence=ev,
             remediation="Avoid innerHTML/document.write with taint; use "
                         "textContent; audit with a DOM renderer.",
-            confidence="possible"))
+            cls="info_leak",
+            proof=P.observation(ev,
+                                note="static DOM sink/source co-occurrence "
+                                     "only — execution unconfirmed"))
     engine.state.setdefault("js_endpoints", sorted(endpoints)[:200])
     if endpoints:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.js", "recon", "info",
             "API endpoints extracted from JS: %d" % len(endpoints),
-            evidence="\n".join(sorted(endpoints)[:80]), confidence="firm"))
+            evidence="\n".join(sorted(endpoints)[:80]),
+            cls="other",
+            proof=P.observation("\n".join(sorted(endpoints)[:80]),
+                                note="endpoints extracted from first-party JS"))

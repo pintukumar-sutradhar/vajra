@@ -4,7 +4,7 @@ import subprocess
 import shutil
 import re
 
-from core.database import Finding
+from core import proof as P
 
 
 def _dig(domain, rtype):
@@ -50,21 +50,26 @@ def run(engine):
         if rev:
             recs.setdefault("PTR", []).append("%s -> %s" % (ip, rev))
     if not recs:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "recon.dns", "recon", "info",
             "No DNS records resolvable",
             detail="Host may be internal-only, firewalled DNS, or the resolver "
                    "is unreachable. Vajra continues using the literal address.",
-            confidence="firm"))
+            cls="other",
+            proof=P.observation("no DNS records resolvable"))
         return
     summary = "\n".join("%-6s %s" % (k, ", ".join(v[:6])) for k, v in sorted(recs.items()))
-    engine.db.add_finding(Finding(
+    engine.record(
         t.display, "recon.dns", "recon", "info", "DNS records enumerated",
-        detail=summary, evidence=summary))
+        detail=summary, evidence=summary,
+        cls="other",
+        proof=P.observation(summary))
     ns = [x.lower() for x in recs.get("NS", [])]
     if any("cloudflare" in x for x in ns):
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "recon.dns", "recon", "info",
             "Domain uses Cloudflare nameservers",
             detail="Origin IP may be masked; direct-to-origin attacks require "
-                   "historical DNS data.", confidence="possible"))
+                   "historical DNS data.",
+            cls="other",
+            proof=P.observation(", ".join(ns)))

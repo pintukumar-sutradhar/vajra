@@ -142,6 +142,7 @@ table.vt tr:last-child td { border-bottom: none; }
 .pill.scan-completed { background: rgba(34, 197, 94, 0.16); color: var(--ok); }
 .pill.scan-failed { background: rgba(255, 82, 82, 0.14); color: var(--sev-high); }
 .pill.scan-canceled { background: rgba(138, 148, 166, 0.14); color: var(--muted); }
+.pill.scan-paused { background: rgba(245, 158, 11, 0.16); color: var(--warn); }
 .pill.ci-tentative { background: rgba(245, 158, 11, 0.14); color: var(--warn); }
 .pill.ci-firm { background: rgba(0, 115, 255, 0.14); color: var(--accent-2); }
 .pill.ci-certain { background: rgba(34, 197, 94, 0.16); color: var(--ok); }
@@ -437,3 +438,121 @@ table.vt tr.row-live td { background: rgba(0, 115, 255, 0.06); }
 .switch input:checked + .slider { background: rgba(0, 115, 255, 0.35); border-color: var(--accent); }
 .switch input:checked + .slider::after { transform: translateX(16px); background: var(--accent-2); }
 .switch-label { font-size: 12.5px; color: var(--muted); }
+
+/* ---------- progress tones ---------- */
+/* A paused scan is still "live" but is not advancing — amber, and flat
+   (no gradient movement) so it cannot be misread as progress. */
+.progress.tone-paused > i { background: var(--warn); }
+.progress.tone-error > i { background: var(--danger); }
+.progress.tone-ok > i { background: var(--ok); }
+
+/* ---------- stat tiles ---------- */
+.stat-tile .num { font-size: 26px; }
+.stat-tile.clickable { cursor: pointer; }
+.stat-tile.clickable:hover { border-color: var(--border-2); background: var(--surface-2); }
+.stat-tile .stat-sub { color: var(--muted-2); font-size: 11.5px; margin-top: 4px; }
+.num.tone-danger { color: var(--sev-high); }
+.num.tone-warn { color: var(--warn); }
+.num.tone-ok { color: var(--ok); }
+.num.tone-muted { color: var(--muted); }
+
+/* ---------- tabs ---------- */
+.toolbar.tabs { gap: 6px; }
+.toolbar.tabs .btn { padding: 6px 12px; }
+.tab-count {
+  font-size: 11px; font-weight: 700; border-radius: 999px;
+  padding: 1px 7px; background: rgba(255, 255, 255, 0.10); color: var(--text);
+}
+.tab-count.tone-danger { background: rgba(255, 82, 82, 0.20); color: var(--sev-high); }
+.tab-count.tone-warn { background: rgba(245, 158, 11, 0.20); color: var(--warn); }
+.tab-count.tone-muted { background: rgba(138, 148, 166, 0.16); color: var(--muted); }
+
+/* ---------- confirm ---------- */
+.confirm-note {
+  margin-top: 12px; font-size: 12.5px; color: var(--ok);
+  background: rgba(34, 197, 94, 0.08); border: 1px solid rgba(34, 197, 94, 0.28);
+  border-radius: var(--radius-sm); padding: 9px 12px;
+}
+
+/* ---------- search ---------- */
+.searchbox { width: auto; min-width: 200px; padding: 6px 11px; font-size: 12.5px; }
+
+/* ---------- scan workspace: live log ---------- */
+.logwrap { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; background: #0a101d; }
+.logbar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 10px; background: var(--surface-2); border-bottom: 1px solid var(--border);
+}
+.logbar .lbl {
+  font-size: 11px; color: var(--muted-2); text-transform: uppercase;
+  letter-spacing: 0.08em; display: inline-flex; align-items: center; gap: 5px;
+}
+.lvchip {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  border: 1px solid var(--border-2); border-radius: 999px; padding: 3px 9px;
+  background: none; color: var(--muted-2); cursor: pointer;
+}
+.lvchip:hover { color: var(--text); border-color: var(--accent); }
+.lvchip.on { background: rgba(0, 115, 255, 0.16); border-color: var(--accent); color: var(--accent-2); }
+.lvchip .n { opacity: 0.65; margin-left: 5px; }
+
+/* One continuous scroll region; each row is a monospace line with its own
+   level colour, so scanning the stream is the same gesture as reading a
+   terminal. */
+.ev-log.workspace { max-height: 60vh; border: none; border-radius: 0; padding: 10px 0; }
+.ev-log .row { display: flex; gap: 8px; padding: 1px 12px; }
+.ev-log .row .ts { flex: 0 0 auto; }
+.ev-log .row .msg { white-space: pre-wrap; word-break: break-word; flex: 1; }
+.ev-log .row.hit { background: rgba(0, 115, 255, 0.10); }
+.ev-log .row .lv-trace { color: #64748b; }
+.ev-log .row .lv-debug { color: #7c8db0; }
+.ev-log .row .lv-phase {
+  color: #c792ea; font-weight: 700; letter-spacing: 0.06em;
+}
+.ev-log .row .lv-info { color: #c6d4ec; }
+.ev-log .row .lv-finding { color: #6ee7a8; font-weight: 600; }
+.ev-log .row .lv-warning { color: #ffcb6b; }
+.ev-log .row .lv-error { color: #ff5370; }
+.ev-log .row .lv-suppressed { color: #8a94a6; }
+.ev-log .jump {
+  position: sticky; bottom: 0; display: block; width: 100%;
+  background: var(--accent); color: #fff; border: none; cursor: pointer;
+  font-size: 12px; font-weight: 600; padding: 6px; border-radius: 0;
+}
+
+/* ---------- scan workspace: layout ---------- */
+.ws-strip { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.ws-paused {
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(245, 158, 11, 0.10); border: 1px solid rgba(245, 158, 11, 0.42);
+  color: #ffd489; border-radius: var(--radius-sm); padding: 9px 13px;
+  font-size: 13px; margin-top: 12px;
+}
+.pill.verbose-1 { background: rgba(0, 115, 255, 0.14); color: var(--accent-2); }
+.pill.verbose-2 { background: rgba(199, 146, 234, 0.16); color: #c792ea; }
+
+/* ---------- suppressed ledger ---------- */
+table.vt td.reason { color: var(--muted); font-size: 12px; max-width: 460px; }
+table.vt td.reason .why { color: var(--text); }
+.ledger-note {
+  color: var(--muted-2); font-size: 12px; margin: 0 0 12px; line-height: 1.55;
+}
+
+/* ---------- proof panel ---------- */
+/* The single most load-bearing thing on a finding: the artifact that was
+   actually captured. Given its own panel and the accent colour so it reads
+   before the surrounding prose rather than as one more grey field. */
+.proofbox {
+  display: flex; gap: 11px; align-items: flex-start;
+  background: rgba(34, 197, 94, 0.07);
+  border: 1px solid rgba(34, 197, 94, 0.30);
+  border-radius: var(--radius-sm);
+  padding: 11px 13px; margin-bottom: 14px;
+}
+.proofbox svg { flex: 0 0 auto; color: var(--ok); margin-top: 1px; }
+.proofbox .proof-lbl {
+  font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ok); font-weight: 700; margin-bottom: 3px;
+}
+.proofbox .proof-txt { color: #cfe9d8; font-size: 12.5px; word-break: break-word; }
+

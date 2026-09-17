@@ -124,6 +124,20 @@ class Scan(Base):
     workdir: Mapped[str] = mapped_column(Text, default="")
     stats: Mapped[dict] = mapped_column(JSON, default=dict)
     cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Pause is stop/continue of the engine process (SIGSTOP/SIGCONT), driven
+    # by this flag; the worker records when it happened so progress and ETA
+    # can discount the paused interval instead of reporting it as scan time.
+    pause_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    paused_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime, nullable=True)
+    resumed_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime, nullable=True)
+    paused_seconds: Mapped[float] = mapped_column(Float, default=0.0)
+    # 0 normal, 1 -v (baseline/suppression decisions), 2 -vv (every probe).
+    verbose: Mapped[int] = mapped_column(Integer, default=0)
+    # Candidates the proof gate refused. Surfaced in the audit ledger so a
+    # suppression is visible rather than silently dropped.
+    suppressed_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime,
                                                           default=_utcnow)
     started_at: Mapped[datetime.datetime | None] = mapped_column(
@@ -170,6 +184,14 @@ class Finding(Base):
     detail: Mapped[str] = mapped_column(Text, default="")
     evidence: Mapped[dict] = mapped_column(JSON, default=dict)
     remediation: Mapped[str] = mapped_column(Text, default="")
+    # What proved it, and the ceiling that evidence is allowed to reach.
+    # `proof` reads like "extraction [php://filter base64 decoded to a passwd
+    # marker]" and is what turns a finding from a claim into a demonstration —
+    # it is the field an operator checks before believing anything else on the
+    # page, so it survives the trip out of the bundle rather than staying
+    # behind in the run's sqlite.
+    proof: Mapped[str] = mapped_column(Text, default="")
+    cap: Mapped[str] = mapped_column(String(20), default="")
     status: Mapped[str] = mapped_column(String(20), default="open",
                                         index=True)
     state_note: Mapped[str] = mapped_column(Text, default="")
@@ -193,6 +215,34 @@ class ScanEvent(Base):
     ts: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
     level: Mapped[str] = mapped_column(String(12), default="info")
     message: Mapped[str] = mapped_column(Text, default="")
+
+
+class SuppressedCheck(Base):
+    """Candidates the proof gate refused.
+
+    These are deliberately NOT findings: nothing here reached the evidentiary
+    bar for its class. They are kept so a suppression is visible and
+    reviewable — an empty ledger and a broken scanner look identical from the
+    findings list alone, and a genuine issue that was suppressed for a bad
+    reason should be findable rather than invisible.
+    """
+
+    __tablename__ = "suppressed_checks"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    org_id: Mapped[int] = mapped_column(ForeignKey("orgs.id"), index=True)
+    scan_id: Mapped[int] = mapped_column(ForeignKey("scans.id"), index=True)
+    target_id: Mapped[int] = mapped_column(ForeignKey("targets.id"),
+                                           index=True)
+    module: Mapped[str] = mapped_column(String(80), default="")
+    cls: Mapped[str] = mapped_column(String(60), default="")
+    severity: Mapped[str] = mapped_column(String(20), default="")
+    title: Mapped[str] = mapped_column(String(500), default="")
+    # Why the gate refused it: no proof, dirty control, no rule for the class,
+    # or a marker that was not present.
+    reason: Mapped[str] = mapped_column(Text, default="")
+    detail: Mapped[str] = mapped_column(Text, default="")
+    dedup_key: Mapped[str] = mapped_column(String(300), default="", index=True)
+    ts: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
 
 
 class AuditLog(Base):

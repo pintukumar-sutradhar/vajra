@@ -9,7 +9,7 @@ evidence resource. Signature detection is delegated to nmap's authoritative
 `smb2-security-mode` script when present (zero-false-positive), else the
 finding is reported only as `possible`.
 """
-from core.database import Finding
+from core import proof as P
 from core.utils import which_tool
 
 
@@ -74,7 +74,7 @@ def run(engine):
         evidence_lines.append("relay resource: " + (rel or "-"))
 
     if relay_worthy:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "ad.ntlm_relay", "misconfiguration", "high",
             "SMB SIGNING NOT REQUIRED — NTLM-relay worthy",
             detail=("Target %s does not require SMB signing (authoritative "
@@ -86,15 +86,17 @@ def run(engine):
             remediation="Require SMB signing for all domain clients (GPO: "
                         "'Microsoft network server: Digitally sign "
                         "communications (always)'); disable SMBv1.",
-            confidence="firm" if tool else "possible"))
+            cls="ad_misconfig",
+            proof=P.observation("signing not required on %s" % host))
         engine.log.finding("[relay] %s is SMB-signing-not-required (relay "
                            "worthy)" % host)
     elif signing == "required":
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "ad.ntlm_relay", "hardening", "info",
             "SMB signing required — relay not viable",
             detail="Target enforces SMB signing; NTLM relay to this host is "
-                   "mitigated.", confidence="firm"))
+                   "mitigated.", cls="ad_misconfig",
+            proof=P.observation("signing required on %s" % host))
     else:
         engine.db.add_event(t.display, "ad.ntlm_relay",
                             "signing state unknown/inconclusive (%s)" % signing)

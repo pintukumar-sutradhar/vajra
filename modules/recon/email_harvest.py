@@ -1,7 +1,7 @@
 """Vajra - email harvesting from crawled content."""
 import re
 
-from core.database import Finding
+from core import proof as P
 from core.utils import extract_emails
 
 
@@ -18,8 +18,11 @@ def run(engine):
     emails = {e for e in emails if "." in e and "@" in e}
     engine.state["emails"] = sorted(emails)
     if emails:
-        engine.db.add_finding(Finding(
+        ev = "\n".join(sorted(emails)[:50])
+        engine.record(
             t.display, "recon.emails", "osint", "low",
             "Email addresses exposed on site: %d" % len(emails),
             detail="Exposed emails aid phishing/social-engineering recon.",
-            evidence="\n".join(sorted(emails)[:50]), confidence="firm"))
+            evidence=ev,
+            cls="other",
+            proof=P.observation(ev))

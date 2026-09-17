@@ -40,6 +40,44 @@ def get_db():
         db.close()
 
 
+def _add_missing_columns():
+    """Additive-only column sync for SQLite.
+
+    `create_all` creates missing *tables* but never alters an existing one, so
+    a column added to a model would silently not exist on a database created
+    before it — surfacing later as "no such column" mid-scan. Only ever adds;
+    never drops or retypes, so it cannot damage an existing database.
+    """
+    if not settings.db_is_sqlite():
+        return
+    from sqlalchemy import inspect, text
+    insp = inspect(engine)
+    existing = set(insp.get_table_names())
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if table.name not in existing:
+                continue          # create_all handles brand-new tables
+            have = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in have:
+                    continue
+                ddl = "ALTER TABLE %s ADD COLUMN %s %s" % (
+                    table.name, col.name,
+                    col.type.compile(engine.dialect))
+                default = getattr(col, "default", None)
+                if default is not None and getattr(default, "arg", None) is not None \
+                        and not callable(default.arg):
+                    val = default.arg
+                    if isinstance(val, bool):
+                        ddl += " DEFAULT %d" % (1 if val else 0)
+                    elif isinstance(val, (int, float)):
+                        ddl += " DEFAULT %s" % val
+                    elif isinstance(val, str):
+                        ddl += " DEFAULT '%s'" % val.replace("'", "''")
+                conn.execute(text(ddl))
+
+
 def init_db():
     from . import models  # noqa: F401  (register tables)
     Base.metadata.create_all(bind=engine)
+    _add_missing_columns()

@@ -16,8 +16,8 @@ import re
 import subprocess
 import shutil
 
-from core.database import Finding
 from core.intelligence import guess_service, is_http_port
+from core import proof as P
 from core.utils import which_tool
 from modules.network.probes import run_deep_probes
 from modules.network.svc_sigs import SIGS
@@ -372,14 +372,18 @@ def _post_checks(engine, t, host, services):
         if svc["port"] in (25, 587) and svc.get("banner"):
             relayed, detail = _smtp_relay_check(host, svc["port"])
             if relayed:
-                engine.db.add_finding(Finding(
+                engine.record(
                     t.display, "network.services", "exposure", "high",
                     "OPEN MAIL RELAY on port %d" % svc["port"],
                     detail="External spoofed sender accepted for external "
                            "recipient; spam/phishing infrastructure value.",
                     evidence=detail[:500],
                     remediation="Restrict RCPT domains; require auth for "
-                                "external delivery.", confidence="firm"))
+                                "external delivery.",
+                    cls="misconfiguration",
+                    proof=P.observation(
+                        str(detail)[:200],
+                        note="SMTP accepted RCPT for an external domain"))
         if svc["port"] == 389:
             dse = _ldap_rootdse(host)
             if dse:
@@ -393,38 +397,50 @@ def _post_checks(engine, t, host, services):
     for n in notes:
         engine.log.info("[deep-probe] " + n)
     if notes:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "network.services", "recon", "info",
             "Deep protocol handshake results (%d)" % len(notes),
             detail="Active handshakes beyond passive banners across "
                    "non-HTTP protocols.",
-            evidence="\n".join(notes)[:4000], confidence="firm"))
+            evidence="\n".join(notes)[:4000],
+            cls="network_service",
+            proof=P.observation(
+                "%d service(s) answered deep protocol handshakes"
+                % len(notes)))
     for svc in services:
         dp = svc.get("deep_probe", "") or ""
         if "[NO AUTHENTICATION]" in dp:
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "exploit.creds", "exposure", "high",
                 "VNC server allows connections WITHOUT authentication "
                 "(port %d)" % svc["port"],
                 detail="Full desktop control available anonymously.",
-                evidence=dp, confidence="firm"))
+                evidence=dp,
+                cls="exposure",
+                proof=P.observation(
+                    "VNC handshake accepted without authentication"))
         if "[UNAUTHENTICATED]" in dp:
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "exploit.creds", "exposure", "high",
                 "Redis INFO disclosed without authentication (port %d)"
                 % svc["port"],
                 detail="Server internals, OS and memory layout leak to "
                        "anonymous clients.", evidence=dp[:600],
-                confidence="firm"))
+                cls="exposure",
+                proof=P.observation(
+                    "Redis INFO reply returned without authentication"))
         mstat = re.search(r"stat_lines=(\d+)", dp)
         if mstat and int(mstat.group(1)) > 0:
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "exploit.creds", "exposure", "medium",
                 "Memcached statistics exposed without auth (port %d)"
                 % svc["port"],
                 detail="%d STAT variables disclose cache keys, network and "
                        "memory layout." % int(mstat.group(1)),
-                confidence="firm"))
+                cls="exposure",
+                proof=P.observation(
+                    "%d memcached STAT lines returned without "
+                    "authentication" % int(mstat.group(1))))
 
     intel_hits = []
     for svc in services:
@@ -437,7 +453,7 @@ def _post_checks(engine, t, host, services):
         sev = "critical" if top_cvss >= 9 else (
             "high" if top_cvss >= 7 else "medium")
         ids = ", ".join(c["id"] for c in hit["cves"][:4])
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "network.services", "cve-surface", sev,
             "Vulnerable %s %s (port %d): %s" %
             (hit["product"], hit["version"], svc["port"], ids),
@@ -450,7 +466,9 @@ def _post_checks(engine, t, host, services):
             remediation="Update the affected component to a patched version; "
                         "verify exposure manually before exploitation "
                         "attempts.",
-            confidence="possible"))
+            cls="cve",
+            proof=P.marker(svc["banner"][:300],
+                           note="version banner matched known CVE list"))
 
     for svc in services:
         cert = svc.get("cert") or {}
@@ -458,26 +476,38 @@ def _post_checks(engine, t, host, services):
             days = _days_left(cert.get("notAfter"))
             if days is not None:
                 if days < 0:
-                    engine.db.add_finding(Finding(
+                    engine.record(
                         t.display, "web.tls", "tls", "high",
                         "Expired TLS certificate on port %d (%d days)" %
                         (svc["port"], -days),
-                        evidence="notAfter=%s" % cert.get("notAfter")))
+                        evidence="notAfter=%s" % cert.get("notAfter"),
+                        cls="tls",
+                        proof=P.observation(
+                            "notAfter=%s expired %d days ago"
+                            % (cert.get("notAfter"), -days)))
                 elif days < 15:
-                    engine.db.add_finding(Finding(
+                    engine.record(
                         t.display, "web.tls", "tls", "medium",
                         "TLS certificate expiring soon on port %d (%d "
                         "days)" % (svc["port"], days),
-                        evidence=str(cert.get("notAfter"))))
+                        evidence=str(cert.get("notAfter")),
+                        cls="tls",
+                        proof=P.observation(
+                            "notAfter=%s expiring in %d days"
+                            % (cert.get("notAfter"), days)))
             subj = cert.get("subject", {})
             issuer_cn = cert.get("issuer", {}).get("commonName", "")
             cn = subj.get("commonName", "")
             if issuer_cn and cn and issuer_cn.lower().replace("*", "") == \
                     cn.lower().replace("*", ""):
-                engine.db.add_finding(Finding(
+                engine.record(
                     t.display, "web.tls", "tls", "high",
                     "Self-signed certificate on port %d" % svc["port"],
-                    evidence="CN=%s issued by=%s" % (cn, issuer_cn)))
+                    evidence="CN=%s issued by=%s" % (cn, issuer_cn),
+                    cls="tls",
+                    proof=P.observation(
+                        "CN=%s issued by itself (%s)"
+                        % (cn, issuer_cn)))
 
 
 def _smtp_relay_check(host, port):

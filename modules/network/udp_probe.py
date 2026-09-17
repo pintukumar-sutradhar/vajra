@@ -2,7 +2,7 @@
 import socket
 import struct
 
-from core.database import Finding
+from core import proof as P
 
 
 def _udp(host, port, payload, timeout=2.5):
@@ -78,12 +78,15 @@ def run(engine):
             engine.state.setdefault("udp_open", set()).add(port)
             engine.log.info("[udp] %d -> %s" % (port, note.split("->")[1][:70]))
     if notes:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "network.udpprobe", "recon", "medium",
             "Responsive UDP services with information disclosure (%d)"
             % len(notes),
             detail="Enable --udp permanently in profiles that need it; "
                    "these services bypass TCP sweeps entirely.",
-            evidence="\n".join(notes)[:3000], confidence="firm"))
+            evidence="\n".join(notes)[:3000],
+            cls="info_leak",
+            proof=P.observation(
+                "%d UDP probe(s) returned version/system data" % len(notes)))
     else:
         engine.db.add_event(t.display, "network.udpprobe", "no responses")

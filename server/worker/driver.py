@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 import codecs
+import signal as _signal
 
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 BANNER = re.compile(r"VAJRA v[\d.]+")
@@ -36,11 +37,61 @@ _METER = re.compile(r"(?:scan .+? \d+/\d+\s*\(\s*[\d.]+%\)\s*ETA|"
 # "[PHASE  ] >>> PHASE: RECON"  ->  give the UI a clean section marker
 _PHASE = re.compile(r">>>\s*PHASE:\s*(.*)", re.I)
 
+# Engine log tags -> platform event levels. The engine already classifies every
+# line it emits; collapsing those back to a guess made the live-log level
+# filter useless, because a -vv TRACE line and an ordinary progress line both
+# arrived as "info". Pass the declared level through instead.
+_LEVELS = {"trace": "trace", "debug": "debug", "phase": "phase",
+           "info": "info", "success": "finding", "finding": "finding",
+           "warn": "warning", "warning": "warning", "error": "error",
+           "critical": "error", "fatal": "error"}
+
 _INTERVAL = 1.0
+
+# How long the engine gets to finish its graceful shutdown after SIGTERM
+# before we SIGKILL it. That shutdown writes evidence, the findings bundle and
+# the reports, so this has to be generous enough not to truncate it.
+_CANCEL_GRACE = 45.0
+
+# How often to import newly-proven findings while the scan is still running,
+# so the operator watches results arrive instead of waiting for the end.
+_LIVE_HARVEST = 10.0
 
 # scan_id -> running engine subprocess, for graceful termination when the
 # worker itself is stopped (SIGTERM) or restarting.
 ACTIVE = {}
+
+# scan_id -> monotonic timestamp when the engine was stopped for pause, and
+# the accumulated paused seconds, so progress/ETA can stay honest.
+PAUSED = {}
+PAUSED_TOTAL = {}
+
+
+def _engine_paused(scan_id):
+    return scan_id in PAUSED
+
+
+def _resume_if_paused(proc, scan_id, scan=None):
+    """SIGCONT before anything else.
+
+    A SIGSTOPped process cannot act on a signal that is not SIGKILL/SIGCONT,
+    so a cancel issued while paused would sit undelivered until something
+    resumed the process. Always continue first.
+
+    `scan` is optional and, when given, has its paused clock closed out — so a
+    run cancelled while paused does not report the stopped time as work time.
+    """
+    if scan_id in PAUSED:
+        try:
+            proc.send_signal(_signal.SIGCONT)
+        except Exception:
+            pass
+        PAUSED_TOTAL[scan_id] = PAUSED_TOTAL.get(scan_id, 0.0) + (
+            time.monotonic() - PAUSED.pop(scan_id))
+        if scan is not None:
+            scan.paused_seconds = PAUSED_TOTAL[scan_id]
+            scan.paused_at = None
+            scan.pause_requested = False
 
 
 def kill_engine(scan_id):
@@ -64,6 +115,12 @@ def kill_engine(scan_id):
             continue
         if pid_s == str(os.getpid()):
             continue
+        try:
+            # Continue first: an orphan that was paused is stopped, and a
+            # stopped process never acts on SIGTERM.
+            os.kill(int(pid_s), _signal.SIGCONT)
+        except OSError:
+            pass
         try:
             os.kill(int(pid_s), _signal.SIGTERM)
         except OSError:
@@ -190,14 +247,21 @@ def _read_bundle(bundle_dir):
     for cand in sorted(glob.glob(str(bundle_dir / "report*.html"))):
         report = cand
         break
-    rows = []
+    rows, suppressed = [], []
     for db_path in dbs:
         try:
             from core.database import Database
-            rows.extend(Database(db_path).findings())
+            d = Database(db_path)
+            rows.extend(d.findings())
+            # The proof gate's refused candidates. Read here so a suppression
+            # is visible in the platform, not just in the engine's own db.
+            try:
+                suppressed.extend(d.suppressed())
+            except Exception:
+                pass
         except Exception:
             pass
-    return rows, report
+    return rows, report, suppressed
 
 
 def _slugify(s):
@@ -218,24 +282,42 @@ def _screenshots_for(bundle, title):
 
 
 def _harvest(scan, run_dir):
+    """Import everything the run proved, plus what the proof gate refused.
+
+    Idempotent: rows already imported for this scan (by dedup_key) are
+    skipped, so this same routine serves both the live poll during a run and
+    the final pass at the end, and a cancel that harvests what it had cannot
+    double-count what was already streamed.
+    """
     from ..app import models
     from ..app.db import SessionLocal
     session = SessionLocal()
     try:
+        existing = {k for (k,) in session.query(models.Finding.dedup_key)
+                    .filter(models.Finding.scan_id == scan.id).all()}
+        seen_suppressed = {
+            k for (k,) in session.query(models.SuppressedCheck.dedup_key)
+            .filter(models.SuppressedCheck.scan_id == scan.id).all()}
         bundles = [b for b in sorted(run_dir.glob("Outputs/*/*/"))]
         order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
-        ref = 0
+        ref = session.query(models.Finding).filter(
+            models.Finding.scan_id == scan.id).count()
         total = 0
+        n_suppressed = 0
         by_sev = {}
         rows_by_bundle = []
         for bundle in bundles:
             rows_by_bundle.append((bundle,) + _read_bundle(bundle))
-        for bundle, findings, report in rows_by_bundle:
+        for bundle, findings, report, suppressed in rows_by_bundle:
             for f in sorted(findings, key=lambda r: order.get(
                     (r.get("severity") or "info").lower(), 5)):
-                ref += 1
                 sev = (f.get("severity") or "info").lower()
                 module = f.get("module") or ""
+                key = "%s:%s" % (module, f.get("title") or "")
+                if key in existing:
+                    continue
+                existing.add(key)
+                ref += 1
                 session.add(models.Finding(
                     org_id=scan.org_id, scan_id=scan.id,
                     target_id=scan.target_id, engine_id=scan.engine_id,
@@ -250,16 +332,40 @@ def _harvest(scan, run_dir):
                                   bundle, f.get("title") or "")},
                     remediation=f.get("remediation") or "",
                     confidence=f.get("confidence") or "tentative",
-                    dedup_key="%s:%s" % (module, f.get("title") or "")))
+                    proof=f.get("proof") or "",
+                    cap=str(f.get("cap") or ""),
+                    dedup_key=key))
                 total += 1
                 by_sev[sev] = by_sev.get(sev, 0) + 1
-        scan.stats = {
-            "findings": total, "by_severity": by_sev,
-            "bundle_dir": str(rows_by_bundle[0][0])
-            if rows_by_bundle else "",
-            "report_html": rows_by_bundle[0][2] if rows_by_bundle else ""}
+            for s in suppressed:
+                key = "%s:%s:%s" % (s.get("module") or "", s.get("title") or "",
+                                    s.get("reason") or "")
+                if key in seen_suppressed:
+                    continue
+                seen_suppressed.add(key)
+                session.add(models.SuppressedCheck(
+                    org_id=scan.org_id, scan_id=scan.id,
+                    target_id=scan.target_id,
+                    module=(s.get("module") or "")[:80],
+                    cls=(s.get("cls") or "")[:60],
+                    severity=(s.get("severity") or "")[:20],
+                    title=(s.get("title") or "")[:500],
+                    reason=s.get("reason") or "",
+                    detail=s.get("detail") or "",
+                    dedup_key=key))
+                n_suppressed += 1
+        stats = dict(scan.stats or {})
+        stats.update({
+            "findings": ref,
+            "new_findings": total,
+            "by_severity": by_sev or stats.get("by_severity", {}),
+            "suppressed": stats.get("suppressed", 0) + n_suppressed,
+            "bundle_dir": str(rows_by_bundle[0][0]) if rows_by_bundle else "",
+            "report_html": rows_by_bundle[0][2] if rows_by_bundle else ""})
+        scan.stats = stats
+        scan.suppressed_count = stats["suppressed"]
         session.commit()
-        return total, bool(rows_by_bundle and rows_by_bundle[0][2])
+        return ref, bool(rows_by_bundle and rows_by_bundle[0][2])
     finally:
         session.close()
 
@@ -290,6 +396,12 @@ def run_scan(scan_id):
         target = db.get(models.Target, scan.target_id)
         argv = build_argv(target, eng.get("cfg", {}), scan.profile,
                           scan.params or {}, creds, run_dir, REPO)
+        # Verbosity reaches the engine as -v/-vv. At -v the engine logs its
+        # baseline comparisons, proof decisions and suppression reasons; at
+        # -vv every probe and payload.
+        verbose = max(0, min(2, int(getattr(scan, "verbose", 0) or 0)))
+        if verbose:
+            argv = list(argv) + ["-" + "v" * verbose]
         scan.workdir = str(run_dir)
         scan.status = "running"
         scan.started_at = _utcnow()
@@ -322,6 +434,7 @@ def run_scan(scan_id):
         buf = ""
         last_event = 0.0
         last_commit = 0.0
+        last_harvest = time.monotonic()
         last_milestone = 0
         last_line = None
         last_line_at = 0.0
@@ -344,23 +457,31 @@ def run_scan(scan_id):
             # keep the stream readable rather than a firehose.
             nonlocal last_line, last_line_at
             clean = ANSI.sub("", raw).replace("\r", "").strip()
-            if not clean or BANNER.search(clean) or _NOISE.search(clean) or \
-                    _METER.search(clean):
+            # At -v/-vv the operator asked for the engine's reasoning, so the
+            # local-path "chatter" filter is relaxed. Two filters stay: the
+            # progress-meter redraw (it carries nothing the parsed percentage
+            # does not, and fires many times a second, so keeping it would
+            # bury the very lines verbose mode exists to surface) and the
+            # ASCII-art splash (pure box-drawing, no content).
+            if not clean or BANNER.search(clean) or _METER.search(clean):
+                return
+            if verbose < 1 and _NOISE.search(clean):
                 return
             m = _REC.match(clean)
             if m:
-                tag = _classify(clean) if m.group(1).lower() in (
-                    "critical", "fatal", "error", "warn", "warning") else ""
+                tag = (m.group(1) or "").lower()
                 body = m.group(2).strip()
                 if not body or _BLANK.match(body) or _ART.match(body):
                     return
-                if m.group(1).lower().startswith("phase"):
+                if tag.startswith("phase"):
                     pm = _PHASE.search(body)
                     clean = "== %s ==" % pm.group(1).strip() if pm else body
-                    level = "info"
+                    level = "phase"
                 else:
                     clean = body
-                    level = tag or _classify(body)
+                    # The engine's own tag wins; _classify is the fallback for
+                    # tags we do not know.
+                    level = _LEVELS.get(tag) or _classify(body)
             else:
                 if _ART.match(clean):
                     return
@@ -400,6 +521,27 @@ def run_scan(scan_id):
                 drain_master()
             flush()
             now = time.monotonic()
+            # Pause/resume. SIGSTOP is uncatchable, so the engine needs no
+            # cooperation: it simply stops consuming CPU and network, and the
+            # monitor below keeps heartbeating the job so a paused scan is
+            # never mistaken for a dead one and reclaimed.
+            want_pause = bool(getattr(scan, "pause_requested", False))
+            if want_pause and not _engine_paused(scan_id):
+                try:
+                    proc.send_signal(_signal.SIGSTOP)
+                    PAUSED[scan_id] = now
+                    scan.paused_at = _utcnow()
+                    _log(scan_id, "scan paused by operator", "warning")
+                    _commit_retry(db)
+                except Exception as exc:
+                    _log(scan_id, "pause failed: %r" % (exc,), "error")
+            elif not want_pause and _engine_paused(scan_id):
+                _resume_if_paused(proc, scan_id)
+                scan.resumed_at = _utcnow()
+                scan.paused_seconds = PAUSED_TOTAL.get(scan_id, 0.0)
+                _log(scan_id, "scan resumed (paused %.0fs)"
+                     % scan.paused_seconds, "info")
+                _commit_retry(db)
             if now - last_commit >= 2.0:
                 job = db.query(models.JobItem).filter(
                     models.JobItem.scan_id == scan_id).first()
@@ -407,12 +549,35 @@ def run_scan(scan_id):
                     job.heartbeat_at = _utcnow()
                 _commit_retry(db)
                 last_commit = now
+            # Stream findings as they are proven, rather than only at the end.
+            # _harvest is idempotent, so this is the same routine the final
+            # pass uses and cannot double-count. It is best-effort: a hiccup
+            # here must never take down a running scan.
+            if now - last_harvest >= _LIVE_HARVEST:
+                last_harvest = now
+                try:
+                    _harvest(scan, run_dir)
+                    _commit_retry(db)
+                except Exception as exc:
+                    _log(scan_id, "live harvest skipped: %r" % (exc,),
+                         "warning")
             if scan.cancel_requested:
                 try:
+                    # A stopped process cannot receive SIGTERM until it runs
+                    # again, so continue it first or the cancel hangs.
+                    _resume_if_paused(proc, scan_id, scan)
                     proc.terminate()
+                    _log(scan_id, "cancelling — engine is flushing findings "
+                         "and evidence", "warning")
                     try:
-                        proc.wait(timeout=5)
+                        # The engine handles SIGTERM gracefully now, and that
+                        # graceful path writes evidence, the findings bundle
+                        # and reports. SIGKILL too early would truncate the
+                        # very work we are trying to preserve.
+                        proc.wait(timeout=_CANCEL_GRACE)
                     except subprocess.TimeoutExpired:
+                        _log(scan_id, "engine did not stop within %ds — "
+                             "killing it" % int(_CANCEL_GRACE), "warning")
                         proc.kill()
                         proc.wait()
                 except Exception:
@@ -437,17 +602,21 @@ def run_scan(scan_id):
         scan.exit_code = code
         if scan.cancel_requested:
             scan.status = "canceled"
+        # Harvest on every exit path, including cancellation. A cancelled scan
+        # has already proven findings sitting in its bundle, and skipping the
+        # import here is why stopping a scan used to show nothing at all.
+        total, has_report = _harvest(scan, run_dir)
+        scan.progress = 100.0
+        if scan.cancel_requested:
+            _log(scan_id, "canceled — kept %d finding(s) proven before the "
+                 "stop" % total, "warning")
+        elif has_report:
+            scan.status = "completed"
+            _log(scan_id, "scan complete: %d findings, report ready" % total)
         else:
-            total, has_report = _harvest(scan, run_dir)
-            scan.progress = 100.0
-            if has_report:
-                scan.status = "completed"
-                _log(scan_id, "scan complete: %d findings, report ready"
-                     % total)
-            else:
-                scan.status = "failed"
-                scan.error = "engine exited (%d) without a report" % code
-                _log(scan_id, scan.error, "error")
+            scan.status = "failed"
+            scan.error = "engine exited (%d) without a report" % code
+            _log(scan_id, scan.error, "error")
         scan.finished_at = _utcnow()
         _commit_retry(db)
     except Exception as exc:
@@ -456,6 +625,7 @@ def run_scan(scan_id):
         try:
             proc = locals().get("proc")
             if proc is not None and proc.poll() is None:
+                _resume_if_paused(proc, scan_id)
                 proc.terminate()
                 try:
                     proc.wait(timeout=5)
@@ -477,6 +647,11 @@ def run_scan(scan_id):
                 s.status = "failed"
                 s.error = str(exc)[:2000]
                 s.finished_at = _utcnow()
+                # Close out the paused clock so a run that died while paused
+                # does not report the stopped time as work time.
+                s.paused_seconds = PAUSED_TOTAL.get(scan_id, 0.0)
+                s.paused_at = None
+                s.pause_requested = False
             _commit_retry(fresh)
         except Exception:
             pass
@@ -485,4 +660,6 @@ def run_scan(scan_id):
         _log(scan_id, "worker error: %s" % exc, "error")
     finally:
         ACTIVE.pop(scan_id, None)
+        PAUSED.pop(scan_id, None)
+        PAUSED_TOTAL.pop(scan_id, None)
         db.close()

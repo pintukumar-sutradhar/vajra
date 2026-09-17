@@ -2,7 +2,7 @@
 import re
 import socket
 
-from core.database import Finding
+from core import proof as P
 
 IANA_WHOIS = "whois.iana.org"
 
@@ -61,9 +61,11 @@ def run(engine):
         if any(low.startswith(k) for k in keys):
             picked.append(line.strip())
     summary = "\n".join(picked[:24]) or text[:1500]
-    engine.db.add_finding(Finding(
+    engine.record(
         t.display, "recon.whois", "recon", "info", "WHOIS registration details",
-        detail=summary, evidence=summary[:4000], confidence="firm"))
+        detail=summary, evidence=summary[:4000],
+        cls="other",
+        proof=P.observation(summary))
     exp = re.search(r"expir\w*[:\s]+(\S+)", text, re.I)
     if exp:
         engine.state.setdefault("whois", {})["expiry"] = exp.group(1)

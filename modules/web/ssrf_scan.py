@@ -2,7 +2,8 @@
 cloud-metadata and internal-service detection."""
 import re
 
-from core.database import Finding
+
+from core import proof as P
 from core.payload_engine import BANKS, SSRF_MARKERS
 
 URL_HINTS = ("url", "uri", "fetch", "source", "src", "proxy", "load",
@@ -54,7 +55,7 @@ def run(engine):
         for origin, method, param, payload, marker, status in blind[:5]:
             confirmed.append({"method": method, "url": origin,
                               "param": param})
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "web.ssrf_scan", "web-vuln", "critical",
                 "BLIND SSRF — OOB callback (param '%s')" % param,
                 detail="No direct response marker, but the server hit our "
@@ -64,13 +65,17 @@ def run(engine):
                                                               marker),
                 remediation="Allowlist egress destinations; block link-local "
                             "and metadata IPs at the network layer.",
-                confidence="certain"))
+                cls="ssrf",
+                proof=P.Proof(P.CALLBACK, "callback: %s" % marker,
+                              control_clean=True,
+                              note="callback arrived only after payload; "
+                                   "none before"))
             engine.log.finding("[ssrf] BLIND %s -> %s (%s)"
                                % (origin, param, marker))
 
     for origin, method, param, payload, marker, status in hits[:8]:
         confirmed.append({"method": method, "url": origin, "param": param})
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.ssrf_scan", "web-vuln", "critical",
             "SSRF confirmed (param '%s') — %s" % (param, marker),
             detail="Origin: %s\nParameter: %s\nServer fetched attacker-"
@@ -80,17 +85,23 @@ def run(engine):
                      (method, origin, param, payload, marker, status),
             remediation="Allowlist egress destinations; block link-local "
                         "and metadata IPs at the network layer.",
-            confidence="certain"))
+            cls="ssrf",
+            proof=P.marker(marker, control_clean=True,
+                           note="marker absent from the baseline request"))
         engine.log.finding("[ssrf] %s -> %s (%s)" % (origin, param, marker))
     engine.state["ssrf_confirmed"] = [
         c for c in confirmed[:8] if c.get("url")]
     if not hits:
         tested_n = len(tested)
         if tested_n:
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "web.ssrf_scan", "coverage", "info",
                 "SSRF probes completed on %d candidate parameter(s)" % tested_n,
-                confidence="firm"))
+                cls="other",
+                proof=P.observation(
+                    "SSRF probes completed on %d candidate parameter(s)"
+                    % tested_n,
+                    note="no ssrf marker observed"))
 
 
 def _blind_ssrf_oob(engine, points, oob, url_hints):

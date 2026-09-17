@@ -8,7 +8,7 @@ import struct
 import subprocess
 import time
 
-from core.database import Finding
+from core import proof as P
 
 
 def _dig_axfr(ns, domain, timeout=12):
@@ -130,15 +130,18 @@ def run(engine):
                                 "transfer refused/empty (%s)" % ns[0])
             return
         names = sorted({l.split()[0] for l in lines if l.split()})
-        engine.db.add_finding(Finding(
+        leak = "\n".join(names[:60])
+        engine.record(
             t.display, "recon.axfr", "info-leak", "high",
             "DNS zone transfer enabled (%s) — %d record(s) disclosed" %
             (ns[0], len(names)),
             detail="The authoritative nameserver discloses the entire DNS "
                    "zone; internal hostnames feed subdomain/lateral attacks.",
-            evidence="\n".join(names[:60]),
+            evidence=leak,
             remediation="Restrict AXFR to trusted operators on all "
-                        "authoritative servers.", confidence="firm"))
+                        "authoritative servers.",
+            cls="info_leak",
+            proof=P.extraction(leak))
         engine.state["axfr"] = {"ns": ns[0], "names": names}
         engine.log.finding("[axfr] %s: %d names from %s" %
                            (dom, len(names), ns[0]))
@@ -154,15 +157,17 @@ def run(engine):
             res = None
         if res:
             names, _types = res
-            engine.db.add_finding(Finding(
+            leak = "\n".join(names[:60])
+            engine.record(
                 t.display, "recon.axfr", "info-leak", "high",
                 "DNS zone transfer enabled (%s) — %d record(s) disclosed" %
                 (ns, len(names)),
                 detail="Raw DNS AXFR over TCP succeeded from the target's "
                        "own resolver path.",
-                evidence="\n".join(names[:60]),
+                evidence=leak,
                 remediation="Restrict AXFR to trusted operators.",
-                confidence="firm"))
+                cls="info_leak",
+                proof=P.extraction(leak))
             engine.state["axfr"] = {"ns": str(ns), "names": names}
             engine.log.finding("[axfr] %s: %d names via %s" %
                                (dom, len(names), ns))

@@ -8,7 +8,8 @@ the absence of protection as an information finding when nothing trips."""
 import re
 import time
 
-from core.database import Finding
+
+from core import proof as P
 from core.utils import load_json
 
 LOCKOUT_HINTS = re.compile("too many attempts|toomany|rate.limit|locked|"
@@ -113,7 +114,7 @@ def run(engine):
                 states[sig] = 0
             states[sig] += 1
             if r.status in (429, 423) or r.headers.get("retry-after"):
-                engine.db.add_finding(Finding(
+                engine.record(
                     t.display, "web.policy", "verified-control", "info",
                     "Rate limiting / lockout enforced on %s" % url,
                     detail="HTTP %d after %d failed login(s); Retry-After=%s."
@@ -121,7 +122,12 @@ def run(engine):
                               r.headers.get("retry-after", "n/a")),
                     evidence="burn user %s" % burn_user,
                     remediation="Keep the policy; log suspicious bursts.",
-                    confidence="firm"))
+                    cls="policy",
+                    proof=P.observation(
+                        "HTTP %d after %d failed login(s); Retry-After=%s."
+                        % (r.status, i + 1 or attempts,
+                           r.headers.get("retry-after", "n/a")),
+                        note="burn user %s" % burn_user))
                 engine.log.finding("[policy] rate-limited at attempt %d"
                                    % (i + 1))
                 return
@@ -131,16 +137,19 @@ def run(engine):
             cliff = last > 3 * (sum(timings[:-1]) / max(1, len(timings) - 1)) \
                 if len(timings) > 3 else False
             if cliff:
-                engine.db.add_finding(Finding(
+                engine.record(
                     t.display, "web.policy", "verified-control", "info",
                     "Possible lockout latency response on %s" % url,
                     detail="Final attempt took %.1fs vs %.2fs avg — a lockout "
                            "path may be delaying responses." % (
                                last, sum(timings) / len(timings)),
                     evidence="\n".join("%.2fs" % x for x in timings),
-                    confidence="possible"))
+                    cls="policy",
+                    proof=P.observation(
+                        "\n".join("%.2fs" % x for x in timings),
+                        note="latency cliff on final attempt"))
                 return
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.policy", "unprotected-surface", "medium",
             "No rate limiting / account lockout detected on %s" % url,
             detail="%d failed logins in ~%.1fs with no 429/423/Retry-After, "
@@ -150,7 +159,10 @@ def run(engine):
                 burn_user, ", ".join("%.2f" % x for x in timings)),
             remediation="Enforce per-account and per-IP rate limits plus "
                         "lockout, and add CAPTCHA for login.",
-            confidence="firm"))
+            cls="policy",
+            proof=P.observation(
+                "no 429/423/Retry-After across %d failed attempts" % attempts,
+                note="burn user %s; brute force not mitigated" % burn_user))
         engine.log.finding("[policy] %s: %d attempts, no throttle "
                            "(%.1fs total)" % (url, attempts, sum(timings)))
         return

@@ -11,8 +11,8 @@ import socket
 import struct
 import time
 
-from core.database import Finding
 from core.utils import load_json
+from core import proof as P
 
 MAX_COMMUNITIES = 10
 PYL_KIND = {0: "unknown/implicit", 1: "octets", 2: "oid", 4: "ip", 5: "counter32",
@@ -232,7 +232,7 @@ def run(engine):
              % (community, descr[:160])
     if extra:
         detail += "\n" + "\n".join(extra)
-    engine.db.add_finding(Finding(
+    engine.record(
         t.display, "network.snmp", "exposure", sev,
         "SNMP community %r accepted (%s)" % (community,
                                              hint or "read-only access"),
@@ -240,7 +240,9 @@ def run(engine):
         evidence="GET %s.%s" % (community, name),
         remediation="Disable SNMP or restrict communities to RFC 3826/SNMPv3 "
                     "authPriv; change defaults immediately.",
-        confidence="firm"))
+        cls="misconfiguration",
+        proof=P.observation(
+            "SNMP GET sysDescr answered with community %r" % community))
     engine.state["snmp"] = {"community": community,
                             "sysdescr": descr[:300] or None}
     engine.log.finding("[snmp] %s/161 community=%r %s" %

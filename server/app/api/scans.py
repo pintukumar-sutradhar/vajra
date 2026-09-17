@@ -27,6 +27,8 @@ class ScanIn(BaseModel):
     engine_id: str
     profile: str = ""
     params: dict = {}
+    # 0 normal, 1 -v (baseline/suppression decisions), 2 -vv (every probe).
+    verbose: int = 0
 
 
 def _engine(db, engine_id):
@@ -53,6 +55,14 @@ def _out(s):
             "progress": s.progress, "exit_code": s.exit_code,
             "error": s.error, "stats": s.stats or {},
             "started_by": s.started_by,
+            "paused": bool(getattr(s, "pause_requested", False)),
+            "paused_at": (str(s.paused_at) if getattr(s, "paused_at", None)
+                          else None),
+            "resumed_at": (str(s.resumed_at) if getattr(s, "resumed_at", None)
+                           else None),
+            "paused_seconds": getattr(s, "paused_seconds", 0.0) or 0.0,
+            "verbose": getattr(s, "verbose", 0) or 0,
+            "suppressed_count": getattr(s, "suppressed_count", 0) or 0,
             "created_at": str(s.created_at),
             "started_at": str(s.started_at) if s.started_at else None,
             "finished_at": str(s.finished_at) if s.finished_at else None}
@@ -95,7 +105,8 @@ def create_scan(body: ScanIn, db: Session = Depends(get_db),
     s = models.Scan(org_id=user.org_id, target_id=tgt.id,
                     engine_id=body.engine_id, profile=profile,
                     params=public, started_by=user.id,
-                    status="pending")
+                    status="pending",
+                    verbose=max(0, min(2, int(body.verbose or 0))))
     remaining = {k: v for k, v in (body.params or {}).items()
                  if k not in SENSITIVE}
     db.add(s)
@@ -168,6 +179,85 @@ def scan_findings(scan_id: int, db: Session = Depends(get_db),
             models.Finding.id).all()
     from .findings import _finding_out
     return [_finding_out(f) for f in rows]
+
+
+@router.post("/{scan_id}/pause")
+def pause_scan(scan_id: int, db: Session = Depends(get_db),
+               user=Depends(current_user)):
+    """Stop the engine process in place (SIGSTOP).
+
+    The engine keeps its state — sockets, the findings database, everything it
+    has already proven — so resuming continues rather than restarts. The
+    worker keeps heartbeating the job while paused, so a paused scan is never
+    reclaimed as a dead one.
+    """
+    s = db.get(models.Scan, scan_id)
+    if not s or s.org_id != user.org_id:
+        raise HTTPException(404, "not found")
+    if s.status in TERMINAL:
+        raise HTTPException(409, "scan has already finished")
+    s.pause_requested = True
+    db.commit()
+    audit_log(db, user.username, "scan.pause", "scan", s.id)
+    return _out(s)
+
+
+@router.post("/{scan_id}/resume")
+def resume_scan(scan_id: int, db: Session = Depends(get_db),
+                user=Depends(current_user)):
+    s = db.get(models.Scan, scan_id)
+    if not s or s.org_id != user.org_id:
+        raise HTTPException(404, "not found")
+    if s.status in TERMINAL:
+        raise HTTPException(409, "scan has already finished")
+    s.pause_requested = False
+    db.commit()
+    audit_log(db, user.username, "scan.resume", "scan", s.id)
+    return _out(s)
+
+
+@router.get("/{scan_id}/suppressed")
+def scan_suppressed(scan_id: int, db: Session = Depends(get_db),
+                    user=Depends(current_user)):
+    """Candidates the proof gate refused, with the reason for each.
+
+    Deliberately separate from findings: nothing here met the evidentiary bar
+    for its class. Exposed so a suppression is reviewable — an empty ledger
+    and a broken scanner look identical from the findings list alone.
+    """
+    s = db.get(models.Scan, scan_id)
+    if not s or s.org_id != user.org_id:
+        raise HTTPException(404, "not found")
+    rows = db.query(models.SuppressedCheck).filter(
+        models.SuppressedCheck.scan_id == scan_id).order_by(
+            models.SuppressedCheck.id).all()
+    return [{"id": r.id, "module": r.module, "cls": r.cls,
+             "severity": r.severity, "title": r.title, "reason": r.reason,
+             "detail": r.detail, "ts": str(r.ts)} for r in rows]
+
+
+@router.get("/{scan_id}/log")
+def scan_log(scan_id: int, level: str = "", db: Session = Depends(get_db),
+             user=Depends(current_user)):
+    """The full captured engine log for a scan, as plain text.
+
+    The live SSE stream is deliberately rate-limited and filtered so the UI
+    stays readable; this is the unfiltered record, for download.
+    """
+    s = db.get(models.Scan, scan_id)
+    if not s or s.org_id != user.org_id:
+        raise HTTPException(404, "not found")
+    q = db.query(models.ScanEvent).filter(
+        models.ScanEvent.scan_id == scan_id)
+    if level:
+        q = q.filter(models.ScanEvent.level == level)
+    rows = q.order_by(models.ScanEvent.id).all()
+    body = "\n".join("[%s] [%s] %s" % (r.ts, (r.level or "info").upper(),
+                                       r.message) for r in rows)
+    return StreamingResponse(
+        iter([body]), media_type="text/plain",
+        headers={"Content-Disposition":
+                 "attachment; filename=scan-%d.log" % scan_id})
 
 
 @router.get("/{scan_id}/events")

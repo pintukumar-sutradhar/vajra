@@ -21,7 +21,7 @@ silently persisted — the deployment path is always visible in the report.
 import os
 import base64
 
-from core.database import Finding
+from core import proof as P
 
 UNIX_PLAYBOOKS = [
     ("cron-user", "crontab -l 2>/dev/null | grep -q '{marker}' || "
@@ -100,13 +100,14 @@ def run(engine):
         return
     if not getattr(engine.args, "aggressive", False) and \
             engine.profile != "aggressive":
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "post.persistence", "gated", "info",
             "Persistence deployment skipped (intrusive)",
             detail="A persistence channel exists but deployment modifies the "
                    "target. Re-run with --aggressive (or the aggressive "
                    "profile) to land a reversible persistence implant.",
-            confidence="firm"))
+            cls="other",
+            proof=P.observation("skipped — requires --aggressive"))
         return
     marker = "vjr" + engine.nonce(6)
     cmd = "id" if channels[0].kind in ("unix", "ssh") else "whoami"
@@ -183,7 +184,7 @@ def run(engine):
                  if deployed else
                  "Persistence primitive NOT writable on channel #%d [%s]"
                  % (idx + 1, kind))
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "post.persistence", "persistence", sev, title,
             detail="Deployed a reversible persistence implant that would "
                    "re-execute the operator's command on login/boot. Marker: "
@@ -194,7 +195,8 @@ def run(engine):
             remediation="Audit crontab / systemd / SSH authorized_keys / "
                         "scheduled tasks on the host; kill 'vjr*' markers; "
                         "treat the host as compromised.",
-            confidence="firm"))
+            cls="other",
+            proof=P.observation(combined))
         engine.log.finding("[persistence] channel %d [%s]: %d mechanism(s) "
                            "%s" % (idx + 1, kind, deployed,
                                    "deployed" if deployed else "not writable"))
@@ -209,12 +211,13 @@ def run(engine):
             host = _host_of(engine)
         except Exception:
             host = ""
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "post.persistence", "defensive", "info",
             "Persistence primitives appear locked down",
             detail="No common persistence mechanism was writable through the "
                    "channels on %s. This is good defensive posture." % host,
-            confidence="possible"))
+            cls="other",
+            proof=P.observation("no persistence mechanism writable"))
 
 
 def _webroot_guess(engine):
@@ -257,7 +260,7 @@ def _drop_webshell(engine, t, info, marker):
             except Exception:
                 probe = None
             if probe and "VAJRA" in str(probe):
-                engine.db.add_finding(Finding(
+                engine.record(
                     t.display, "post.persistence", "persistence", "critical",
                     "WEB-ROOT PERSISTENCE DROP proved (web shell writable) "
                     "at %s" % path,
@@ -267,7 +270,8 @@ def _drop_webshell(engine, t, info, marker):
                     evidence=deploy + "\n# verified:\n" + str(probe)[:500],
                     remediation="Remove the dropped file, harden file perms "
                                 "and web-root write access.",
-                    confidence="certain"))
+                    cls="webshell",
+                    proof=P.marker(str(probe)[:500]))
                 engine.log.finding("[persistence] web-shell drop proved: %s"
                                    % path)
                 return

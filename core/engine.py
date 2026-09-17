@@ -10,6 +10,7 @@ import sys
 import threading
 
 from core.database import Database, Finding, SEV_ORDER
+from core import proof as _proof
 from core.intelligence import Intelligence
 from core.ai import AIEngine
 from core.report import (build_data, render_html, render_markdown,
@@ -1012,6 +1013,75 @@ class Engine:
                     continue
                 planned.append(m)
         return planned
+
+    # ---------- the proof gate ----------
+
+    def record(self, target, module, category, severity, title, detail="",
+               evidence="", remediation="", proof=None, cls=None, mitre=None):
+        """Record a finding — but only when the supplied proof validates.
+
+        This is the supported way for a module to file a finding, and the
+        signature deliberately mirrors `Finding(...)` so migrating a call site
+        is mechanical. What changes is that a module supplies *what it
+        observed* (a `core.proof.Proof`, built with the helpers there) instead
+        of how confident it feels:
+
+          * the proof is validated against the per-class rule in
+            core.proof.PROOF_RULES;
+          * confidence is *derived* from the proof kind, never declared;
+          * severity is capped by the proof kind, so a heuristic differential
+            can never present as critical;
+          * a candidate whose proof does not validate is written to the
+            suppressed ledger with the reason, not to findings.
+
+        Returns True when a finding was written.
+        """
+        if self.db is None:
+            return False
+        key = cls or category
+        ok, canon, reason = _proof.validate(key, proof)
+        if not ok:
+            if canon is None:
+                # An unregistered class is a gap in the engine, not a bad
+                # module: make it loud so it gets a rule rather than being
+                # silently dropped.
+                self.log.error("[SUPPRESS] %s filed an unclassified finding "
+                               "(%r) — no proof rule exists; add one in "
+                               "core/proof.py. Dropped: %s"
+                               % (module, key, title[:120]))
+            self.log.debug("[SUPPRESS] %s | %s | %s" %
+                           (module, title[:110], reason))
+            try:
+                self.db.add_suppressed(target, module, str(key), severity,
+                                       title, reason,
+                                       detail=(evidence or detail))
+            except Exception as e:
+                self.log.debug("suppressed-ledger write failed: %r" % e)
+            self._suppressed_count = getattr(self, "_suppressed_count", 0) + 1
+            return False
+        conf = _proof.confidence_for(proof)
+        cap = _proof.cap_for(canon, proof)
+        f = Finding(target, module, category, severity, title, detail=detail,
+                    evidence=evidence, remediation=remediation,
+                    confidence=conf, mitre=mitre, cap=cap,
+                    proof="%s [%s]" % (canon, proof.summary()))
+        added = self.db.add_finding(f)
+        if added:
+            self.log.debug("[PROOF:%s] %s | %s" %
+                           (canon, title[:110], proof.summary()))
+        return added
+
+    def suppress(self, target, module, cls, severity, title, reason,
+                 detail=""):
+        """Record a candidate as suppressed without attempting to file it."""
+        self._suppressed_count = getattr(self, "_suppressed_count", 0) + 1
+        self.log.debug("[SUPPRESS] %s | %s | %s" % (module, title[:110], reason))
+        if self.db is not None:
+            try:
+                self.db.add_suppressed(target, module, str(cls), severity,
+                                       title, reason, detail=detail)
+            except Exception:
+                pass
 
     def progress(self, cur=None, total=None, detail=None, weight=None):
         """Live run-progress reporter callable by any module.

@@ -5,8 +5,8 @@ import json
 import re
 from urllib.parse import urljoin
 
-from core.database import Finding
 
+from core import proof as P
 OPENAPI_PATHS = [
     "/openapi.json", "/v2/api-docs", "/v3/api-docs", "/api-docs",
     "/v1/api-docs", "/swagger/v1/swagger.json", "/swagger.json",
@@ -127,7 +127,7 @@ def _consume_doc(engine, state_api, url, data, mark, base):
                 break
         if entries >= 400:
             break
-    engine.db.add_finding(Finding(
+    engine.record(
         engine.target.display, "web.api", "exposure", "medium",
         "API specification discovered (%s) — %s" % (mark, url),
         detail="Documentation exposes the machine interface. %d endpoint(s) "
@@ -139,7 +139,10 @@ def _consume_doc(engine, state_api, url, data, mark, base):
         evidence="%s\n%s endpoint paths" % (url, entries),
         remediation="Restrict API docs to internal networks; treat the "
                     "endpoint map as attack-surface intelligence.",
-        confidence="firm"))
+        cls="misconfiguration",
+        proof=P.observation(
+            "API specification discovered (%s) — %s" % (mark, url),
+            note="%d endpoint(s) parsed" % entries))
     engine.log.finding("[api] %s doc at %s (%d endpoints)"
                        % (mark, url, entries))
     unauthed = [e for e in state_api["endpoints"] if not e.get("auth")]
@@ -155,7 +158,7 @@ def _consume_doc(engine, state_api, url, data, mark, base):
             except Exception:
                 pass
         if not global_auth:
-            engine.db.add_finding(Finding(
+            engine.record(
                 engine.target.display, "web.api", "authz", "high",
                 "%d documented API endpoint(s) without declared auth" %
                 len(unauthed),
@@ -163,7 +166,12 @@ def _consume_doc(engine, state_api, url, data, mark, base):
                     "%s %s" % (e["method"], e["path"]) for e in unauthed[:20]),
                 evidence="from %s" % url,
                 remediation="Advertise security requirements in the spec and "
-                            "enforce them server-side.", confidence="firm"))
+                            "enforce them server-side.",
+                cls="misconfiguration",
+                proof=P.observation(
+                    "%d documented API endpoint(s) without declared auth" %
+                    len(unauthed),
+                    note="no auth declared in spec"))
 
 
 def _well_known(engine, state_api, base):
@@ -181,22 +189,28 @@ def _well_known(engine, state_api, base):
             continue
         if "jwks" in path:
             state_api["jwks"] = data.get("keys", [])
-            engine.db.add_finding(Finding(
+            engine.record(
                 engine.target.display, "web.api", "recon", "info",
                 "JWKS endpoint exposed at %s (%d JWK key(s))" %
                 (url, len(data.get("keys", []))),
                 evidence=json.dumps(data)[:1200],
-                confidence="firm"))
+                cls="misconfiguration",
+                proof=P.observation(
+                    "JWKS endpoint exposed at %s (%d JWK key(s))" %
+                    (url, len(data.get("keys", [])))))
         elif "openid-configuration" in path or "oauth-authorization-server" \
                 in path:
             state_api["oidc"][path] = data
-            engine.db.add_finding(Finding(
+            engine.record(
                 engine.target.display, "web.api", "recon", "info",
                 "OAuth/OIDC metadata exposed at %s" % url,
                 detail="issuer=%s token=%s auth=%s" % (
                     data.get("issuer", "?"), data.get("token_endpoint", "?"),
                     data.get("authorization_endpoint", "?")),
-                evidence=json.dumps(data)[:1500], confidence="firm"))
+                evidence=json.dumps(data)[:1500],
+                cls="misconfiguration",
+                proof=P.observation(
+                    "OAuth/OIDC metadata exposed at %s" % url))
 
 
 def _audit_jwks(engine, state_api):
@@ -206,14 +220,17 @@ def _audit_jwks(engine, state_api):
             continue
         alg = k.get("alg") or (k.get("kty", "RSA").upper())
         if k.get("alg") == "none":
-            engine.db.add_finding(Finding(
+            engine.record(
                 engine.target.display, "web.api", "verified-exposure",
                 "critical", "JWKS advertises alg:none — algorithm confusion",
                 detail="Tokens may be accepted unsigned by clients trusting "
                        "this metadata.",
-                evidence=json.dumps(k)[:600], confidence="firm"))
+                evidence=json.dumps(k)[:600],
+                cls="jwt",
+                proof=P.marker(json.dumps(k)[:600],
+                               note="JWKS advertises alg=none"))
         if k.get("kty") == "RSA" and k.get("use") == "sig" and k.get("n"):
-            engine.db.add_finding(Finding(
+            engine.record(
                 engine.target.display, "web.api", "recon", "info",
                 "RSA signing key published in JWKS (alg-confusion surface)",
                 detail="Public by design for an OIDC issuer — this is "
@@ -222,7 +239,9 @@ def _audit_jwks(engine, state_api):
                        "accepting HS256 (the 'n' as HMAC secret). Audit "
                        "validation libraries for alg-confusion.",
                 evidence="n=<%s…>" % str(k.get("n", ""))[:40],
-                confidence="possible"))
+                cls="misconfiguration",
+                proof=P.observation("RSA signing key published in JWKS",
+                                    note="alg-confusion surface"))
             break
 
 
@@ -286,7 +305,7 @@ def _authz_checks(engine, state_api, t):
                    "invalid credentials", "access_token required")
             if any(tok in head for tok in bad):
                 continue
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "web.api", "authz", "high",
                 "Declared-auth object endpoint reachable unauthenticated"
                 " — BROKEN ACCESS CONTROL (%s)" % path,
@@ -297,7 +316,9 @@ def _authz_checks(engine, state_api, t):
                 evidence=body[:400].decode("utf-8", "replace"),
                 remediation="Enforce authentication AND object-level "
                             "authorization server-side on every resource.",
-                confidence="firm"))
+                cls="auth_bypass",
+                proof=P.auth(body[:400].decode("utf-8", "replace"),
+                             note="protected resource answered cookie-less GET"))
             engine.log.finding("[AUTHZ] %s ignores auth (%d bytes to "
                                "cookie-less GET)" % (path, len(body)))
             return
@@ -319,7 +340,7 @@ def _authz_checks(engine, state_api, t):
                 seen_len.add((r.status, len(r.body) // 50))
         sweeped += 1
     if sweeped and len(seen_len) >= 2 and engine.state.get("authenticated"):
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.api", "authz", "medium",
             "IDOR sweep: %d parameterized object endpoint(s) respond across "
             "sequential ids" % sweeped,
@@ -328,7 +349,10 @@ def _authz_checks(engine, state_api, t):
                    "(requires a second account).",
             evidence="ids 1-3 probed across %d endpoint(s)" % sweeped,
             remediation="Enforce object-level authorization checks.",
-            confidence="possible"))
+            cls="auth_bypass",
+            proof=P.observation(
+                "ids 1-3 probed across %d endpoint(s)" % sweeped,
+                note="objects respond across sequential ids"))
     # CSRF surface: token-less state-changing call from a foreign Origin
     changer = [e for e in state_api["endpoints"]
                if e["method"] in ("POST", "PUT", "PATCH", "DELETE")][:6]
@@ -347,7 +371,7 @@ def _authz_checks(engine, state_api, t):
                                     json_body={}, allow_redirects=False,
                                     timeout=5)
             if 200 <= r.status < 400 and r.status not in (204, 205):
-                engine.db.add_finding(Finding(
+                engine.record(
                     t.display, "web.api", "csrf", "medium",
                     "State-changing API endpoint without evident CSRF "
                     "protection (%s %s)" % (ep["method"], path),
@@ -359,7 +383,10 @@ def _authz_checks(engine, state_api, t):
                     remediation="Require a CSRF token (or enforce "
                                 "SameSite=Lax and Origin checking) on "
                                 "state-changing routes.",
-                    confidence="possible"))
+                    cls="misconfiguration",
+                    proof=P.observation(
+                        "%s %s -> HTTP %d" % (ep["method"], target, r.status),
+                        note="state-changing call accepted without CSRF"))
             break
         except Exception:
             continue
@@ -371,9 +398,11 @@ def _audit_oidc(engine, state_api, t):
         auth = (data.get("authorization_endpoint") or "").lower()
         token = (data.get("token_endpoint") or "").lower()
         if any(e.startswith("http:") for e in (iss, auth, token)):
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "web.api", "misconfiguration", "high",
                 "OAuth/OIDC metadata on cleartext HTTP (%s)" % path,
                 evidence="issuer=%s" % iss,
                 remediation="Serve OAuth metadata only over TLS.",
-                confidence="firm"))
+                cls="misconfiguration",
+                proof=P.observation("issuer=%s served over http" % iss,
+                                    note="OIDC metadata on cleartext"))

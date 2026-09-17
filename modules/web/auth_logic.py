@@ -20,7 +20,8 @@ import html
 import re
 from urllib.parse import urljoin, urlparse
 
-from core.database import Finding
+
+from core import proof as P
 from core.utils import extract_forms, extract_links
 
 LOGIN_HINTS = ("login", "signin", "sign-in", "signon", "sign-on", "auth",
@@ -457,14 +458,16 @@ def login(engine, creds=None):
     if not form:
         if creds.get("auto"):
             return False
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.auth_login", "coverage", "info",
             "Authentication system not auto-discovered "
             "(use --web-login <url>)",
             detail="No login form with a password field was found on "
                    "the seed pages; supply --web-login to target the "
                    "authenticated flow explicitly.",
-            confidence="possible"))
+            cls="other",
+            proof=P.observation("no login form found",
+                                note="login surface not discovered"))
         return False
     engine.state["web_auth"]["login_url"] = form["action"]
     ufield = user_field(form["fields"])
@@ -501,9 +504,12 @@ def login(engine, creds=None):
             resp = engine.http.post(form["action"], data=data,
                                     allow_redirects=False)
     except Exception as e:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.auth_login", "coverage", "info",
-            "Login POST failed: %r" % e, confidence="possible"))
+            "Login POST failed: %r" % e,
+            cls="other",
+            proof=P.observation("login POST failed: %r" % e,
+                                note="transport error"))
         return False
     cookies = resp.cookies_str
     if cookies:
@@ -535,17 +541,18 @@ def login(engine, creds=None):
                                        for c in cookies.split("\n"))
                  or "(no Set-Cookie)"))
     if ok:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.auth_login", "recon", "info",
             "AUTHENTICATED web session established as %s" % user,
             detail=detail,
             evidence="session cookie adopted; subsequent web modules run "
                      "authenticated",
-            confidence="firm"))
+            cls="other",
+            proof=P.auth(user, note="session cookie adopted"))
         engine.log.success("[web-auth] authenticated as %s (%s) — %s"
                            % (user, method_note, form["action"]))
     else:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.auth_login", "recon", "info",
             "Web login attempt did NOT establish a session (%s)"
             % method_note,
@@ -553,7 +560,9 @@ def login(engine, creds=None):
             evidence="post=%s status=%s len=%s\nredirect=%s" %
                      (form["action"], resp.status, len(resp.body or ""),
                       resp.headers.get("location", "")),
-            confidence="possible"))
+            cls="other",
+            proof=P.observation("no session established",
+                                note="login attempt did not authenticate"))
         engine.log.warn("[web-auth] login not confirmed for %s (%s)" %
                         (user, form["action"]))
     return ok
@@ -580,14 +589,16 @@ def auto_register(engine, label="A"):
     rform = pick_register_form(
         forms, {lf["action"]} if lf and lf.get("action") else set())
     if not rform:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.autoreg", "coverage", "info",
             "No registration form found — authenticated checks skipped",
             detail="The app exposes password inputs but no registration/"
                    "signup form was discovered on the seed pages. Pass "
                    "--web-user/--web-pass (and --web-login) to run the "
                    "authenticated flow instead of auto-registration.",
-            confidence="possible"))
+            cls="other",
+            proof=P.observation("no registration form found",
+                                note="registration surface not discovered"))
         return None
     fields = rform["fields"]
     ident = random_identity("vjr" + label.lower() if label != "A" else "vjr")
@@ -630,9 +641,12 @@ def auto_register(engine, label="A"):
             resp = engine.http.post(rform["action"], data=data,
                                     allow_redirects=False)
     except Exception as e:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.autoreg", "coverage", "info",
-            "Registration POST failed: %r" % e, confidence="possible"))
+            "Registration POST failed: %r" % e,
+            cls="other",
+            proof=P.observation("registration POST failed: %r" % e,
+                                note="transport error"))
         return None
     cookies = resp.cookies_str
     if cookies:
@@ -674,18 +688,20 @@ def auto_register(engine, label="A"):
                   rform["action"], ident["username"], ident["email"],
                   ident["password"]))
     if ok:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.autoreg", "recon", "info",
             "Auto-registered %s account %s" % (label, ident["username"]),
             detail=detail,
             evidence="POST %s status=%s len=%s redirect=%s" %
                      (rform["action"], follow.status, len(follow.body or ""),
                       loc or "(none)"),
-            confidence="firm"))
+            cls="other",
+            proof=P.auth(ident["username"],
+                         note="auto-registered account %s created" % label))
         engine.log.success("[web-autoreg] %s account created: %s (%s)"
                            % (label, ident["username"], rform["action"]))
     else:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.autoreg", "coverage", "info",
             "Registration form found but account may not have been created "
             "(%s)" % label,
@@ -694,7 +710,9 @@ def auto_register(engine, label="A"):
                      "success marker, cookie unchanged, not redirected" %
                      (rform["action"], follow.status, len(follow.body or ""),
                       loc or "(none)"),
-            confidence="possible"))
+            cls="other",
+            proof=P.observation("no registration success marker",
+                                note="signup not confirmed"))
         engine.log.warn("[web-autoreg] %s signup not confirmed on %s"
                         % (label, rform["action"]))
     if ok:

@@ -2,7 +2,8 @@
 import http.cookies
 import re
 
-from core.database import Finding
+
+from core import proof as P
 
 CHECKS = [
     ("strict-transport-security", "HSTS not set",
@@ -65,13 +66,15 @@ def run(engine):
         if powered:
             disclosers.append("X-Powered-By: %s" % powered)
         if disclosers:
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "web.headers", "hardening", "info",
                 "Server version disclosure on %s" % url,
                 detail="Attackers use version banners to pick matching exploits.",
                 evidence="\n".join(disclosers),
                 remediation="Suppress or genericize Server/X-Powered-By headers.",
-                confidence="firm"))
+                cls="sca",
+                proof=P.extraction("\n".join(disclosers),
+                                   note="server version banner disclosed"))
         _cors_matrix(engine, url)
         cookies = _parse_cookies(r.headers)
         bad_cookie = []
@@ -89,22 +92,27 @@ def run(engine):
             if problems:
                 bad_cookie.append("%s missing [%s]" % (name, ", ".join(problems)))
         if bad_cookie:
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "web.headers", "hardening", "medium",
                 "Cookies without hardening flags (%d)" % len(bad_cookie),
                 detail="Cookies without hardening flags can be read via XSS, sent over "
                        "cleartext, or carried on cross-site requests.", evidence="\n".join(bad_cookie[:12]),
-                confidence="firm"))
+                cls="cookie",
+                proof=P.observation("\n".join(bad_cookie[:12]),
+                                    note="cookie flags missing"))
         hsts = r.headers.get("strict-transport-security", "")
         if hsts:
             _hsts_audit(engine, url, hsts)
         if missing:
             worst = max(m[2] for m in missing)
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "web.headers", "hardening", worst,
                 "%d security header(s) missing at %s" % (len(missing), url),
                 detail="\n".join("- %s\n  Fix: %s" % (m[0], m[1]) for m in missing),
-                confidence="firm"))
+                cls="header",
+                proof=P.observation(
+                    ", ".join(m[0] for m in missing),
+                    note="headers absent from response"))
 
 
 _CORS_ORIGINS = [
@@ -120,34 +128,45 @@ _CORS_ORIGINS = [
 
 
 def _cors_matrix(engine, url):
-    """Depth CORS: reflect/prefix/substring/null/preflight cases."""
+    """CORS: does the server hand an attacker-controlled origin access?
+
+    The exploitable condition is specific: the response's ACAO echoes back an
+    Origin *we* chose. A previous version compared the full origin against a
+    scheme-stripped ACAO (`"https://x" in "x"`), which is never true, so
+    every specific-origin reflection was missed and only a literal `*` ever
+    matched. The comparison below is exact and case-insensitive.
+
+    Severity follows exploitability rather than the label of the test case:
+    echoing an attacker origin *and* allowing credentials is the dangerous
+    combination; `*` without credentials exposes only unauthenticated data.
+    """
     worst = None
     for label, origin in _CORS_ORIGINS:
         r = engine.http.get(url, headers={"Origin": origin},
                             allow_redirects=False)
-        acao = r.headers.get("access-control-allow-origin", "")
-        acac = r.headers.get("access-control-allow-credentials", "").lower()
-        reflected = True
+        acao = (r.headers.get("access-control-allow-origin", "") or "").strip()
+        acac = (r.headers.get("access-control-allow-credentials", "")
+                or "").strip().lower()
         if not acao:
-            reflected = False
-        elif not ("*" == acao or origin.lower() in acao.replace("https://", "")
-                  .replace("http://", "")):
-            reflected = False
-        if not reflected:
             continue
-        sev = "low"
-        sig = label
-        if acac == "true":
-            sev = "high" if label in ("null", "pwn domain suffix",
-                                      "prefix allowlist bypass", "parent mirror",
-                                      "scheme trick") else "medium"
-        elif label in ("null", "prefix allowlist bypass", "dot trick"):
-            sev = "medium"
-        cand = (sev, sig, acao, acac, origin)
-        if worst is None or _sev_rank(cand[0]) > _sev_rank(worst[0]):
+        wildcard = acao == "*"
+        echoed = acao.lower() == origin.lower()
+        if not (wildcard or echoed):
+            # Neither a wildcard nor a reflection of what we sent.
+            continue
+        if echoed and acac == "true":
+            sev = "high"
+        elif echoed:
+            sev = "low"
+        elif acac == "true":
+            # Browsers reject "*" alongside credentials, but the intent is
+            # still wrong; keep it visible at low.
+            sev = "low"
+        else:
+            sev = "info"
+        cand = (sev, label, acao, acac, origin)
+        if worst is None or _sev_rank(sev) > _sev_rank(worst[0]):
             worst = cand
-        if label == "plain cross-origin" and acao == "*":
-            worst = ("info", sig, acao, acac, origin)
     if worst is None:
         return
     sev, sig, acao, acac, origin = worst
@@ -162,18 +181,24 @@ def _cors_matrix(engine, url):
                 "access-control-allow-origin")
     except Exception:
         pass
-    engine.db.add_finding(Finding(
+    engine.record(
         engine.target.display, "web.headers", "misconfiguration", sev,
         "CORS misconfiguration (%s) on %s" % (sig, url),
-        detail="Origin '%s' -> ACAO=%s ACAC=%s%s. %s" % (
+        detail="Sent Origin '%s' -> ACAO=%s ACAC=%s%s. %s" % (
             origin, acao, acac or "(absent)", pre,
             "Credentials-carrying cross-origin reads are possible."
-            if acac == "true" else "Announces reflect policy beyond a strict "
-                                    "allowlist."),
-        evidence="test origins: " + "; ".join(l for l, _ in _CORS_ORIGINS),
+            if (acao.lower() == origin.lower() and acac == "true")
+            else "Access-Control-Allow-Origin is broader than a strict "
+                 "allowlist."),
+        evidence="ACAO=%s ACAC=%s for Origin=%s\nall test origins: %s"
+                 % (acao, acac or "(absent)", origin,
+                    "; ".join(l for l, _ in _CORS_ORIGINS)),
         remediation="Whitelist exact trusted origins (no substring/prefix "
                     "match); never reflect untrusted input into ACAO.",
-        confidence="firm"))
+        cls="cors",
+        proof=P.observation(
+            "ACAO=%s ACAC=%s Origin=%s" % (acao, acac or "(absent)", origin),
+            note="response header observed directly"))
     engine.log.finding("[CORS] %s (%s) at %s" % (sig, sev, url))
 
 
@@ -187,15 +212,21 @@ def _hsts_audit(engine, url, hsts):
         return
     ma = int(m.group(1))
     if ma < 10886400:
-        engine.db.add_finding(Finding(
+        engine.record(
             engine.target.display, "web.headers", "hardening", "low",
             "Short HSTS max-age on %s (%ds)" % (url, ma),
-            evidence=hsts, confidence="firm"))
+            evidence=hsts,
+            cls="header",
+            proof=P.observation(hsts,
+                                note="HSTS max-age below threshold"))
     sub = re.search(r"\bincludeSubDomains\b", hsts, re.I)
     if sub:
         engine.state.setdefault("hsts", {})[url] = hsts
     if not sub and ma >= 10886400:
-        engine.db.add_finding(Finding(
+        engine.record(
             engine.target.display, "web.headers", "hardening", "info",
             "HSTS without includeSubDomains/preload on %s" % url,
-            evidence=hsts, confidence="firm"))
+            evidence=hsts,
+            cls="header",
+            proof=P.observation(hsts,
+                                note="HSTS lacks includeSubDomains"))

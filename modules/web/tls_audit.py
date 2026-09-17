@@ -2,8 +2,8 @@
 import ssl
 import socket
 
-from core.database import Finding
 
+from core import proof as P
 WEAK_VERSIONS = [("SSLv3", getattr(ssl.TLSVersion, "SSLv3", None)),
                  ("TLSv1.0", getattr(ssl.TLSVersion, "TLSv1", None)),
                  ("TLSv1.1", getattr(ssl.TLSVersion, "TLSv1_1", None))]
@@ -65,13 +65,17 @@ def run(engine):
                 weak.append(label)
         if weak:
             sev = "high" if any(x != "TLSv1.1" for x in weak) else "medium"
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "web.tls", "tls", sev,
                 "Deprecated TLS protocol enabled on port %d: %s" %
                 (port, ", ".join(weak)),
                 detail="Legacy protocols enable downgrade attacks (POODLE etc.).",
                 remediation="Disable SSLv3/TLS1.0/TLS1.1; require TLS1.2+.",
-                confidence="firm"))
+                cls="tls",
+                proof=P.observation(
+                    "Deprecated TLS protocol enabled on port %d: %s" %
+                    (port, ", ".join(weak)),
+                    note="handshake accepted legacy protocol"))
         ctx_pref = ssl.create_default_context()
         ctx_pref.check_hostname = False
         ctx_pref.verify_mode = ssl.CERT_NONE
@@ -84,11 +88,14 @@ def run(engine):
             _cert_audit(engine, t, port, cert_bin)
             ts.close()
             if any(tok in cipher.upper() for tok in WEAK_CIPHER_TOKENS):
-                engine.db.add_finding(Finding(
+                engine.record(
                     t.display, "web.tls", "tls", "medium",
                     "Weak cipher negotiated on port %d: %s (%s)" %
                     (port, cipher, proto),
-                    confidence="firm"))
+                    cls="tls",
+                    proof=P.observation(
+                        "Weak cipher negotiated on port %d: %s (%s)" %
+                        (port, cipher, proto)))
             elif proto:
                 engine.log.debug("tls ok port=%d %s/%s" % (port, proto, cipher))
         except Exception:
@@ -114,38 +121,47 @@ def _cert_audit(engine, t, port, cert_bin):
         now = datetime.datetime.now(datetime.timezone.utc)
         host = t.hostname or t.display
         if now < nb:
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "web.tls", "cert", "medium",
                 "TLS certificate not yet valid on port %d" % port,
                 evidence="not_before=%s" % nb.isoformat(),
-                confidence="firm"))
+                cls="tls",
+                proof=P.observation("not_before=%s" % nb.isoformat(),
+                                    note="certificate not yet valid"))
             return
         if na < now:
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "web.tls", "cert", "high",
                 "TLS certificate EXPIRED on port %d (%s ago)" % (
                     port, (now - na)),
                 evidence="not_after=%s" % na.isoformat(),
                 remediation="Replace the certificate before its expiry.",
-                confidence="firm"))
+                cls="tls",
+                proof=P.observation("not_after=%s" % na.isoformat(),
+                                    note="certificate expired"))
             return
         days = (na - now).days
         if days <= 30:
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "web.tls", "cert", "medium",
                 "TLS certificate expires in %d day(s) on port %d" %
                 (days, port),
-                evidence="not_after=%s" % na.isoformat(), confidence="firm"))
+                evidence="not_after=%s" % na.isoformat(),
+                cls="tls",
+                proof=P.observation("not_after=%s" % na.isoformat(),
+                                    note="certificate expires soon"))
         iss = cert.issuer.rfc4514_string()
         sub = cert.subject.rfc4514_string()
         if iss.lower().strip("cn=, ") == sub.lower().strip("cn=, ") or \
                 "CN=" in iss.upper() and iss.split("CN=")[-1].strip() == \
                 sub.split("CN=")[-1].strip():
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "web.tls", "cert", "info",
                 "Self-signed certificate on port %d (ignore if internal)" % port,
                 evidence="subject=%s\nissuer=%s" % (sub, iss),
-                confidence="firm"))
+                cls="tls",
+                proof=P.observation("subject=%s\nissuer=%s" % (sub, iss),
+                                    note="self-signed certificate"))
         try:
             ext = cert.extensions.get_extension_for_class(
                 x509.SubjectAlternativeName).value
@@ -161,11 +177,14 @@ def _cert_audit(engine, t, port, cert_bin):
                        for n in names):
                 if not any(n for n in names if n.startswith("*.") and
                            host.lower().endswith(n[2:])):
-                    engine.db.add_finding(Finding(
+                    engine.record(
                         t.display, "web.tls", "cert", "medium",
                         "Certificate SAN doesn't cover host %s (port %d)" %
                         (host, port),
                         evidence="SAN: " + ", ".join(names),
-                        confidence="firm"))
+                        cls="tls",
+                        proof=P.observation("SAN: " + ", ".join(names),
+                                            note="SAN entries missing target "
+                                                 "host"))
     except Exception:
         pass

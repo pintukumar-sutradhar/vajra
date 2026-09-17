@@ -9,7 +9,7 @@ Without a usable SSH transport (paramiko) or credentials it stops with an
 info finding instead of pretending."""
 import os
 
-from core.database import Finding
+from core import proof as P
 
 try:
     import paramiko
@@ -77,12 +77,13 @@ def run(engine):
     t = engine.target
     host = t.scan_host()
     if not HAVE_PARAMIKO:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "post.loot", "coverage", "info",
             "Post-compromise loot survey skipped",
             detail="paramiko not installed — install it to let post.loot "
                    "inspect SSH-enabled hosts read-only.",
-            confidence="firm"))
+            cls="other",
+            proof=P.observation("paramiko not installed"))
         return
     box = _creds(engine)
     if not box:
@@ -96,11 +97,13 @@ def run(engine):
         cli.connect(host, port=22, username=user, password=pw, timeout=10,
                     allow_agent=False, look_for_keys=False)
     except Exception as e:
-        engine.db.add_finding(Finding(
+        ev = "user=%s err=%r" % (user, e)
+        engine.record(
             t.display, "post.loot", "coverage", "low",
             "post.loot credentials did not open an SSH session",
-            detail="user=%s err=%r" % (user, e),
-            confidence="possible"))
+            detail=ev,
+            cls="other",
+            proof=P.observation(ev))
         return
     try:
         whoami = _exec(cli, "id -un").strip() or user
@@ -111,18 +114,20 @@ def run(engine):
             return
         for cat, hits in found:
             sev = "high" if cat in ("ssh", "cloud-creds") else "medium"
-            engine.db.add_finding(Finding(
+            ev = "\n".join(hits[:25])
+            engine.record(
                 t.display, "post.loot", "secret-at-rest", sev,
                 "%s present under %s's account (%d file(s))" %
                 (NAMES.get(cat, cat), whoami, len(hits)),
                 detail="Read-only survey found secret-bearing files on the "
                        "logged-in host; a compromised account would read "
                        "these directly.",
-                evidence="\n".join(hits[:25]),
+                evidence=ev,
                 remediation="Rotate keys/cloud tokens, purge plaintext "
                             "secrets, enable disk encryption + credential "
                             "guard.",
-                confidence="firm"))
+                cls="other",
+                proof=P.observation(ev))
             engine.log.finding("[post.loot] %s: %s" %
                                (whoami, NAMES.get(cat)))
 

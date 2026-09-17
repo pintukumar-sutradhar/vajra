@@ -7,8 +7,8 @@ fast tier wordlist plus the standard account list."""
 import socket
 import time
 
-from core.database import Finding
 from core.utils import load_json
+from core import proof as P
 
 SMTP_PORT = 25
 BANNER_PORTS = (25, 465, 587)
@@ -107,7 +107,7 @@ def run(engine):
                     "not in recipient" not in rr.lower():
                 accepted.append(cand)
         if external_relay:
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "network.smtp", "misconfiguration", "high",
                 "SMTP likely open relay / permissive recipient handling",
                 detail="Envelope check (no DATA, no mail sent): server "
@@ -117,7 +117,10 @@ def run(engine):
                     rj.decode("latin1", "replace").strip()[:120]),
                 remediation="Restrict relay to authenticated senders; "
                             "reject unknown-domain recipients.",
-                confidence="possible"))
+                cls="misconfiguration",
+                proof=P.observation(
+                    "RCPT TO:<%s> accepted for external recipient"
+                    % RELAY_JUICE))
 
         vrfy_users = []
         cap_vrfy = 10
@@ -133,7 +136,7 @@ def run(engine):
                 vrfy_users.append((un, r.decode("latin1", "replace")
                                    .strip()[:90]))
         if vrfy_users:
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "network.smtp", "user-enum", "medium",
                 "SMTP VRFY/EXPN enabled — %d account(s) confirmed" %
                 len(vrfy_users),
@@ -141,17 +144,23 @@ def run(engine):
                        "mailboxes, seeding targeted phishing/password sprays.",
                 evidence="\n".join("VRFY %s -> %s" % u for u in vrfy_users),
                 remediation="Disable VRFY/EXPN (expose_rcpt_vrfy off) on the "
-                            "MTA.", confidence="firm"))
+                            "MTA.",
+                cls="info_leak",
+                proof=P.observation(
+                    "VRFY confirmed %d valid account(s)" % len(vrfy_users)))
             engine.log.finding("[smtp] VRFY: %s" %
                                ", ".join(u for u, _ in vrfy_users))
 
         extstr = ", ".join(x.split()[0] for x in ext[:8]) if ext else ""
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "network.smtp", "recon", "info",
             "SMTP audit complete (%s)" % (extstr or "no EHLO extensions"),
             evidence="banner: %s\nehlo features: %s" % (banner.strip()[:120],
                                                         extstr),
-            confidence="firm"))
+            cls="network_service",
+            proof=P.observation(
+                banner.strip()[:120],
+                note="SMTP banner and EHLO features read from the socket"))
     finally:
         try:
             s.sendall(b"QUIT\r\n")

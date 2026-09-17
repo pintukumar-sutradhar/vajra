@@ -1,5 +1,6 @@
 """Vajra - WAF / edge-protection fingerprinting."""
-from core.database import Finding
+
+from core import proof as P
 from core.utils import load_json, rand_path
 
 
@@ -57,18 +58,21 @@ def run(engine):
                 detected[waf] = True
         if detected:
             names = ", ".join(sorted(detected))
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "web.waf", "defense", "info",
                 "WAF/edge protection identified: %s" % names,
                 detail="Attacks may be blocked or logged by this device. "
                        "Consider evasion testing during authorized engagements.",
-                confidence="possible"))
+                cls="other",
+                proof=P.observation("WAF signatures: %s" % names,
+                                    note="edge protection device detected"))
             engine.state.setdefault("waf", names)
             engine.http.evade = True
             engine.log.warn("[waf] %s — auto evasion armed" % names)
         else:
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "web.waf", "defense", "info",
                 "No WAF detected at %s" % base,
                 detail="Probes were not blocked; direct-to-app attacks are viable.",
-                confidence="possible"))
+                cls="other",
+                proof=P.observation("probes unblocked", note="no WAF detected"))

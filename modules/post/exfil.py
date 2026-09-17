@@ -20,7 +20,7 @@ Requires --aggressive and a live channel."""
 import base64
 import os
 
-from core.database import Finding
+from core import proof as P
 
 XOR_KEY = b"VAJRA-EXFIL-STAGE-2026"
 
@@ -171,15 +171,17 @@ def run(engine):
                  (" (%d bytes)" % len(staged)) if staged else "",
                  (" -> " + (rec_rel or "")) if rec_rel else "",
                  " CAPTURED" if beaconed else " (listener not reachable)"))
-    engine.db.add_finding(Finding(
+    ev = ("marker=%s blob=%s recipes=%s" %
+              (marker, blob_rel or "-", rec_rel or "-"))
+    engine.record(
         t.display, "post.exfil", "exfiltration", "critical",
         "COVERT EXFILTRATION STAGED from pivot (%d secrets)" % len(items),
         detail=detail + "\nManifest:\n" + manifest[:1200],
-        evidence=("marker=%s blob=%s recipes=%s" %
-                  (marker, blob_rel or "-", rec_rel or "-")),
+        evidence=ev,
         remediation="Assume all staged secrets are burned: rotate credentials,"
                     " keys and cloud tokens now.",
-        confidence="firm"))
+        cls="other",
+        proof=P.observation(ev))
     engine.log.finding("[exfil] staged %d secret(s)%s" %
                        (len(items), " + beacon proof captured" if beaconed
                         else ""))

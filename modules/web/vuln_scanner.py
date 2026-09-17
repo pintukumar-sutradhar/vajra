@@ -15,6 +15,7 @@ from urllib.parse import urlparse, parse_qsl, urlencode
 
 from core.database import Finding
 from core.http_client import build_multipart, raw_http
+from core import proof as P
 from core.payload_engine import (
     AdaptiveAttacker, BANKS, SQLI_BANK, TIME_SQLI,
     motive_reflect, motive_lfi, motive_rce,
@@ -146,8 +147,15 @@ def build_points(engine):
     return pts
 
 
-def ai_second_pass(engine, sender, motive, cls, waf, blocked_sample, context):
-    """When filters defeat the whole bank, consult the local Qwen3 AI."""
+def ai_second_pass(engine, sender, motive, cls, waf, blocked_sample, context,
+                   control=None):
+    """When filters defeat the whole bank, consult the local Qwen3 AI.
+
+    `control` is the benign-value response for the same request. It has to be
+    passed through: an AI-suggested payload that fires the motive is held to
+    the same standard as a bank payload, and without the control the result
+    would claim `control_clean is None` and be suppressed downstream.
+    """
     try:
         ai = getattr(engine, "ai", None)
     except Exception:
@@ -158,7 +166,7 @@ def ai_second_pass(engine, sender, motive, cls, waf, blocked_sample, context):
     if not sugg:
         return None
     att = AdaptiveAttacker(sender, motive, waf=waf, max_direct=len(sugg),
-                           max_mutants=0)
+                           max_mutants=0, control=control)
     res = att.run(sugg)
     engine._collect_evasion(att)
     if res.achieved and not res.technique.startswith("ai"):
@@ -224,29 +232,6 @@ REM = {
 }
 
 
-def _confidence_for(cls, confidence):
-    """Proof-level classes only accept distinctive REAL markers in their
-    motive (actual file contents, executed shell output, computed template
-    result, OOB callback), so confirmation == reproduction == 'certain'.
-    Time-based signals stay tentative-heuristic (capped at medium)."""
-    if confidence == "firm" and cls in (
-            "lfi", "rce", "ssti", "xxe", "rce_blind"):
-        return "certain"
-    if cls == "sqli_time":
-        return "possible"
-    return confidence
-
-
-def _poc_gate(cls, confidence, evidence):
-    """No vulnerability finding is ever reported above 'possible' without a
-    captured proof snippet — a missing PoC means exploitation was NOT
-    demonstrated, so the report must not claim it was."""
-    if cls in ("sqli", "xss", "lfi", "rce", "ssti", "xxe", "redirect",
-               "nosql", "rce_blind", "sqli_time") and not (evidence or "").strip():
-        return "possible"
-    return confidence
-
-
 def run(engine):
     t = engine.target
     targets = engine.state.get("web_targets") or []
@@ -263,24 +248,141 @@ def run(engine):
     pt_total = max(1, len(points))
     pt_done = 0
 
-    def record(cls, pt, k, res, confidence="firm"):
+    def record(cls, pt, k, res):
+        """File a candidate through the proof gate.
+
+        This is the single funnel for every injection class in this module, so
+        the gate is applied once, here. What changed is what the module is
+        asked for: it used to declare a confidence string and could name
+        `firm` on a bare reflection, which the severity ladder let rise to
+        high. Now it supplies the observation, and `core.proof` decides whether
+        the finding exists and how confident it may be.
+
+        A candidate whose proof does not validate is not written as a finding
+        — it goes to the suppressed ledger with the reason, which is what the
+        operator needs to see when a real issue is refused (an unstable blind
+        SQLi, say) rather than a silent drop.
+        """
         title = TITLES[cls] % k
         sev = SEV[cls]
-        if cls == "xss" and res.technique == "direct":
+        if cls == "xss" and getattr(res, "technique", "") == "direct":
             sev = "high"
-        confidence = _confidence_for(cls, confidence)
-        confidence = _poc_gate(cls, confidence, res.evidence)
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.vulnscan", "web-vuln", sev, title,
             detail="Origin: %s\nMethod: %s (%s)\nParameter: %s\nWAF: %s\n"
                    "Technique: %s\nAttempts: %d (blocked: %d)" %
                    (pt.origin, pt.method, pt.kind, k, waf or "none detected",
                     res.technique, res.attempts, res.blocked),
             evidence=res.evidence[:3000], remediation=REM[cls],
-            confidence=confidence))
-        engine.log.finding("[%s] %s -> %s (%s)" %
-                           (cls.upper(), pt.origin.split("?")[0], k,
-                            res.technique))
+            cls=cls, proof=_proof_for(cls, pt, k, res),
+        )
+
+    def _proof_for(cls, pt, k, res):
+        """Rebuild the artifact that proves `cls`, from the response that
+        produced the hit.
+
+        The gate re-checks this against the class rule, so it must be the real
+        observation rather than a restatement of the claim: `res.body` is the
+        body that fired the motive, and `res.control_body` the benign-value
+        control for the same request (`None` when no control was run, which the
+        rule treats as unproven rather than clean).
+
+        Some of these classes are still filed at `differential` strength, which
+        caps them at high and requires a clean control. That is the honest
+        ceiling for a body-size or error-signature change: it shows the input
+        altered behaviour, not that it executed.
+        """
+        ctl = getattr(res, "control_body", None)
+        body = getattr(res, "body", "") or ""
+        cl = getattr(res, "control_clean", None)
+        # Branch on the canonical class: this module spells several of them its
+        # own way (`stored_xss`, `sqli_time`, `redirect`, `rce_blind`), and
+        # matching only the literal spellings would send those to the generic
+        # differential fallback, where the class rule rejects the proof kind
+        # and every one of them is suppressed.
+        canon = P.resolve_class(cls) or cls
+
+        if canon == "xss":
+            # Bare reflection is not XSS. This helper is the one that says so,
+            # by requiring the payload to survive verbatim into a position a
+            # browser would execute. For `stored_xss` the payload is the
+            # deposited beacon.
+            return P.xss_proof(body, getattr(res, "success", ""),
+                               control_body=ctl)
+        if canon == "lfi":
+            return P.lfi_proof(body, control_body=ctl)
+        if canon == "rce":
+            return P.rce_proof(body, control_body=ctl)
+        if cls == "rce_blind":
+            # An OOB callback to a token minted for this scan. No control is
+            # meaningful: nothing in a benign response can forge a per-scan
+            # token, so the control is clean by construction and we say so
+            # rather than pretending one was run.
+            return P.callback(getattr(res, "evidence", "") or "",
+                              note="out-of-band callback to a per-scan token")
+        if canon == "sqli":
+            return P.sqli_proof(body, control_body=ctl)
+        if canon == "ssti":
+            return P.ssti_proof(body, getattr(res, "expected", "") or "",
+                                control_body=ctl)
+        if canon == "sqli_blind":
+            # The observation is a true/false pair diverging and then
+            # reproducing, so `reproduced` carries this one. The probe measures
+            # its own benign baseline and reports whether that baseline was
+            # itself slow, so prefer that verdict over "a control existed".
+            return P.differential(
+                getattr(res, "evidence", "") or "",
+                control_clean=(cl if cl is not None
+                               else (True if ctl is not None else None)),
+                reproduced=bool(getattr(res, "reproduced", False)),
+                note="timing/boolean differential reproduced against a "
+                     "benign baseline")
+        if canon == "open_redirect":
+            # The artifact has to be the destination actually observed, and the
+            # control the destination a benign value produced — if the app
+            # already redirects to the attacker host for a normal input, this
+            # is not an open redirect. `control_location` is None only when no
+            # control ran, which the rule treats as unproven.
+            dest = getattr(res, "location", "") or \
+                getattr(res, "dest", "") or ""
+            ctl_dest = getattr(res, "control_location", None)
+            return P.marker(
+                "redirect destination: %s" % dest,
+                control_clean=(None if ctl_dest is None
+                               else "vajra-oob.example" not in ctl_dest.lower()))
+        if canon == "crlf":
+            return P.marker(
+                "payload %s produced header X-Vajra-Probe in the response"
+                % (getattr(res, "success", "") or ""),
+                control_clean=getattr(res, "control_clean", None))
+        if canon == "xxe":
+            m = XXE_MARK_RE.search(body)
+            return P.marker(
+                m.group(0) if m else "",
+                control_clean=_ctl_state_re(XXE_MARK_RE, ctl))
+        # nosql / ldap / xpath / hpp: a behaviour change against the control.
+        return P.differential(
+            "%s\n%s" % (getattr(res, "evidence", "") or "",
+                        _delta_note(ctl, body)),
+            control_clean=cl if cl is not None else (True if ctl is not None
+                                                     else None),
+            note="response differed from the benign-value control")
+
+    def _ctl_state(needle, ctl_body):
+        """Tri-state control check: None when no control ran."""
+        if ctl_body is None:
+            return None
+        return needle not in (ctl_body or "").lower()
+
+    def _ctl_state_re(rx, ctl_body):
+        if ctl_body is None:
+            return None
+        return not rx.search(ctl_body or "")
+
+    def _delta_note(ctl_body, body):
+        if ctl_body is None:
+            return "no control response"
+        return "len(control)=%d len(response)=%d" % (len(ctl_body), len(body))
 
     # Parallel, bounded injection. Each (point, field) is an independent
     # adaptive sequence (baseline + WAF-escalating payload bank), so fields can
@@ -304,6 +406,14 @@ def run(engine):
         blen, bstatus = len(bbody), base_r.status
         low_base = bbody.lower()
         origv = dict(pt.fields).get(k, "")
+        # The negative control for every injection motive below: the same
+        # request carrying a benign value, which is exactly what `base_r` is.
+        # Using base_r rather than the parameter's own original value is
+        # deliberate — the length-differential motives compare against `blen`,
+        # and `blen` is base_r's length, so a control drawn from any other
+        # input would show a legitimate size difference, fire the motive, and
+        # refuse every candidate on the parameter.
+        ctl_body = bbody
         # A parameter whose ORIGINAL value is echoed back by the app is a
         # reflected parameter: ANY payload into it changes response length, so
         # length-based differential motives below would false-positive. Same
@@ -319,20 +429,26 @@ def run(engine):
 
         hits = set()
 
-        def wrecord(cls, p, kk, res, confidence="firm"):
-            record(cls, p, kk, res, confidence=confidence)
+        def wrecord(cls, p, kk, res):
+            record(cls, p, kk, res)
             hits.add(cls)
 
         # ---- XSS ----
+        # The motive is bare reflection, which is NOT XSS on its own — a
+        # parameter echoed back HTML-escaped reflects every payload and fires
+        # it. That is why the finding is filed under the `xss` proof rule,
+        # which re-checks the captured body for the payload landing in an
+        # executable context and refuses the candidate when it did not.
         att = AdaptiveAttacker(sender, motive_reflect, waf=waf,
                                max_direct=direct_cap,
-                               max_mutants=mutant_cap)
+                               max_mutants=mutant_cap, control=base_r)
         rx = att.run(BANKS["xss"])
         engine._collect_evasion(att)
         if not rx.achieved and att.blocked >= 2:
             rx = ai_second_pass(engine, sender, motive_reflect, "XSS",
                                 waf, att.evasion_log[-1]["original"]
-                                if att.evasion_log else "", pt.origin) or rx
+                                if att.evasion_log else "", pt.origin,
+                                control=base_r) or rx
         if rx.achieved:
             wrecord("xss", pt, k, rx)
 
@@ -349,13 +465,14 @@ def run(engine):
 
         att = AdaptiveAttacker(sender, sqli_motive, waf=waf,
                                max_direct=direct_cap,
-                               max_mutants=mutant_cap)
+                               max_mutants=mutant_cap, control=base_r)
         rs = att.run(SQLI_BANK)
         engine._collect_evasion(att)
         if not rs.achieved and att.blocked >= 2:
             rs = ai_second_pass(engine, sender, sqli_motive, "SQLi",
                                 waf, att.evasion_log[-1]["original"]
-                                if att.evasion_log else "", pt.origin) or rs
+                                if att.evasion_log else "", pt.origin,
+                                control=base_r) or rs
         if rs.achieved:
             wrecord("sqli", pt, k, rs)
 
@@ -367,7 +484,7 @@ def run(engine):
             bolt = _blind_sqli(engine, sender, k, origv, base_r,
                                bstatus, blen)
             if bolt:
-                wrecord("sqli_blind", pt, k, bolt, confidence="possible")
+                wrecord("sqli_blind", pt, k, bolt)
 
         # ---- LFI ----
         pathy = "rce" not in ch
@@ -375,14 +492,14 @@ def run(engine):
                          PATHY_HINTS + ("name", "id", "file", "page")):
             att = AdaptiveAttacker(sender, motive_lfi, waf=waf,
                                    max_direct=direct_cap,
-                                   max_mutants=mutant_cap)
+                                   max_mutants=mutant_cap, control=base_r)
             rl = att.run(BANKS["lfi"])
             engine._collect_evasion(att)
             if not rl.achieved and att.blocked >= 2:
                 rl = ai_second_pass(engine, sender, motive_lfi, "LFI",
                                     waf, att.evasion_log[-1]["original"]
                                     if att.evasion_log else "",
-                                    pt.origin) or rl
+                                    pt.origin, control=base_r) or rl
             if rl.achieved:
                 wrecord("lfi", pt, k, rl)
 
@@ -390,14 +507,14 @@ def run(engine):
         if cmd_param or len(fields) <= 3:
             att = AdaptiveAttacker(sender, motive_rce, waf=waf,
                                    max_direct=min(direct_cap, 120),
-                                   max_mutants=mutant_cap)
+                                   max_mutants=mutant_cap, control=base_r)
             rr = att.run(BANKS["rce"])
             engine._collect_evasion(att)
             if not rr.achieved and att.blocked >= 2:
                 rr = ai_second_pass(engine, sender, motive_rce, "RCE",
                                     waf, att.evasion_log[-1]["original"]
                                     if att.evasion_log else "",
-                                    pt.origin) or rr
+                                    pt.origin, control=base_r) or rr
             if rr.achieved:
                 wrecord("rce", pt, k, rr)
 
@@ -417,7 +534,7 @@ def run(engine):
                     continue
                 att = AdaptiveAttacker(sender, motive_ssti(marker_val),
                                        waf=waf, max_direct=6,
-                                       max_mutants=mutant_cap)
+                                       max_mutants=mutant_cap, control=base_r)
                 rst = att.run([marker_expr])
                 engine._collect_evasion(att)
                 if rst.achieved:
@@ -426,7 +543,8 @@ def run(engine):
                     att2 = AdaptiveAttacker(sender, motive_ssti_diff(blen),
                                             waf=waf,
                                             max_direct=min(direct_cap, 60),
-                                            max_mutants=mutant_cap)
+                                            max_mutants=mutant_cap,
+                                            control=base_r)
                     rese = att2.run(BANKS["ssti"])
                     engine._collect_evasion(att2)
                     if rese.achieved:
@@ -439,7 +557,7 @@ def run(engine):
             att = AdaptiveAttacker(sender,
                                    motive_redirect("vajra-oob.example"),
                                    waf=waf, max_direct=25,
-                                   max_mutants=mutant_cap)
+                                   max_mutants=mutant_cap, control=base_r)
             rd = att.run(BANKS["redirect"])
             engine._collect_evasion(att)
             if rd.achieved:
@@ -455,7 +573,8 @@ def run(engine):
                 return r.status != bstatus and 200 <= r.status < 400 or \
                     (abs(len(body) - blen) > max(60, int(blen * 0.06)))
             att = AdaptiveAttacker(sender, nosql_motive, waf=waf,
-                                   max_direct=14, max_mutants=6)
+                                   max_direct=14, max_mutants=6,
+                                   control=base_r)
             rn = att.run(BANKS["nosql"])
             engine._collect_evasion(att)
             if rn.achieved:
@@ -477,7 +596,8 @@ def run(engine):
                         abs(len(r.body) - blen) > \
                         max(90, int(blen * 0.1))
                 att = AdaptiveAttacker(sender, diff_motive, waf=waf,
-                                       max_direct=12, max_mutants=4)
+                                       max_direct=12, max_mutants=4,
+                                       control=base_r)
                 rd = att.run(BANKS[cls])
                 engine._collect_evasion(att)
                 if rd.achieved:
@@ -494,23 +614,53 @@ def run(engine):
         if "x-vajra-probe" in {h.lower() for h in rc_.headers}:
             att_fake = AdaptiveAttacker(sender, motive_header("x-vajra-probe"),
                                         waf=waf, max_direct=1,
-                                        max_mutants=4)
+                                        max_mutants=4, control=base_r)
             rcx = att_fake.run([crlf_probe])
             engine._collect_evasion(att_fake)
             if rcx.achieved:
                 wrecord("crlf", pt, k, rcx)
 
         # ---- time-based blind SQLi (deep profiles) ----
-        if deep and len(str(origv)) <= 40 and not origv.isdigit() or \
-                (deep and re.match(r"^\d+$|^[a-z_]+$", str(origv))):
+        # One slow response is not a finding: a cold cache, a GC pause or a
+        # busy neighbour all produce one. This measures the parameter's own
+        # baseline latency, requires the delay to clear it, and then reproduces
+        # it — the `sqli_blind` rule demands a clean control *and* a
+        # reproduction, and a lone five-second response has neither. Getting
+        # that wrong is what puts a timing blip in a report as "critical".
+        _ov = str(origv)
+        if deep and ((len(_ov) <= 40 and not _ov.isdigit()) or
+                     re.match(r"^\d+$|^[a-z_]+$", _ov)):
+            t0 = time.time()
+            try:
+                sender(_ov)
+                base_took = time.time() - t0
+            except Exception:
+                base_took = -1.0
             for tp in TIME_SQLI[:5]:
                 t0 = time.time()
-                rt = sender(str(origv) + " " + tp)
+                rt = sender(_ov + " " + tp)
                 took = time.time() - t0
-                if took > 5.0 and rt.status == bstatus:
-                    fake_res = _mk_result(tp, "delay %.1fs" % took)
-                    wrecord("sqli_time", pt, k, fake_res)
-                    break
+                if took < 5.0 or rt.status != bstatus:
+                    continue
+                t0 = time.time()
+                try:
+                    rt2 = sender(_ov + " " + tp)
+                except Exception:
+                    continue
+                took2 = time.time() - t0
+                if took2 < 5.0:
+                    continue
+                # The control is the benign request: it must not itself have
+                # been slow, or the delay is the target's, not the payload's.
+                fake_res = _mk_result(
+                    tp, "delay %.1fs then %.1fs (benign baseline %.1fs)" %
+                    (took, took2, base_took),
+                    body=getattr(rt2, "body", "")[:60000],
+                    control_body=bbody,
+                    control_clean=(base_took >= 0.0 and base_took < 5.0),
+                    reproduced=True)
+                wrecord("sqli_time", pt, k, fake_res)
+                break
         return pkey, hits
 
     # Build the unique work list (dedup by url+method+field) then dispatch it
@@ -600,7 +750,7 @@ def _run_xml_class(engine, pt, t, targets, waf, direct_cap, mutant_cap, record):
 
     att = AdaptiveAttacker(sender, xxe_motive, waf=waf,
                            max_direct=min(direct_cap, len(BANKS["xxe"])),
-                           max_mutants=mutant_cap)
+                           max_mutants=mutant_cap, control=base_r)
     rx = att.run(BANKS["xxe"])
     engine._collect_evasion(att)
     if rx.achieved:
@@ -637,35 +787,56 @@ def _blind_sqli(engine, sender, k, origv, base_r, bstatus, blen):
         if abs(len(ra2.body) - la) > max(4, int(span * 0.004)):
             continue
         return _mk_result("%s%s%s" % (origv, ta, ""),
-                          "A:len=%d B:len=%d (stable)" % (la, lb))
+                          "A:len=%d B:len=%d (stable)" % (la, lb),
+                          body=getattr(ra2, "body", "")[:60000],
+                          control_body=getattr(base_r, "body", "")[:60000],
+                          control_clean=True, reproduced=True)
     return None
 
 
 def _hpp_test(engine, pt, k, sender, bstatus, blen, record):
+    """Duplicate-parameter pollution, tested against a single-value control.
+
+    The marker is random, so counting its echoes only establishes that the
+    server echoed a value it was sent — not that the duplicate changed
+    anything. What makes this pollution is that sending the parameter twice
+    produces more echoes than sending it once, so the control is the same
+    request carrying a single value, and the candidate is refused unless the
+    duplicate genuinely moved the count.
+    """
     marker = "vjr-hpp-%d" % (time.time() % 10000)
-    if pt.kind == "json":
-        base = pt.url.split("?")[0]
-        res = engine.http.request(pt.method, base,
-                                  json_body={k: [marker, marker]},
-                                  allow_redirects=False)
-    else:
-        dup = "&".join(["%s=%s" % (k, marker)] * 2)
+
+    def send(times):
+        if pt.kind == "json":
+            return engine.http.request(pt.method, pt.url.split("?")[0],
+                                       json_body={k: [marker] * times},
+                                       allow_redirects=False)
+        dup = "&".join(["%s=%s" % (k, marker)] * times)
         url = pt.url
         if pt.method == "GET":
             sep = "&" if "?" in url else "?"
-            res = engine.http.get(url + sep + dup, allow_redirects=False)
-        else:
-            data = dict(pt.fields)
-            body = "&".join("%s=%s" % (n, v) for n, v in data.items()) + \
-                "&" + dup
-            res = engine.http.request("POST", url, data=body.encode(),
-                                      headers={"Content-Type":
-                                               "application/x-www-form-urlencoded"},
-                                      allow_redirects=False)
+            return engine.http.get(url + sep + dup, allow_redirects=False)
+        data = dict(pt.fields)
+        body = "&".join("%s=%s" % (n, v) for n, v in data.items()) + \
+            "&" + dup
+        return engine.http.request(
+            "POST", url, data=body.encode(),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            allow_redirects=False)
+
+    try:
+        res = send(2)
+        one = send(1)
+    except Exception:
+        return
     body = getattr(res, "body", "")
-    if res.status == bstatus and body.count(marker) >= 2:
-        record("hpp", pt, k, _mk_result(marker, "parameter duplicated, "
-                                          "parser merged values (2 echoes)"))
+    ctl_body = getattr(one, "body", "")
+    n_dup, n_one = body.count(marker), ctl_body.count(marker)
+    if res.status == bstatus and n_dup >= 2 and n_dup > n_one:
+        record("hpp", pt, k, _mk_result(
+            marker, "duplicated parameter echoed %d times vs %d for a single "
+            "value" % (n_dup, n_one),
+            body=body[:60000], control_body=ctl_body, control_clean=True))
 
 
 def _blind_rce_oob(engine, sender, pt, k, oob):
@@ -727,13 +898,27 @@ def _stored_pass(engine, points, targets, waf, record):
             engine.http.post(addr, data=data, allow_redirects=False)
         except Exception:
             continue
+    # Re-fetch each crawled page after the deposits and look for the beacon.
+    # Testing the bodies in state["pages"] directly would never fire: those
+    # were captured during the crawl, before anything was deposited. The
+    # pre-deposit body is the control — the beacon being in the fresh copy and
+    # absent from the crawl copy is what shows the deposit put it there.
     for page in engine.state.get("pages", [])[:20]:
-        if bead[:10] in page.get("body", ""):
-            record("stored_xss", Point(page["url"], "GET", [], page["url"]),
-                   "stored-response", _mk_result(page["url"],
-                                                 "beacon rendered in %s"
-                                                 % page["url"]),
-                   confidence="firm")
+        url = page.get("url") or ""
+        if not url:
+            continue
+        before = page.get("body", "") or ""
+        try:
+            after = getattr(engine.http.get(url, allow_redirects=False),
+                            "body", "") or ""
+        except Exception:
+            continue
+        if bead[:10] in after and bead[:10] not in before:
+            record("stored_xss", Point(url, "GET", [], url),
+                   "stored-response",
+                   _mk_result(bead, "beacon rendered in %s" % url,
+                              body=after[:60000], control_body=before,
+                              control_clean=True))
 
 
 def _check_host_header(engine, targets):
@@ -767,9 +952,22 @@ def _check_host_header(engine, targets):
                     snippet = loc
                 detail_w = "the response body" if hosty.encode() in body \
                     else "Location header"
-                engine.db.add_finding(Finding(
-                    engine.target.display, "web.vulnscan",
-                    "web-vuln", "medium",
+                # Reflection alone is not cache poisoning — the rule for
+                # header_injection requires a marker and a clean control.
+                # The control here is the same request with the real Host header.
+                # If the server echoes the real Host too, the finding is
+                # suppressed (it's just the default vhost showing its name).
+                # That is the correct call: a default page echoing Host is
+                # common and harmless; a poisoning surface only exists if the
+                # reflection is *exclusive* to the attacker-supplied value.
+                req_real = "%s %s HTTP/1.1\r\n%s: %s\r\nConnection: close\r\n\r\n" % (
+                    "GET", path, hdr, host)
+                raw_real = raw_http(host, port, req_real, tls=tls, timeout=4,
+                                    socks5=getattr(engine, 'socks', None))
+                _, _, body_real = (raw_real or b"").partition(b"\r\n\r\n")
+                engine.record(
+                    engine.target.display, "web.vulnscan", "misconfiguration",
+                    "medium",
                     "Host Header Injection / web-cache poisoning surface",
                     detail=("%s: %s reflected into %s on %s. NOTE: an unconfigured "
                             "default/error page echoing the Host header is "
@@ -782,24 +980,56 @@ def _check_host_header(engine, targets):
                               % (path, hdr, hosty,
                                  snippet.decode("utf-8", "replace")[:600])),
                     remediation=REM["hostinject"],
-                    confidence="possible"))
+                    cls="header_injection",
+                    proof=P.marker(
+                        snippet.decode("utf-8", "replace")[:400],
+                        control_clean=_ctl_state(hosty, body_real)))
                 engine.log.finding("[HOST-INJECT] %s reflected via %s at %s"
                                    % (hosty, hdr, base))
                 return
 
 
 class _Res:
-    pass
+    """The result shape `record()` reads.
+
+    `AdaptiveAttacker` returns a real AttackResult; the bespoke probes
+    (`_blind_sqli`, `_hpp_test`, `_blind_rce_oob`) build one of these instead.
+    The defaults keep that second group honest: `body` empty and
+    `control_body` None mean the proof gate finds nothing it can verify and
+    refuses the candidate, rather than assuming a signal it cannot see.
+    """
+
+    def __init__(self):
+        self.success = ""
+        self.technique = "direct"
+        self.evidence = ""
+        self.attempts = 0
+        self.blocked = 0
+        self.evasion_log = []
+        self.body = ""
+        self.status = 0
+        self.control_body = None
+        self.control_clean = None
+        self.expected = ""
+        self.reproduced = False
+        self.dest = ""
+        self.location = ""
+        self.control_location = None
 
 
-def _mk_result(payload, note):
+def _mk_result(payload, note, body="", control_body=None, control_clean=None,
+               reproduced=False, dest=""):
     r = _Res()
     r.success = payload
     r.technique = note
     r.evidence = "payload=%s\n%s" % (payload, note)
     r.attempts = 1
     r.blocked = 0
-    r.evasion_log = []
+    r.body = body or ""
+    r.control_body = control_body
+    r.control_clean = control_clean
+    r.reproduced = reproduced
+    r.dest = dest
     return r
 
 
@@ -811,16 +1041,24 @@ def _check_methods(engine, targets):
         danger = [m for m in ("PUT", "DELETE", "TRACE", "CONNECT", "MOVE")
                   if m in allow.upper()]
         if danger:
-            engine.db.add_finding(Finding(
+            engine.record(
                 engine.target.display, "web.vulnscan", "misconfiguration",
                 "medium" if "TRACE" in danger else "low",
                 "Dangerous HTTP methods advertised: %s" % ", ".join(danger),
                 evidence="OPTIONS %s -> Allow: %s" % (base, allow),
                 remediation="Disable unused HTTP methods at the server config.",
-                confidence="firm"))
+                cls="misconfiguration",
+                proof=P.observation(
+                    "OPTIONS %s returned Allow: %s" % (base, allow),
+                    note="advertised dangerous methods"))
         tr = engine.http.request("TRACE", base, headers={"Vajra-Probe": "1"})
         if tr.status == 200 and "vajra-probe" in tr.body.lower().replace("-", ""):
-            engine.db.add_finding(Finding(
+            engine.record(
                 engine.target.display, "web.vulnscan", "misconfiguration",
                 "medium", "TRACE enabled (Cross-Site Tracing surface)",
-                evidence="TRACE echoed request headers", confidence="firm"))
+                evidence="TRACE echoed request headers",
+                remediation="Disable TRACE method at the server config.",
+                cls="misconfiguration",
+                proof=P.observation(
+                    "TRACE %s echoed request body" % base,
+                    note="cross-site tracing surface"))

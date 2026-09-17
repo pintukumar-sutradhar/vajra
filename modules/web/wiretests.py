@@ -13,7 +13,8 @@ import re
 import time
 from urllib.parse import urlparse
 
-from core.database import Finding
+
+from core import proof as P
 from core.http_client import raw_http
 
 
@@ -96,7 +97,7 @@ def _deser_probes(engine, urls):
         except Exception:
             continue
         if r.status == 500 and DESER_MARKERS.search(r.body[:12000]):
-            engine.db.add_finding(Finding(
+            engine.record(
                 engine.target.display, "web.wiretests", "exposure", "high",
                 "Possible .NET deserialization reflection on %s" % url,
                 evidence="%s -> %d\n%s" % (url, r.status,
@@ -104,7 +105,13 @@ def _deser_probes(engine, urls):
                                            if r.body else ""),
                 remediation="Block gadget types; use safe serialization "
                             "bindings; review the stack trace for exposure.",
-                confidence="possible"))
+                cls="deserialization",
+                proof=P.marker(
+                    "%s -> %d\n%s" % (url, r.status,
+                                      r.body[:500].splitlines()[-1]
+                                      if r.body else ""),
+                    control_clean=None,
+                    note="no benign payload control run"))
             return True
     return False
 
@@ -122,7 +129,7 @@ def run(engine):
         for cand in (base, base + "/socket", base + "/ws", base + "/api/socket"):
             try:
                 if _ws_probe(engine, cand):
-                    engine.db.add_finding(Finding(
+                    engine.record(
                         t.display, "web.wiretests", "exposure", "medium",
                         "WebSocket endpoint accepts upgrade on %s" % cand,
                         detail="101 Switching Protocols — inspect for "
@@ -130,7 +137,10 @@ def run(engine):
                         evidence="raw handshake upgrade",
                         remediation="Authenticate + validate Origin on the "
                                     "WS handshake and every frame.",
-                        confidence="firm"))
+                        cls="misconfiguration",
+                        proof=P.observation(
+                            "WebSocket upgrade accepted at %s" % cand,
+                            note="101 Switching Protocols"))
                     engine.log.finding("[ws] upgrade accepted at %s" % cand)
                     done_ws = True
                     done = True
@@ -146,7 +156,7 @@ def run(engine):
         except Exception:
             continue
         if st == "possible-smuggle":
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "web.wiretests", "potential", "medium",
                 "CL.TE/TE.CL request smuggling indicator — %s" % wt["url"],
                 detail=("Two HTTP responses arrived on one connection for a "
@@ -157,7 +167,10 @@ def run(engine):
                 remediation="Disallow conflicting Content-Length and "
                             "Transfer-Encoding in the edge + origin parsers; "
                             "HTTP/2-or-higher egress.",
-                confidence="possible"))
+                cls="other",
+                proof=P.observation(
+                    "raw socket CL/TE probe: %s" % (note or ""),
+                    note="two responses parsed on one connection"))
             engine.log.finding("[SMUGGLE] CL/TE divergence at %s" % wt["url"])
             break
     try:

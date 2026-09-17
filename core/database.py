@@ -111,7 +111,8 @@ def evidence_cap(evidence="", category=""):
 
 class Finding:
     def __init__(self, target, module, category, severity, title, detail="",
-                 evidence="", remediation="", confidence="firm", mitre=None):
+                 evidence="", remediation="", confidence="firm", mitre=None,
+                 cap=None, proof=""):
         if mitre is None:
             tid, tname = _mitre.lookup(module, category, title)
             mitre = "%s %s" % (tid, tname)
@@ -123,9 +124,18 @@ class Finding:
         # Evidence-confidence ladder: merge declared confidence with what the
         # evidence string actually proves, then enforce the anti-FP severity cap
         # from the strongest of the declared claim and the proof in the evidence.
+        #
+        # `cap` is set by core.proof's gate (engine.record) from the *kind* of
+        # proof a module actually supplied, and is authoritative when present:
+        # a module cannot claim more severity than its proof kind supports.
         self.confidence = ladder_evidence(raw_conf, evidence, category)
         declared_cap = CONFIDENCE_CAP.get(raw_conf, CONFIDENCE_CAP["possible"])
-        cap_rank = max(declared_cap, evidence_cap(evidence, category))
+        if cap is not None:
+            cap_rank = min(cap, max(declared_cap, evidence_cap(evidence,
+                                                               category)))
+        else:
+            cap_rank = max(declared_cap, evidence_cap(evidence, category))
+        self.proof = proof
         if SEV_RANK[self.severity] > cap_rank:
             bound_to = SEV_BY_RANK[cap_rank]
             if detail:
@@ -155,7 +165,11 @@ CREATE TABLE IF NOT EXISTS findings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     target TEXT, module TEXT, category TEXT, severity TEXT,
     title TEXT, detail TEXT, evidence TEXT, remediation TEXT,
-    confidence TEXT, created_at TEXT, mitre TEXT DEFAULT ''
+    confidence TEXT, created_at TEXT, mitre TEXT DEFAULT '',
+    -- What proved this finding, and the severity ceiling that evidence
+    -- supports. Both are computed by the proof gate; storing them is what
+    -- lets a reviewer see the demonstration instead of only the claim.
+    proof TEXT DEFAULT '', cap TEXT DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS services (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -166,7 +180,16 @@ CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     target TEXT, event TEXT, detail TEXT, created_at TEXT
 );
+-- Candidates the proof gate refused to promote to findings. Kept so an
+-- operator can see *what was suppressed and why* rather than having to trust
+-- that nothing real was dropped (see core/proof.py).
+CREATE TABLE IF NOT EXISTS suppressed (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    target TEXT, module TEXT, cls TEXT, severity TEXT, title TEXT,
+    reason TEXT, detail TEXT, created_at TEXT
+);
 CREATE INDEX IF NOT EXISTS idx_findings_target ON findings(target);
+CREATE INDEX IF NOT EXISTS idx_suppressed_target ON suppressed(target);
 """
 
 
@@ -177,7 +200,31 @@ class Database:
         self.lock = threading.Lock()
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.executescript(SCHEMA)
+        self._ensure_columns()
         self.conn.commit()
+
+    def _ensure_columns(self):
+        """Add columns introduced after a bundle was created.
+
+        CREATE TABLE IF NOT EXISTS is a no-op on an existing table, so a run
+        dir written by an earlier version keeps the old column set. Adding the
+        column is enough here: these are per-run bundles, and the reader
+        defaults a missing value.
+        """
+        wanted = (("findings", "proof", "TEXT DEFAULT ''"),
+                  ("findings", "cap", "TEXT DEFAULT ''"))
+        for table, col, decl in wanted:
+            try:
+                cols = {r[1] for r in
+                        self.conn.execute("PRAGMA table_info(%s)" % table)}
+            except sqlite3.Error:
+                continue
+            if cols and col not in cols:
+                try:
+                    self.conn.execute("ALTER TABLE %s ADD COLUMN %s %s"
+                                      % (table, col, decl))
+                except sqlite3.Error:
+                    pass
 
     def add_finding(self, f):
         if isinstance(f, dict):
@@ -190,11 +237,12 @@ class Database:
                 return False
             self.conn.execute(
                 "INSERT INTO findings (target,module,category,severity,title,detail,"
-                "evidence,remediation,confidence,created_at,mitre)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "evidence,remediation,confidence,created_at,mitre,proof,cap)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (f.target, f.module, f.category, f.severity, f.title, f.detail,
                  f.evidence, f.remediation, f.confidence, f.created_at,
-                 getattr(f, "mitre", "")))
+                 getattr(f, "mitre", ""), getattr(f, "proof", "") or "",
+                 str(getattr(f, "cap", "") or "")))
             self.conn.commit()
         return True
 
@@ -223,9 +271,45 @@ class Database:
                  datetime.datetime.now().isoformat(timespec="seconds")))
             self.conn.commit()
 
+    def add_suppressed(self, target, module, cls, severity, title, reason,
+                       detail=""):
+        """Record a candidate the proof gate refused to promote."""
+        with self.lock:
+            cur = self.conn.execute(
+                "SELECT 1 FROM suppressed WHERE target=? AND module=? AND "
+                "title=? AND reason=? LIMIT 1",
+                (target, module, title, reason))
+            if cur.fetchone():
+                return False
+            self.conn.execute(
+                "INSERT INTO suppressed (target,module,cls,severity,title,"
+                "reason,detail,created_at) VALUES (?,?,?,?,?,?,?,?)",
+                (target, module, cls, severity, title, reason,
+                 (detail or "")[:4000],
+                 datetime.datetime.now().isoformat(timespec="seconds")))
+            self.conn.commit()
+        return True
+
+    def suppressed(self, target=None):
+        q = ("SELECT target,module,cls,severity,title,reason,detail,created_at"
+             " FROM suppressed")
+        args = ()
+        if target:
+            q += " WHERE target=?"
+            args = (target,)
+        q += " ORDER BY id"
+        rows = []
+        with self.lock:
+            for r in self.conn.execute(q, args):
+                rows.append({"target": r[0], "module": r[1], "cls": r[2],
+                             "severity": r[3], "title": r[4], "reason": r[5],
+                             "detail": r[6], "created_at": r[7]})
+        return rows
+
     def findings(self, target=None):
         q = "SELECT target,module,category,severity,title,detail,evidence," \
-            "remediation,confidence,created_at,IFNULL(mitre,'') FROM findings"
+            "remediation,confidence,created_at,IFNULL(mitre,'')," \
+            "IFNULL(proof,''),IFNULL(cap,'') FROM findings"
         args = ()
         if target:
             q += " WHERE target=?"
@@ -239,7 +323,9 @@ class Database:
                     "target": r[0], "module": r[1], "category": r[2],
                     "severity": r[3], "title": r[4], "detail": r[5],
                     "evidence": r[6], "remediation": r[7], "confidence": r[8],
-                    "created_at": r[9], "mitre": r[10] if len(r) > 10 else ""})
+                    "created_at": r[9], "mitre": r[10] if len(r) > 10 else "",
+                    "proof": r[11] if len(r) > 11 else "",
+                    "cap": r[12] if len(r) > 12 else ""})
         return rows
 
     def services(self, target=None):

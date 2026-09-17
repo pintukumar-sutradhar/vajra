@@ -3,7 +3,7 @@ import subprocess
 import shutil
 import re
 
-from core.database import Finding
+from core import proof as P
 
 BANNER_OS = [
     ("ubuntu", "Linux (Ubuntu)"), ("debian", "Linux (Debian)"),
@@ -61,8 +61,10 @@ def run(engine):
     best = max(guesses.items(), key=lambda kv: kv[1])
     engine.state["os_guess"] = best[0]
     engine.log.info("OS guess: %s (confidence %d%%)" % best)
-    engine.db.add_finding(Finding(
+    engine.record(
         t.display, "network.osfp", "recon", "info",
         "OS fingerprint: %s (~%d%% confidence)" % best,
         detail="Signals: TTL=%s; banner heuristics." % ttl,
-        confidence="possible"))
+        cls="os_fingerprint",
+        proof=P.observation(
+            "TTL=%s and banner heuristics -> %s" % (ttl, best[0])))

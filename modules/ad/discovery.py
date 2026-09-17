@@ -5,7 +5,7 @@ import re
 import socket
 import struct
 
-from core.database import Finding
+from core import proof as P
 
 SRV_QUERIES = [
     ("_ldap._tcp.dc._msdcs", "Domain controllers"),
@@ -106,7 +106,7 @@ def run(engine):
     if detected or dcs:
         engine.log.info("[ad] %s — DCs: %s" %
                         (surface, ", ".join(d["host"] for d in dcs[:3]) or "?"))
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "ad.discovery", "recon", "info",
             "Active Directory environment identified",
             detail="Realm: %s\nAD-relevant ports open: %s\n"
@@ -117,7 +117,8 @@ def run(engine):
                       "\n".join("%s:%d %s" % (d["host"], d["port"],
                                               d["role"])
                                 for d in dcs[:10]) or "none via SRV"),
-            confidence="firm"))
+            cls="ad", proof=P.marker(
+                "%s dc=%s" % (realm, ",".join(d["host"] for d in dcs[:3]) or "-")))
     else:
         engine.db.add_event(t.display, "ad.discovery",
                             "no AD indicators on this host")

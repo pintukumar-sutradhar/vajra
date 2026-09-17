@@ -19,7 +19,7 @@ only the credential probe against the moved-into target; no internal data is
 silently altered."""
 import re
 
-from core.database import Finding
+from core import proof as P
 
 
 def _chan(engine):
@@ -121,12 +121,14 @@ def run(engine):
                            % (host, svc))
         # 3) spray creds at the reachable host through the same channel
         if not pool:
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "post.lateral", "pivot-map", "medium",
                 "Internal reachability map captured from pivot",
                 detail="Reachable internal hosts from the live channel. "
                        "Bring creds to move deeper: %s" % host,
-                evidence=layout[:400], confidence="firm"))
+                evidence=layout[:400],
+                cls="other",
+                proof=P.observation(layout[:400]))
             continue
         won = _spray(chan, host, svc, pool)
         if won:
@@ -136,12 +138,13 @@ def run(engine):
     if pivoted:
         engine.log.success("[lateral] %d internal host(s) MOVED INTO" % pivoted)
     elif hosts:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "post.lateral", "pivot-map", "low",
             "Lateral sweep done - no creds replayed to internal hosts (%d mapped)"
             % len(hosts),
             detail=("Internal layout: %s" % ", ".join(hosts[:12])),
-            confidence="firm"))
+            cls="other",
+            proof=P.observation(", ".join(hosts[:12])))
 
 
 def _probe(chan, host, ports=(445, 5985, 22, 3389)):
@@ -197,18 +200,20 @@ def _spray(chan, host, svc, pool):
 def _record_pivot(engine, chan, host, svc, cred):
     engine.state.setdefault("channels", []).append(
         PivotChannel(engine, host, svc, cred, parent=chan))
-    engine.db.add_finding(Finding(
+    ev = "from=%s via=%s to=%s cred=%s" % (
+        getattr(chan, "host", "?"), svc, host, cred.get("user"))
+    engine.record(
         engine.target.display, "post.lateral", "exploit-proof", "critical",
         "LATERAL MOVEMENT — pivoted into internal %s (%s)" % (host, svc),
         detail=("Replayed a harvested credential (%s) through the live "
                 "channel onto internal host %s via %s. New execution channel "
                 "added; persistence/cloud post-ex can now target it."
                 % (cred.get("user"), host, svc)),
-        evidence="from=%s via=%s to=%s cred=%s" % (
-            getattr(chan, "host", "?"), svc, host, cred.get("user")),
+        evidence=ev,
         remediation="Rotate shared credentials immediately; enforce "
                     "least-privilege; segment the internal network.",
-        confidence="firm"))
+        cls="other",
+        proof=P.auth(ev))
 
 
 class PivotChannel:

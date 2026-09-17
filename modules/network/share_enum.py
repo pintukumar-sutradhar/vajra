@@ -13,8 +13,8 @@ import socket
 import struct
 import subprocess
 
-from core.database import Finding
 from core.utils import which_tool
+from core import proof as P
 
 SMB_PORTS = (139, 445)
 NFS_PORTS = (2049,)
@@ -246,7 +246,7 @@ def _try_native(engine, host):
         return False
     if shares:
         plain = [sh.split(" (")[0] for sh in shares]
-        engine.db.add_finding(Finding(
+        engine.record(
             engine.target.display, "network.shares", "exposure", "medium",
             "SMB shares readable anonymously (native SMBv1 RAP walk)",
             detail="NetShareEnum level-1 over \\\\PIPE\\\\LANMAN disclosed "
@@ -254,7 +254,10 @@ def _try_native(engine, host):
             evidence="\n".join(shares[:40]),
             remediation="Disable anonymous/guest SMB access; enforce "
                         "least-privilege ACLs; consider SMBv1 off.",
-            confidence="firm"))
+            cls="ad_misconfig",
+            proof=P.observation(
+                "anonymous NetShareEnum returned %d share(s)"
+                % len(shares)))
         engine.state["smb_shares"] = plain[:60]
         engine.log.finding("[shares] SMB(native): %s" % ", ".join(plain[:8]))
     return True
@@ -290,7 +293,7 @@ def run(engine):
                                                 "read-write")):
                     writable.append(l[:100])
             sev = "high" if writable else "medium"
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "network.shares", "exposure", sev,
                 "SMB shares readable anonymously (%s)" % tool,
                 detail="%d share(s) enumerated without credentials%s." % (
@@ -299,7 +302,10 @@ def run(engine):
                 evidence="\n".join((paths or lines)[:30]),
                 remediation="Disable anonymous/guest SMB access; enforce "
                             "least-privilege ACLs; fire at NTLMv2.",
-                confidence="firm" if paths else "possible"))
+                cls="ad_misconfig",
+                proof=P.observation(
+                    "%d SMB share(s) enumerated without credentials"
+                    % len(paths)))
             engine.state["smb_shares"] = paths[:60]
             engine.log.finding("[shares] SMB: %s" % ", ".join(
                 (paths or ["<unknown>"])[:6]))
@@ -320,7 +326,7 @@ def run(engine):
             risky = [e for e in exports
                      if any(k in e.lower() for k in ("no_root_squash",
                                                      "rw,"))]
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "network.shares", "exposure",
                 "high" if risky else "medium",
                 "NFS exports browsable (showmount -e)",
@@ -330,7 +336,9 @@ def run(engine):
                 evidence="\n".join(exports[:40]),
                 remediation="Export specific IPs; use root_squash; prefer "
                             "Kerberized NFS.",
-                confidence="firm" if exports else "possible"))
+                cls="exposure",
+                proof=P.observation(
+                    "showmount -e listed %d export(s)" % len(exports)))
             engine.state["nfs_exports"] = exports[:40]
             engine.log.finding("[shares] NFS: %d export(s)" % len(exports))
         else:

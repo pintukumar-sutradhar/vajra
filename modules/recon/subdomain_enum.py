@@ -7,7 +7,7 @@ import threading
 import urllib.request
 import json
 
-from core.database import Finding
+from core import proof as P
 
 # Direct-DNS fast path. OS getaddrinfo/gethostbyname is slow for brute sweeps:
 # it resolves AAAA + A, folds in search domains, retries, and can hit a TCP
@@ -387,20 +387,24 @@ def run(engine):
                             for e in live_list[:60])
         extra = "" if len(live_list) <= 60 else \
             "\n... (%d total)" % len(live_list)
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "recon.subdomains", "recon", "info",
             "Subdomains discovered: %d" % len(live_list),
             detail="Enumerated via DNS wordlist%s" %
                    (" + Certificate Transparency logs"
                     if engine.online else ""),
-            evidence=listing + extra, confidence="firm"))
+            evidence=listing + extra,
+            cls="other",
+            proof=P.observation(listing + extra))
         wildcard_test = "vjr-wildcard-%s.%s" % (engine.nonce(), dom)
         if _resolve(wildcard_test)[1]:
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "recon.subdomains", "recon", "info",
                 "Wildcard DNS detected",
                 detail="Every subdomain resolves; enumeration results may be "
-                       "wildcard artifacts.", confidence="firm"))
+                       "wildcard artifacts.",
+                cls="other",
+                proof=P.observation("wildcard %s resolves" % wildcard_test))
 
 
 def _resolve_many(engine, cands, dom):

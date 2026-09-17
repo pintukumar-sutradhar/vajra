@@ -1,6 +1,6 @@
 """VAJRA post-exploitation — system situational awareness through every
 established execution channel."""
-from core.database import Finding
+from core import proof as P
 
 COMMANDS_UNIX = [
     ("identity", "id ; whoami"),
@@ -62,19 +62,22 @@ def run(engine):
             if label == "accounts" and out.count(":") > 20:
                 pass
         if privesc:
-            engine.db.add_finding(Finding(
+            ev = "\n".join(privesc)[:3000]
+            engine.record(
                 t.display, "post.recon", "post-exploit", "critical",
                 "LOCAL PRIVILEGE-ESCALATION CANDIDATES identified post-exploit"
                 " (%d)" % len(privesc),
                 detail="Channel output analysis surfaced escalation paths.",
-                evidence="\n".join(privesc)[:3000], confidence="firm"))
+                evidence=ev,
+                cls="other",
+                proof=P.observation(ev))
         evidence = "\n\n".join(collected)[:14000]
         try:
             ev_rel = engine.save_evidence(
                 "post_ex_channel%d.txt" % (idx + 1), evidence)
         except Exception:
             ev_rel = ""
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "post.recon", "post-exploit", "critical",
             "POST-EXPLOITATION RECON EXECUTED on target (%d intel categories)"
             % len(collected),
@@ -85,6 +88,7 @@ def run(engine):
             evidence=evidence,
             remediation="Host compromise must be assumed: forensics, credential "
                         "rotation, rebuild from known-good images.",
-            confidence="firm"))
+            cls="other",
+            proof=P.observation(evidence))
         engine.log.finding("[post] %d category(ies) harvested via channel %d"
                            % (len(collected), idx + 1))

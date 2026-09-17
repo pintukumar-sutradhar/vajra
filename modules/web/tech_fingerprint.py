@@ -3,7 +3,8 @@ correlation against the built-in vulnerability database."""
 import re
 from urllib.parse import urlsplit
 
-from core.database import Finding
+
+from core import proof as P
 from core.utils import load_json, GEN_RE
 
 VERS_HUNTERS = [
@@ -177,7 +178,7 @@ def cve_correlation(engine, t, version_sightings):
                 lines = "\n".join("%s (%.1f) %s" % (e["id"], e["cvss"],
                                                     e["summary"])
                                   for e in live[:8])
-                engine.db.add_finding(Finding(
+                engine.record(
                     t.display, "web.tech", "vuln-exposure", "medium",
                     "Live CVE pulse: %s %s (%s)" % (tech, version, len(live)),
                     detail="Offline KB had no match for %s %s; live OSV "
@@ -185,7 +186,9 @@ def cve_correlation(engine, t, version_sightings):
                     evidence="%s %s" % (tech, version),
                     remediation="Validate the versions against vendor "
                                 "advisories; upgrade out of range.",
-                    confidence="possible"))
+                    cls="cve",
+                    proof=P.extraction("%s %s -> %s" % (tech, version, lines),
+                                       note="live OSV version-range match"))
                 engine.log.finding("[CVE-online] %s %s -> %d CVE(s)" %
                                    (tech, version, len(live)))
                 continue
@@ -201,7 +204,7 @@ def cve_correlation(engine, t, version_sightings):
                                             if len(h.split("|")) > 2 else 0,
                                             h.split("|")[1])
                           for h in hits[:12])
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.tech", "vuln-exposure", sev,
             "Web tech %s %s matches %d known CVE range(s)" %
             (tech, version, len(hits)),
@@ -210,7 +213,9 @@ def cve_correlation(engine, t, version_sightings):
             evidence="%s %s" % (tech, version),
             remediation="Upgrade the component past the affected version; "
                         "track CVE feeds for it.",
-            confidence="firm"))
+            cls="cve",
+            proof=P.extraction(lines,
+                               note="CVE range match for %s %s" % (tech, version)))
         engine.log.finding("[CVE] %s %s -> %d CVE range(s) (peak %.1f)"
                            % (tech, version, len(hits), maxcv))
 
@@ -526,20 +531,24 @@ def run(engine):
         if info["strong"] or info["score"] >= 6:
             vtxt = " %s" % info["version"] if info["version"] else ""
             engine.log.info("[tech] " + tech + vtxt)
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "web.tech", "recon", "info",
                 "Technology fingerprint: %s%s" % (tech, vtxt),
                 evidence="; ".join(info["proofs"]),
-                confidence="firm"))
+                cls="other",
+                proof=P.observation("; ".join(info["proofs"]),
+                                    note="technology signature observed"))
         else:
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "web.tech", "recon", "info",
                 "Possible %s — unverified signal" % tech,
                 detail="Only weak/bounded page markers matched (%d pts); "
                        "the word alone can be prose or copied templates. Runs "
                        "as a lead, not as a confirmed technology." % info["score"],
                 evidence="; ".join(info["proofs"]),
-                confidence="possible"))
+                cls="other",
+                proof=P.observation("weak marker: %s" % "; ".join(info["proofs"]),
+                                    note="unverified technology signal"))
             engine.log.info("[tech] %s possible (score %d, UNVERIFIED) %s"
                             % (tech, info["score"], info["proofs"][:1]))
     for c in sorted(CMS_ACTIONS):
@@ -582,20 +591,25 @@ def run(engine):
             extra = (probe_note or
                      (info and "; ".join(info["proofs"])[:160]) or
                      "two independent CMS markers observed")
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "web.tech", "attack-surface", "medium", title,
                 detail="%s\nConfirmed by: %s" % (detail, extra),
                 evidence="%s\n%s" % (c, extra),
-                remediation=remed, confidence="firm"))
+                remediation=remed,
+                cls="other",
+                proof=P.observation("%s\n%s" % (c, extra),
+                                    note="CMS structural markers confirmed"))
             engine.log.finding("[cms] %s CONFIRMED (%s)" % (c, extra))
         else:
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "web.tech", "recon", "info",
                 "Possible %s — unverified signal" % c,
                 detail="Signals found on %s (%s). A copied theme or the "
                        "CMS word alone is not proof; promote with a second "
                        "marker or a signature probe." % (base, toks),
                 evidence="on %s: %s" % (base, toks),
-                confidence="possible"))
+                cls="other",
+                proof=P.observation("on %s: %s" % (base, toks),
+                                    note="unverified CMS signal"))
             engine.log.info("[cms] %s present? weak signal — UNVERIFIED" % c)
     cve_correlation(engine, t, sightings)

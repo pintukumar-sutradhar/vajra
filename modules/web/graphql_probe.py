@@ -1,7 +1,8 @@
 """VAJRA GraphQL surface prober — introspection, playgrounds, schema leak."""
 import json
 
-from core.database import Finding
+
+from core import proof as P
 
 CANDIDATES = ["/graphql", "/api/graphql", "/graphiql", "/v1/graphql",
               "/v2/graphql", "/graphql/console", "/explorer", "/altair",
@@ -49,7 +50,7 @@ def run(engine):
                 graphql_confirmed += 1
             if marker:
                 sev = "medium" if marker.startswith("introspection") else "low"
-                engine.db.add_finding(Finding(
+                engine.record(
                     t.display, "web.graphql_probe", "exposure", sev,
                     "GraphQL endpoint exposed at %s (%s)" % (path, marker),
                     detail="Introspection reveals the complete API schema "
@@ -61,9 +62,12 @@ def run(engine):
                         if has_graphql_body else ""),
                     remediation="Disable introspection in production; add "
                                 "depth/complexity limits.",
-                    confidence="firm"))
+                    cls="misconfiguration",
+                    proof=P.observation(marker, note="GraphQL response at %s" % url))
     if graphql_confirmed:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.graphql_probe", "recon", "info",
             "GraphQL confirmed: %d endpoint(s) with GraphQL responses"
-            % graphql_confirmed, confidence="firm"))
+            % graphql_confirmed,
+            cls="misconfiguration",
+            proof=P.observation("%d GraphQL responses" % graphql_confirmed))

@@ -9,8 +9,8 @@ ever reported as a vulnerability, so it cannot cause a false positive."""
 import json
 import os
 
-from core.database import Finding
 
+from core import proof as P
 MAX_FINDINGS = 12
 
 SYSTEM = ("You are VAJRA's remediation advisor. For each finding give a short, "
@@ -53,14 +53,18 @@ def _assist(engine, tdir):
     if rem or acts:
         engine.log.info("AI assist: %d remediation drafts, %d next actions"
                         % (len(rem), len(acts)))
-        engine.db.add_finding(Finding(
+        engine.record(
             engine.target.display, "web.ai_assist", "advisory", "info",
             "AI remediation assist prepared",
             detail="Full per-finding remediation and next-attack plan written "
                    "to ai_assist.json in the report directory.",
             evidence="%d remediation drafts, %d next actions"
                      % (len(rem), len(acts)),
-            confidence="firm"))
+            cls="other",
+            proof=P.observation(
+                "%d remediation drafts, %d next actions"
+                % (len(rem), len(acts)),
+                note="AI advisory output written"))
     return result
 
 

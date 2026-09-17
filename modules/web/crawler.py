@@ -3,7 +3,8 @@ import time
 from collections import deque
 from urllib.parse import urlparse
 
-from core.database import Finding
+
+from core import proof as P
 from core.utils import (extract_links, extract_forms, extract_emails,
                         extract_comments, extract_title, load_json)
 
@@ -155,14 +156,21 @@ def run(engine):
     if login_surfaces:
         engine.state["login_surfaces"] = sorted(set(login_surfaces))[:12]
     t = engine.target
-    engine.db.add_finding(Finding(
+    engine.record(
         t.display, "web.crawl", "recon", "info",
         "Crawl complete: %d page(s), %d form(s), %d JS file(s), %d email(s)" %
         (len(pages), len(forms_all), len(set(js_all)), len(emails)),
         detail="Scope: %s" % ", ".join(w["url"] for w in targets),
-        confidence="firm"))
+        cls="other",
+        proof=P.observation(
+            "crawled %d page(s), %d form(s), %d email(s)" %
+            (len(pages), len(forms_all), len(emails)),
+            note="crawl run statistics"))
     for c in interesting_comments[:8]:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.crawl", "info-disclosure", "low",
             "Interesting HTML comment / robots entry",
-            evidence=c[:1000], confidence="firm"))
+            evidence=c[:1000],
+            cls="info_leak",
+            proof=P.observation(c[:1000],
+                                note="interesting comment/robots entry"))

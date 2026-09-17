@@ -12,7 +12,8 @@ Uses only idempotent-looking state change with a burn payload; never a real
 transaction of the target's choosing beyond a single test parameter."""
 import time
 
-from core.database import Finding
+
+from core import proof as P
 
 MAX_ENDPOINTS = 5
 CONCURRENCY = [4, 8]
@@ -97,16 +98,18 @@ def run(engine):
                 continue
             findings.append((url, base, ok_n, n, wall, codes))
     if not findings:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.race", "coverage", "info",
             "Race probes (%d surface(s), to %d concurrent) showed no "
             "split-success signal" % (len(cands), CONCURRENCY[-1]),
             detail="While absence is not proof of safety, identical "
                    "simultaneous submissions each produced a single outcome.",
-            confidence="possible"))
+            cls="other",
+            proof=P.observation("no split-success signal",
+                                note="race probes clean"))
         return
     for url, data, ok_n, n, wall, codes in findings[:3]:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.race", "logic", "medium",
             "Race-condition signal on state-change endpoint (%.0f ms for %d "
             "concurrent)" % (wall * 1000, n),
@@ -115,6 +118,12 @@ def run(engine):
                    "indicates a TOCTOU window." % (ok_n, n),
             evidence="POST %s\npayload=%s\ncodes=%s (%.0f ms)" % (
                 url, data, codes, wall * 1000),
-            remediation=GUIDANCE, confidence="possible"))
+            remediation=GUIDANCE,
+            cls="other",
+            proof=P.observation(
+                "POST %s\npayload=%s\ncodes=%s (%.0f ms)" %
+                (url, data, codes, wall * 1000),
+                note="%d/%d identical concurrent requests all exceeded a "
+                     "single-claim endpoint" % (ok_n, n)))
         engine.log.finding("[race] %s %d/%d x%d" % (url, ok_n, n,
                                                     int(wall * 1000)))

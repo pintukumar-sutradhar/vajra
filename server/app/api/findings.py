@@ -27,6 +27,8 @@ def _finding_out(f):
             "asset": f.asset, "cwe": f.cwe, "cvss": f.cvss,
             "source_module": f.source_module, "detail": f.detail,
             "evidence": f.evidence or {}, "remediation": f.remediation,
+            "proof": getattr(f, "proof", "") or "",
+            "cap": getattr(f, "cap", "") or "",
             "status": f.status, "state_note": f.state_note,
             "state_changed_at": str(f.state_changed_at)
             if f.state_changed_at else None,

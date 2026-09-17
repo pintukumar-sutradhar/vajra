@@ -11,7 +11,7 @@ Attack surface:
 * kubelet / crictl / nsenter / runc escape paths
 * privileged pod / hostPID / hostNetwork / hostPath mounts / docker.sock
 """
-from core.database import Finding
+from core import proof as P
 
 
 DETECT = ('cat /proc/1/cgroup 2>/dev/null ; ls /.dockerenv 2>/dev/null ; '
@@ -128,7 +128,8 @@ def run(engine):
     confidence = "firm" if (risky or esc_tokens) else "possible"
 
     if risky or esc_tokens:
-        engine.db.add_finding(Finding(
+        ev = "\n\n".join(evidence_blocks)[:12000]
+        engine.record(
             t.display, "post.k8s", "post-exploit", "critical",
             "K8S/container escape OR RBAC escalation surface confirmed (%d)"
             % (len(esc_tokens) + len(risky)),
@@ -138,23 +139,26 @@ def run(engine):
                       if esc_tokens else "")
                    + ("\nRBAC:\n- " + "\n- ".join(risky[:12])
                       if risky else ""),
-            evidence="\n\n".join(evidence_blocks)[:12000],
+            evidence=ev,
             remediation="Rebuild the pod on a hardened image: drop CAP_SYS_ADMIN/"
                         "SYS_PTRACE, set seccomp/apparmor, remove hostPath mounts, "
                         "use non-root service accounts; restrict RBAC to "
                         "least-privilege.",
-            confidence="firm"))
+            cls="other",
+            proof=P.observation(ev))
         engine.log.finding("[k8s] escape/RBAC surface found (%d escape, %d rbac)"
                            % (len(esc_tokens), len(risky)))
     else:
-        engine.db.add_finding(Finding(
+        ev = "\n\n".join(evidence_blocks)[:8000]
+        engine.record(
             t.display, "post.k8s", "post-exploit", "info",
             "Container escape / RBAC sweep: none detected",
             detail="Containerized target, but no privileged mounts, capabilities, "
                    "runtime control or broad RBAC surfaced. (%d checks)"
                    % (len(rbac) + len(esc)),
-            evidence="\n\n".join(evidence_blocks)[:8000],
-            confidence="possible"))
+            evidence=ev,
+            cls="other",
+            proof=P.observation("no escape surfaces or risky RBAC grants"))
 
 
 def _run(chan, cmd):

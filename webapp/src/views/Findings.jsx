@@ -3,6 +3,7 @@ import { api } from '../api.js'
 import {
   Severity, Confidence, Status, Empty, Spinner, Modal, useToast,
 } from '../components.jsx'
+import { IcoShield } from '../icons.jsx'
 
 const COLUMNS = ['new', 'triaged', 'confirmed', 'remediated', 'wont_fix']
 const SEV_ORDER = ['critical', 'high', 'medium', 'low', 'info']
@@ -233,6 +234,18 @@ function TriageModal({ finding: f, onClose, onChanged }) {
         <span className="muted">CWE</span><span className="mono">{detail.cwe || '—'}</span>
         <span className="muted">Module</span><span className="mono">{detail.source_module}</span>
       </div>
+
+      {/* Lead with the proof. Everything below it is context; this is the
+          reason to believe the finding exists at all. */}
+      {detail.proof && (
+        <div className="proofbox">
+          <IcoShield />
+          <div>
+            <div className="proof-lbl">What proves this</div>
+            <div className="proof-txt mono">{detail.proof}</div>
+          </div>
+        </div>
+      )}
 
       <div className="section-title">Title</div>
       <div style={{ marginBottom: 12, fontSize: 15, color: 'var(--text)' }}>{detail.title}</div>

@@ -8,7 +8,8 @@ Benign uploads only; payload content is inert in every case."""
 import re
 import time
 
-from core.database import Finding
+
+from core import proof as P
 from core.http_client import build_multipart
 
 MARKER = "vaju7391"
@@ -107,7 +108,7 @@ def run(engine):
                            for r in results.values())
         if hostile:
             names = ", ".join(hostile)
-            chk = engine.db.add_finding(Finding(
+            chk = engine.record(
                 t.display, "web.upload", "critical-upload-surface", "critical",
                 "Upload accepted AND served hostile filename(s): %s at %s"
                 % (names, url),
@@ -120,14 +121,21 @@ def run(engine):
                 remediation="Validate filename + content (magic bytes), serve "
                             "uploads from an isolated origin with "
                             "Content-Disposition: attachment.",
-                confidence="certain"))
+                cls="upload",
+                proof=P.marker(
+                    "stored+served: %s ; marker=%s" % (
+                        "; ".join("=".join((k, str(v))) for k, v in hostile.items()),
+                        MARKER),
+                    control_clean=True,
+                    note="benign control upload ran; marker only retrieved "
+                         "from hostile-named stored file"))
             if chk:
                 engine.log.finding("[upload] CRITICAL stored+served for %s"
                                    % "|".join(hostile))
             return
         if accepted_any and results.get("traversal") and \
                 results["traversal"].status in (403, 415, 400):
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "web.upload", "controlled", "info",
                 "Upload form enforces filename-filtering at %s" % url,
                 detail="Benign/text files accepted; traversal/PHP variants "
@@ -135,11 +143,18 @@ def run(engine):
                 evidence="cases: " + ", ".join(
                     "%s=%s" % (l, getattr(r, "status", "err"))
                     for l, r in results.items()),
-                remediation="—", confidence="firm"))
+                remediation="—",
+                cls="upload",
+                proof=P.marker(
+                    "cases: " + ", ".join(
+                        "%s=%s" % (l, getattr(r, "status", "err"))
+                        for l, r in results.items()),
+                    control_clean=True,
+                    note="benign control accepted; hostile variants rejected"))
             engine.log.info("[upload] %s: filter enforced, no persistence "
                             "of hostile content" % url)
         elif accepted_any:
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "web.upload", "coverage", "info",
                 "Upload endpoint accepts files; stored-file reachability "
                 "unverified (%s)" % url,
@@ -152,4 +167,7 @@ def run(engine):
                                  for l in ("benign", "traversal",
                                            "double-ext")),
                 evidence="marker=%s" % MARKER,
-                confidence="possible"))
+                cls="other",
+                proof=P.observation(
+                    "upload accepted; no stored URL retrievable with marker",
+                    note="coverage, not a vulnerability claim"))

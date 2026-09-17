@@ -5,7 +5,8 @@ import hashlib
 import hmac
 import json
 
-from core.database import Finding
+
+from core import proof as P
 
 TOKEN_RE = None
 
@@ -55,7 +56,7 @@ def _alg_confusion(engine, base, info, summary):
                              allow_redirects=False)
         rb = engine.http.get(base, allow_redirects=False)
         if 200 <= r0.status < 300 and not (200 <= rb.status < 300):
-            engine.db.add_finding(Finding(
+            engine.record(
                 engine.target.display, "web.jwt_audit", "verified-exposure",
                 "critical", "[VERIFIED] RS256->HS256 algorithm confusion — "
                             "RSA public key used as HMAC secret",
@@ -65,7 +66,11 @@ def _alg_confusion(engine, base, info, summary):
                 evidence=forged[:200],
                 remediation="Enforce an explicit allowed-algorithm list; "
                             "never use public key material as symmetric "
-                            "secret.", confidence="certain"))
+                            "secret.",
+                cls="jwt",
+                proof=P.marker(forged[:200],
+                               note="forged HS256 token accepted where "
+                                    "baseline rejected"))
             engine.log.finding("[jwt] ALG-CONFUSION verified via JWKS n")
     except Exception:
         return
@@ -105,11 +110,13 @@ def run(engine):
     if not tokens:
         engine.db.add_event(t.display, "jwt.audit", "no tokens observed")
         return
-    engine.db.add_finding(Finding(
+    engine.record(
         t.display, "web.jwt_audit", "recon", "info",
         "JWT tokens discovered: %d" % len(tokens),
         evidence="\n".join(tok[:90] + "…" for tok in tokens[:8]),
-        confidence="firm"))
+        cls="other",
+        proof=P.observation("\n".join(tok[:90] + "…" for tok in tokens[:8]),
+                            note="JWT tokens observed"))
     for tok in tokens[:5]:
         info = decode_jwt(tok)
         hdr, pl = info["header"], info["payload"]
@@ -128,13 +135,16 @@ def run(engine):
                                  allow_redirects=False)
             rb = engine.http.get(base, allow_redirects=False)
             if 200 <= r0.status < 300 and not (200 <= rb.status < 300):
-                engine.db.add_finding(Finding(
+                engine.record(
                     t.display, "web.jwt_audit", "verified-exposure",
                     "critical", "[VERIFIED] JWT accepts alg=none — "
                                 "authentication forgeable",
                     detail="Stripped-signature token accepted where the "
                            "original was rejected.", evidence=none_tok,
-                    confidence="certain"))
+                    cls="jwt",
+                    proof=P.marker(none_tok,
+                                   note="unsigned token accepted where "
+                                        "original rejected"))
 
         # ---- RS256 -> HS256 algorithm confusion (live) ----
         if str(hdr.get("alg", "")).upper() == "RS256":
@@ -148,7 +158,7 @@ def run(engine):
             for secret in JWT_WEAK_SECRETS:
                 if hmac.new(secret.encode(), signing_input,
                             sha).digest() == info["sig"]:
-                    engine.db.add_finding(Finding(
+                    engine.record(
                         t.display, "web.jwt_audit", "exploit-proof",
                         "critical",
                         "[VERIFIED] JWT signing key cracked: %r" % secret,
@@ -158,7 +168,10 @@ def run(engine):
                                  "secret",
                         remediation="Rotate to a high-entropy asymmetric "
                                     "key (RS256/EdDSA).",
-                        confidence="firm"))
+                        cls="jwt",
+                        proof=P.marker("hmac preimage matched with "
+                                       "dictionary secret",
+                                       note="key cracked: %r" % secret))
                     break
 
         # ---- claim observations ----
@@ -176,7 +189,10 @@ def run(engine):
         if alg == "none":
             notes.append("unsigned token in the wild")
         if notes:
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "web.jwt_audit", "hardening", "medium",
                 "JWT weaknesses observed: " + "; ".join(notes),
-                evidence=summary, confidence="firm"))
+                evidence=summary,
+                cls="jwt",
+                proof=P.marker(summary,
+                               note="claims observed in issued token"))

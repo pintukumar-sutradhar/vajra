@@ -440,6 +440,11 @@ def main():
             print("[!] warning: config.json invalid (%r) - using defaults" % e)
 
     from core.engine import Engine
+    from core import signals as _signals
+
+    # Cancelling a scan sends SIGTERM. Without this the process died outright
+    # and nothing found so far was ever written — see core/signals.py.
+    _signals.install()
     engine = Engine(args, config)
     try:
         engine.run()
@@ -454,6 +459,8 @@ def main():
         except Exception:
             pass
         return 130
+    finally:
+        _signals.restore()
 
 
 if __name__ == "__main__":

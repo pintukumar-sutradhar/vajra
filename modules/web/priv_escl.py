@@ -23,7 +23,8 @@
 import re
 import urllib.parse
 
-from core.database import Finding
+
+from core import proof as P
 
 module = "web.escalate"
 style = "uppercase"
@@ -189,12 +190,14 @@ def run(engine):
                 "[escalate] only one identity available - cross-user "
                 "baseline unavailable; skipping IDOR sweep")
         elif not noauto:
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, module, "coverage", "info",
                 "Cross-user escalation baseline unavailable",
                 detail="Could not register a second identity or discover "
                        "an owned object id; horizontal IDOR sweep skipped.",
-                confidence="possible"))
+                cls="other",
+                proof=P.observation("no second identity available",
+                                    note="IDOR baseline unavailable"))
     else:
         _run_horizontal(engine, ident_b)
 
@@ -235,7 +238,7 @@ def _run_horizontal(engine, ident_b):
                                           "escl_idor_%03d.png" % found)
                 except Exception:
                     pass
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, module, "idor", "high",
                 "Object-level authorisation bypass (authenticated "
                 "cross-user read)",
@@ -248,7 +251,11 @@ def _run_horizontal(engine, ident_b):
                          ident_b.get("endpoint", "?"), anon.status)),
                 evidence="marker '%s' present in response; anonymous "
                          "baseline does NOT leak it" % marker,
-                confidence="firm"))
+                cls="auth_bypass",
+                proof=P.auth(
+                    "marker '%s' present in response; anonymous baseline "
+                    "does NOT leak it" % marker,
+                    note="cross-user data returned to authenticated session"))
             engine.log.warn("[escalate] IDOR %s -> %s" % (name, url))
     engine.log.info("[escalate] horizontal sweep complete: %d confirmed "
                     "cross-user read(s)" % found)
@@ -278,7 +285,7 @@ def _run_vertical(engine, auth):
                     "type='password'" not in body:
                 hits.append((url, authd.status, m.group(0), len(body)))
     if hits:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, module, "recon", "info",
             "Administrative/management surface reachable after "
             "authentication",
@@ -288,6 +295,10 @@ def _run_vertical(engine, auth):
                    "confirmed escalation without a role oracle.\n\n" +
                    "\n".join("GET %s -> %s (marker '%s', %d bytes)" %
                              (u, s, mf, ln) for u, s, mf, ln in hits),
-            confidence="possible"))
+            cls="other",
+            proof=P.observation(
+                "\n".join("GET %s -> %s (marker '%s', %d bytes)" %
+                          (u, s, mf, ln) for u, s, mf, ln in hits),
+                note="admin routes reachable to authenticated session only"))
         engine.log.info("[escalate] %d admin route(s) reachable "
                         "authenticated" % len(hits))

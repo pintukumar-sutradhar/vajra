@@ -55,11 +55,18 @@ function crumb(label) {
   return label.replace(/_/g, ' ')
 }
 
+const VERBOSITY = [
+  { id: 0, label: 'Normal', desc: 'Progress and findings only' },
+  { id: 1, label: '-v Decisions', desc: 'Why each candidate was accepted or refused' },
+  { id: 2, label: '-vv Trace', desc: 'Every probe, payload and response' },
+]
+
 function LaunchModal({ engine, onClose, onScanStart }) {
   const [targets, setTargets] = useState([])
   const [targetId, setTargetId] = useState('')
   const [profile, setProfile] = useState(engine.default_profile)
   const [params, setParams] = useState({})
+  const [verbose, setVerbose] = useState(0)
   const [busy, setBusy] = useState(false)
   const [usedCreds, setUsedCreds] = useState(false)
   const shout = useToast()
@@ -101,7 +108,7 @@ function LaunchModal({ engine, onClose, onScanStart }) {
   async function launch(e) {
     e.preventDefault()
     if (!targetId) return shout.push('add a compatible target first', 'err')
-    const body = { target_id: parseInt(targetId, 10), engine_id: engine.engine_id, profile, params }
+    const body = { target_id: parseInt(targetId, 10), engine_id: engine.engine_id, profile, params, verbose }
     if (!usedCreds) {
       const clean = { ...params }
       credFields.forEach((f) => delete clean[f.name])
@@ -150,6 +157,31 @@ function LaunchModal({ engine, onClose, onScanStart }) {
             {shown.length === 0 && <option value="">No compatible targets ({kinds.join(', ')}) — add one on the Targets page</option>}
             {shown.map((t) => <option key={t.id} value={t.id}>{t.address} ({t.kind})</option>)}
           </select>
+        </div>
+
+        {/* Verbosity is fixed for the life of the run: the engine is launched
+            with -v/-vv and emits accordingly, so it cannot be raised after the
+            fact without restarting the scan. */}
+        <div className="field">
+          <label>Engine verbosity</label>
+          <div className="seg">
+            {VERBOSITY.map((v) => (
+              <button type="button" key={v.id}
+                className={'seg-btn' + (verbose === v.id ? ' on' : '')}
+                onClick={() => setVerbose(v.id)}>
+                {v.label}
+                <span className="muted" style={{ display: 'block', fontSize: 10.5 }}>{v.desc}</span>
+              </button>
+            ))}
+          </div>
+          {verbose > 0 && (
+            <div className="hint">
+              The live log will include {verbose === 1
+                ? 'baseline comparisons, proof acceptances and suppression reasons'
+                : 'every probe, payload and response'}. This makes the run log
+              substantially larger.
+            </div>
+          )}
         </div>
 
         {credFields.length > 0 && (

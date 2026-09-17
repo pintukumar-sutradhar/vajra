@@ -14,7 +14,7 @@ Read-only analysis + evidence-backed playbooks:
 Everything is gated behind --aggressive; the module never writes to AD."""
 import re
 
-from core.database import Finding
+from core import proof as P
 from core.utils import which_tool
 
 # -------- security descriptor / DACL parsing (self-relative) ------------
@@ -229,12 +229,12 @@ def _forge_playbook(engine, realm, ad):
 def run(engine):
     t = engine.target
     if not getattr(engine.args, "aggressive", False):
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "ad.power", "coverage", "info",
             "ad.power (ACL analysis + ticket-forgery playbook) gated",
             detail="Run with --aggressive and valid --ad-user/--ad-pass to "
                    "enable ACL-risk surfacing and forgery planning.",
-            confidence="firm"))
+            cls="ad_misconfig", proof=P.observation("--aggressive not set"))
         return
     ad = engine.state.get("ad") or {}
     host = t.scan_host()
@@ -252,7 +252,7 @@ def run(engine):
             keys = (a["name"], a["mask"])
             names[keys] = names.get(keys, 0) + 1
         top = sorted(names.items(), key=lambda kv: -kv[1])[:5]
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "ad.power", "privilege-abuse", "high",
             "%d high-risk ACL grant(s) in the directory" % len(risky),
             detail="Authenticated LDAP DACL analysis flagged access "
@@ -263,14 +263,16 @@ def run(engine):
             remediation="Audit ACLs on sensitive directory objects; apply "
                         "least-privilege for service accounts and remove "
                         "Everyone/Anonymous grants.",
-            confidence="firm"))
+            cls="ad", proof=P.marker(samples[0][:200]))
         engine.log.finding("[ad.power] %d risky ACL grants" % len(risky))
     elif risky is None:
         pass
     hashes, plan = _forge_playbook(engine, realm, ad)
     tag = "forgery-ready" if hashes else "posture-note"
     sev = "medium" if hashes else "low"
-    engine.db.add_finding(Finding(
+    proof = (P.marker(hashes[0][:120]) if hashes
+             else P.observation("no NTDS material in state"))
+    engine.record(
         t.display, "ad.power", tag, sev,
         "Domain persistence material available — golden/silver ready"
         if hashes else "Domain-forgery playbook documented",
@@ -279,7 +281,7 @@ def run(engine):
         "no NTDS material in state",
         remediation="Rotate krbtgt twice + authoritative replication when "
                     "compromise is confirmed; monitor TGT issuance.",
-        confidence="firm" if hashes else "possible"))
+        cls="ad" if hashes else "ad_misconfig", proof=proof)
     engine.state["ad_power"] = {"risky_aces": len(risky),
                                 "forgery_ready": hashes}
     engine.log.finding("[ad.power] forgery material: %s" %

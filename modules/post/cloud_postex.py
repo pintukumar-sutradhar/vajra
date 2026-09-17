@@ -20,7 +20,7 @@ output is captured as the PoC. Write/destructive actions stay behind
 import os
 import shutil
 
-from core.database import Finding
+from core import proof as P
 
 
 def _host_of(engine):
@@ -108,18 +108,19 @@ def _flag_secret_keys(engine, t, keys, url):
                                  "cred", "backup", "dump", ".pem",
                                  ".env", ".sql"))]
     if hits:
-        engine.db.add_finding(Finding(
+        keys_ev = "\n".join(hits[:40])
+        engine.record(
             t.display, "post.cloud", "cloud-exfiltration", "critical",
             "SENSITIVE OBJECTS in public cloud bucket (%d)" % len(hits),
             detail="Actively listed the public bucket %s and found objects "
                    "whose names indicate secrets (credentials, keys, dumps)."
                    % url,
-            evidence="bucket=%s\n%s" % (
-                url, "\n".join(hits[:40])),
+            evidence="bucket=%s\n%s" % (url, keys_ev),
             remediation="Remove the objects, delete/retire the bucket after "
                         "rotating everything it exposed, enable server-side "
                         "encryption + access logging.",
-            confidence="certain"))
+            cls="cloud",
+            proof=P.marker(keys_ev))
         engine.log.finding("[cloud] %d secret-ish object(s) readable from %s"
                            % (len(hits), url))
         return True
@@ -152,7 +153,7 @@ def run(engine):
                     engine.state.setdefault("cloud_creds", []).append(
                         {"provider": "aws", "path": path,
                          "identity": identity[:800]})
-                    engine.db.add_finding(Finding(
+                    engine.record(
                         t.display, "post.cloud", "cloud-compromise",
                         "critical",
                         "CLOUD AWS CREDENTIALS VALIDATED — live identity "
@@ -165,7 +166,8 @@ def run(engine):
                                  % (path, identity[:1200]),
                         remediation="Rotate the cloud keys immediately; "
                                     "review IAM grants; assume compromise.",
-                        confidence="certain"))
+                        cls="secrets",
+                        proof=P.marker(text[:4000]))
                     engine.log.finding("[cloud][aws] live identity from %s"
                                        % path)
     # 2) Any locally-present provider CLI with operator/env creds.
@@ -173,12 +175,14 @@ def run(engine):
         if shutil.which("aws"):
             identity, err = _aws_identity()
             if identity:
-                engine.db.add_finding(Finding(
+                engine.record(
                     t.display, "post.cloud", "cloud-compromise", "critical",
                     "LIVE AWS IDENTITY via local/operator credentials",
                     detail="The operator's/local environment AWS credentials "
                            "validate against STS on a cloud-backed target.",
-                    evidence=identity[:1200], confidence="certain"))
+                    evidence=identity[:1200],
+                    cls="cloud",
+                    proof=P.extraction(identity[:1200]))
 
     # 3) Actively enumerate any public buckets web.cloud already confirmed.
     for url in engine.state.get("cloud_bucket_urls", []) or []:

@@ -11,8 +11,8 @@ Everything here is a read-only protocol/HTTP request; nothing destructive.
 import socket
 import time
 
-from core.database import Finding
 from core.utils import load_json
+from core import proof as P
 
 CATALOG = load_json("intel/services.json", {}).get("services", {})
 
@@ -122,7 +122,7 @@ def run(engine):
             sev = probe.get("severity", "info")
             title = probe.get("label") or ("Exposed %s service on port %d"
                                            % (key, port))
-            engine.db.add_finding(Finding(
+            engine.record(
                 t.display, "network.service_exposure",
                 probe.get("category", "exposure"), sev,
                 "%s on %s:%d" % (title, host, port),
@@ -133,7 +133,10 @@ def run(engine):
                 evidence=evidence.decode("latin1", "replace")[:800],
                 remediation=probe.get("remediation", "Review the service "
                                       "configuration and exposure."),
-                confidence="firm" if sev != "info" else "possible"))
+                cls="exposure",
+                proof=P.marker(
+                    evidence.decode("latin1", "replace")[:300],
+                    note="reply contains the probe's expected marker"))
             engine.log.finding("[%s] %s:%d -> %s" %
                                (key.upper(), host, port, title[:90]))
             break

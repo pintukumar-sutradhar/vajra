@@ -6,6 +6,28 @@ import tempfile
 RESULTS = []
 
 
+def _gate_record(db):
+    """A `record` for the lightweight engine stubs used by tests that exercise
+    modules which file through the proof gate.
+
+    Mirrors core.engine.Engine.record: validate the proof against the class
+    rule; only a validated candidate reaches the database, with confidence
+    derived from the proof kind. Tests get exactly what a real run would store,
+    so the assertions below are meaningful rather than stubbed."""
+    def record(target, module, category, severity, title, detail="",
+               evidence="", remediation="", proof=None, cls=None, mitre=None):
+        from core import proof as P
+        from core.database import Finding
+        ok, canon, reason = P.validate(cls, proof)
+        if not ok:
+            return False
+        return db.add_finding(Finding(
+            target, module, category, severity, title, detail=detail,
+            evidence=evidence, remediation=remediation,
+            confidence=P.confidence_for(proof), mitre=mitre))
+    return record
+
+
 def check(name, fn):
     try:
         ok, info = fn()
@@ -112,43 +134,49 @@ def t_rce_channel():
 
 
 def t_vuln_records():
+    """Confidence is derived by the proof gate from what was observed, never
+    declared by the module. vuln_scanner's old _confidence_for/_poc_gate
+    ladders are gone; assert each technique now lands on the proof the gate
+    accepts, and that every class the module files under resolves to a rule."""
+    from core import proof as P
     from modules.web import vuln_scanner as vs
 
-    class Res:
-        def __init__(self, technique):
-            self.technique = technique
+    # Every class this module can file must have a rule (the structural
+    # no-bypass guarantee applied to this module's own vocabulary).
+    for cls in vs.SEV:
+        assert P.resolve_class(cls) is not None, cls
 
-    def mk_result(tech):
-        return Res(tech)
+    payload = '<svg onload=alert("x")>'
 
-    pt = vs.Point("http://127.0.0.1/echo?q=1", "GET", [("q", "1")],
-                  "http://127.0.0.1/echo?q=1", "form")
+    # XSS: a loud, unescaped script-body reflection with a clean control.
+    live = "<!doctype html><script>var q='%s'</script>" % payload
+    r = P.xss_proof(live, payload, control_body="<html>nothing</html>")
+    ok, _, reason = P.validate("xss", r)
+    assert ok and P.confidence_for(r) == "certain", (ok, reason)
 
-    class Rec:
-        def __init__(self):
-            self.calls = []
+    # The same payload HTML-escaped is the classic false positive: absent
+    # verbatim -> not XSS, finding suppressed, never filed.
+    esc = "&lt;svg onload=alert(&quot;x&quot;)&gt;"
+    r = P.xss_proof(esc, payload, control_body="<html>nothing</html>")
+    assert not P.validate("xss", r)[0]
 
-        def __call__(self, cls, pt, k, res, confidence="firm"):
-            self.calls.append((
-                cls, vs._confidence_for(cls, confidence), res.technique))
+    # LFI and RCE: file/command output markers -> certain.
+    r = P.lfi_proof("head\nroot:x:0:0:root:/root:/bin/bash\ntail",
+                    control_body="clean page")
+    assert P.validate("lfi", r)[0] and P.confidence_for(r) == "certain"
+    r = P.rce_proof("uid=1000(kali) gid=1000(kali)", control_body="clean")
+    assert P.validate("rce", r)[0] and P.confidence_for(r) == "certain"
 
-    rec = Rec()
-    rec("rce", pt, "q", mk_result("uid"), "firm")
-    rec("lfi", pt, "file", mk_result("root:x:0:0"), "firm")
-    rec("sqli_time", pt, "q", mk_result("delay"), "firm")
-    rec("xss", pt, "q", mk_result("direct"), "firm")
-    m = {c[0]: c for c in rec.calls}
-    assert m["rce"][1] == "certain"
-    assert m["lfi"][1] == "certain"
-    assert m["sqli_time"][1] == "possible"
-    assert m["xss"][1] == "firm"
-    assert vs._confidence_for("rce", "firm") == "certain"
-    assert vs._confidence_for("xss", "firm") == "firm"
-    assert vs._poc_gate("sqli", "firm", "payload=x\ncontext=...") == "firm"
-    assert vs._poc_gate("xss", "firm", "") == "possible"
-    assert vs._poc_gate("sqli", "firm", "") == "possible"
-    assert vs._poc_gate("redirect", "firm", "Location: https://h/") == "firm"
-    return True, "vuln_scanner proof-class confidence mapping OK"
+    # Time/boolean blind SQLi: a reproduced differential. Proved, but never
+    # "certain" — the ceiling for inference is firm.
+    t = P.differential("payload lag 1.2s vs benign baseline 0.02s",
+                       control_clean=True, reproduced=True)
+    ok, _, reason = P.validate("sqli_blind", t)
+    assert ok and P.confidence_for(t) == "firm", (ok, reason)
+
+    # A claimed hit with an empty artifact is unproven and suppressed.
+    assert not P.validate("xss", P.marker(""))[0]
+    return True, "vuln_scanner classes resolve; gate derives confidence"
 
 
 def t_cms_markers():
@@ -858,8 +886,10 @@ def t_ai_assist():
              "id": "f2", "url": "http://x/"}]
 
     td = _tf.mkdtemp()
+    db1 = Db(rows)
     E = type("E", (), {"target": T, "target_dirs": {"10.0.0.1": td},
-                       "log": Log(), "db": Db(rows)})()
+                       "log": Log(), "db": db1,
+                       "record": staticmethod(_gate_record(db1))})()
     E.ai = FakeAI()
     mod.run(E)
     ast = os.path.join(td, "ai_assist.json")
@@ -872,8 +902,10 @@ def t_ai_assist():
     assert E.db.added is not None and E.db.added.category == "advisory"
 
     td2 = _tf.mkdtemp()
+    db2 = Db(rows)
     E2 = type("E2", (), {"target": T, "target_dirs": {"10.0.0.1": td2},
-                         "log": Log(), "db": Db(rows)})()
+                         "log": Log(), "db": db2,
+                         "record": staticmethod(_gate_record(db2))})()
     E2.ai = OffAI()
     mod.run(E2)
     assert not os.path.exists(os.path.join(td2, "ai_assist.json"))
@@ -1477,7 +1509,8 @@ def t_autoreg_idor():
             args=SimpleNamespace(no_autoreg=False, web_user=None,
                                  web_pass=None, web_login=None, otp=""),
             state={"web_targets": [{"url": base}], "web_auth": {}},
-            http=httpc, db=db, log=_Log())
+            http=httpc, db=db, log=_Log(),
+            record=_gate_record(db))
         eng._screenshots_enabled = lambda: False
         eng.save_evidence = lambda *a, **k: ""
 
@@ -1498,7 +1531,10 @@ def t_autoreg_idor():
         idor = [r for r in rows if r[1] == "idor"]
         vert = [r for r in rows if r[1] == "recon"]
         assert idor, ("no IDOR finding recorded", rows)
-        assert idor[0][2] == "high" and idor[0][3] == "firm", idor[0]
+        # The gate derives confidence from the proof kind: this IDOR is filed
+        # as an auth_bypass proven by an authenticated cross-user read whose
+        # anonymous baseline did NOT leak -> AUTH kind, confidence "certain".
+        assert idor[0][2] == "high" and idor[0][3] == "certain", idor[0]
         assert vert, ("no vertical admin-surface recon recorded", rows)
     finally:
         srv.shutdown()
@@ -1585,14 +1621,33 @@ def t_toolkit():
 
 
 def t_intel_modules():
-    from modules.web.sensitive_files import _looks_real, GROUPS
+    from modules.web.sensitive_files import _marker_for, _magic_of, GROUPS
     assert GROUPS, "loot groups empty"
-    assert _looks_real(200, "ref: refs/heads/master\n", "application/x-git",
-                       ".git/head", ".git/head")
-    assert _looks_real(200, "KEY=value", "text/plain", "/.env", ".env")
-    assert not _looks_real(200, "<html>404 - Not Found page</html>",
-                           "text/html", "/.env", ".env")
-    assert not _looks_real(404, "whatever", "text/html", "/x", "x")
+    # The old _looks_real() heuristic is gone: "more than 40 bytes and not
+    # HTML" fired on any framework JSON error returned with 200. Detection is
+    # now two gates — a not-found baseline (core.evidence) and a format marker
+    # only the real file produces. Exercise both halves here.
+    assert _marker_for(".git/HEAD", "HEAD", "ref: refs/heads/master\n",
+                       "application/x-git", b"ref: refs/heads/master\n")[0]
+    assert _marker_for("/.env", ".env", "DB_HOST=db\nSECRET=zzz",
+                       "text/plain", b"DB_HOST=db\nSECRET=zzz")[0]
+    assert not _marker_for("/.env", ".env",
+                           "<html>404 - Not Found page</html>",
+                           "text/html", b"<html>404 - Not Found page</html>")[0]
+    assert _magic_of(b"PK\x03\x04rest")[1] == "ZIP archive"
+    assert _magic_of(b"plain text")[0] is None
+
+    from core import evidence as E
+
+    class _R:
+        def __init__(self, status, body, ctype="text/html"):
+            self.status = status
+            self.body = body
+            self.headers = {"content-type": ctype}
+
+    bl = E.Baseline("/", [E.Fingerprint(_R(404, "nope"), "/xxxx")])
+    assert E.verdict(_R(200, "real secret here"), bl, "/.env")[0] == E.REAL
+    assert E.verdict(_R(404, "nope"), bl, "/x")[0] == E.ABSENT
     from modules.network.service_exposure import _banner_hint
     assert _banner_hint("Redis server v=7.4.1", "redis")
     assert not _banner_hint("postgres", "redis")
@@ -2310,6 +2365,38 @@ def t_screenshot():
     return True, ("headless PoC screenshot captured (Playwright/Chromium) OK")
 
 
+def t_proof_gate():
+    """No module may file a finding except through engine.record().
+
+    A direct db.add_finding() skips proof validation entirely, so every one
+    that remains is a live path for an unproven claim to become a finding.
+    """
+    from core import proof_audit
+    rep = proof_audit.audit()
+    if rep["direct"]:
+        where = ", ".join("%s:%d" % (r[0], r[1]) for r in rep["direct"][:6])
+        return False, ("%d module(s) still call db.add_finding() directly: %s%s"
+                       % (len(rep["direct"]), where,
+                          " …" if len(rep["direct"]) > 6 else ""))
+    if rep["noclss"]:
+        where = ", ".join("%s:%d" % r for r in rep["noclss"][:6])
+        return False, ("%d record() call(s) name no class: %s"
+                       % (len(rep["noclss"]), where))
+    return True, ("all %d record() call site(s) across %d module file(s) go "
+                  "through the gate" % (rep["records"], rep["files"]))
+
+
+def t_proof_classes():
+    """Every cls= a module names must resolve to a registered proof rule."""
+    from core import proof_audit
+    rep = proof_audit.audit()
+    if rep["unknown"]:
+        where = ", ".join("%s:%d cls=%r" % r for r in rep["unknown"][:6])
+        return False, ("%d call site(s) name an unregistered class: %s"
+                       % (len(rep["unknown"]), where))
+    return True, "every declared class resolves to a proof rule"
+
+
 def run_all():
     print("\nVAJRA self-test")
     print("-" * 60)
@@ -2369,6 +2456,8 @@ def run_all():
     check("correlation/dedup + evidence-grounded attack paths", t_attack_paths)
     check("XLSX shared-strings: text preserved, numbers numeric", t_xlsx_text)
     check("headless PoC screenshot (or graceful fallback)", t_screenshot)
+    check("proof gate: no module bypasses it", t_proof_gate)
+    check("proof gate: every class has a rule", t_proof_classes)
     fails = [r for r in RESULTS if not r[1]]
     print("-" * 60)
     print(" %d/%d checks passed%s" % (len(RESULTS) - len(fails), len(RESULTS),

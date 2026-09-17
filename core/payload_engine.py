@@ -6,6 +6,8 @@ import random
 import re
 import urllib.parse
 
+from core.proof import in_executable_context as _exec_ctx
+
 R = random.Random(1337)
 
 
@@ -425,6 +427,28 @@ class AttackResult:
         self.attempts = 0
         self.blocked = 0
         self.evasion_log = []
+        # Negative-control bookkeeping: True when the motive also fired
+        # against a benign request, i.e. the signal was already on the page.
+        self.control_clean = None
+        self.control_rejected = 0
+        # The response that produced the hit, and the control response for the
+        # same request. `evidence` is a 200-char fragment chosen around the
+        # *payload*, which is the wrong place to look for a file marker or an
+        # unescaped sink — so anything that has to re-verify the artifact
+        # (core.proof's lfi_proof/xss_proof, core.verify) needs the body. Kept
+        # here rather than re-fetched, because re-fetching a blind or
+        # time-dependent hit often does not reproduce it.
+        self.body = ""
+        self.status = 0
+        self.control_body = None
+        # The control's Location, kept separately from its body so a redirect
+        # proof can tell "the benign value did not redirect there" apart from
+        # "no control was run" — those must not collapse into one another.
+        self.control_location = None
+        # The redirect destination, for the classes whose whole proof is where
+        # the response sent the client. Kept separately because it lives in a
+        # header, not the body.
+        self.location = ""
 
     @property
     def achieved(self):
@@ -433,18 +457,34 @@ class AttackResult:
 
 class AdaptiveAttacker:
     """Runs a payload bank against a sender until the motive is achieved.
-    On WAF blocks it escalates through fingerprint-specific mutation chains."""
+    On WAF blocks it escalates through fingerprint-specific mutation chains.
+
+    `control` is the response to the *same* request with a benign value in
+    place of the payload. When supplied, a payload only counts as a hit if
+    the motive fires for it and does *not* fire for the control — which is
+    what separates "the payload did this" from "this page says that anyway".
+    """
 
     def __init__(self, sender, motive, waf=None, max_direct=None,
-                 max_mutants=14, on_attempt=None):
+                 max_mutants=14, on_attempt=None, control=None):
         self.sender = sender
         self.motive = motive
         self.waf = waf or "Unknown"
         self.max_direct = max_direct
         self.max_mutants = max_mutants
         self.on_attempt = on_attempt
+        self.control = control
         self.evasion_log = []
         self.blocked = 0
+
+    def _control_fires(self, payload):
+        """Would this motive have fired without the payload?"""
+        if self.control is None:
+            return False
+        try:
+            return bool(self.motive(payload, self.control))
+        except Exception:
+            return False
 
     def _chains(self):
         strat = WAF_STRATEGIES.get(self.waf, [])
@@ -456,6 +496,13 @@ class AdaptiveAttacker:
 
     def run(self, payloads):
         res = AttackResult()
+        # Hand the caller the control alongside the result: the proof gate
+        # re-runs its own check against this body, so it must be the response
+        # to the same request with a benign value, not a guess.
+        res.control_body = (getattr(self.control, "body", "") or "")[:60000] \
+            if self.control is not None else None
+        res.control_location = _loc_of(self.control) \
+            if self.control is not None else None
         payloads = list(payloads)
         if self.max_direct:
             payloads = payloads[:self.max_direct]
@@ -467,10 +514,21 @@ class AdaptiveAttacker:
             res.attempts += 1
             v, why = classify_response(resp)
             if self.motive(payload, resp):
-                res.success = payload
-                res.technique = "direct"
-                res.evidence = self._ev(resp, payload)
-                return res
+                if self._control_fires(payload):
+                    # The marker was already present before our payload: not
+                    # evidence. Count it so the caller can report how many
+                    # candidates this rejected.
+                    res.control_rejected += 1
+                    res.control_clean = False
+                else:
+                    res.success = payload
+                    res.technique = "direct"
+                    res.evidence = self._ev(resp, payload)
+                    res.body = getattr(resp, "body", "")[:60000]
+                    res.status = getattr(resp, "status", 0)
+                    res.location = _loc_of(resp)
+                    res.control_clean = self.control is not None
+                    return res
             if v == Verdict.BLOCKED:
                 res.blocked += 1
                 self.blocked += 1
@@ -490,9 +548,17 @@ class AdaptiveAttacker:
                     if mv != Verdict.BLOCKED:
                         self.evasion_log.append(entry)
                         if self.motive(mutant, mresp):
+                            if self._control_fires(mutant):
+                                res.control_rejected += 1
+                                res.control_clean = False
+                                continue
                             res.success = mutant
                             res.technique = "evade:" + "+".join(ops)
                             res.evidence = self._ev(mresp, mutant)
+                            res.body = getattr(mresp, "body", "")[:60000]
+                            res.status = getattr(mresp, "status", 0)
+                            res.location = _loc_of(mresp)
+                            res.control_clean = self.control is not None
                             return res
                     else:
                         self.evasion_log.append(entry)
@@ -523,20 +589,75 @@ class AdaptiveAttacker:
                                                     frag.replace("\n", " ")[:260])
 
 
-PASSWD_MARKERS = ("root:x:", "root:*:0:0:", "[extensions]", "; for 16-bit app")
+def _loc_of(resp):
+    """Lower-cased Location header, or "" — the whole proof for a redirect."""
+    try:
+        h = getattr(resp, "headers", None) or {}
+        for k, v in h.items():
+            if str(k).lower() == "location":
+                return str(v)
+    except Exception:
+        pass
+    return ""
+
+
+PASSWD_MARKERS = ("root:x:", "root:*:0:0:", "root:!:0:0:", "daemon:x:",
+                  "bin:x:", "root:$1$", "root:$6$", "root:$y$", "root:$2y$",
+                  "[extensions]", "; for 16-bit app support", "[fonts]")
 SQL_ERR_RE = re.compile(r"(sql syntax|warning: mysql_|unclosed quotation|"
                         r"quoted string not properly terminated|pg::|fatal: syntax|"
                         r"sqlite3::|unrecognized token|ora-\d{5}|odbc.*driver|"
-                        r"invalid query|mysql_fetch)", re.I)
-UID_RE = re.compile(r"uid=\d+\([^)]+\)")
-WIN_RE = re.compile(r"(?im)^([a-z]+\\)?[a-z0-9_$.\-]{2,32}$")
+                        r"invalid query|mysql_fetch|mysqli_|"
+                        r"you have an error in your sql)", re.I)
+# `id` prints "uid=0(root) gid=0(root) groups=0(root)". Requiring the gid too
+# (the old regex stopped at "uid=N(name)") makes it far less likely to match
+# prose or a log line that merely mentions a uid.
+UID_RE = re.compile(r"uid=\d+\([^)]+\)\s+gid=\d+\([^)]+\)")
+UNAME_RE = re.compile(r"Linux\s+\S+\s+\d+\.\d+\.\d+[^\n]{0,80}")
+WIN_RE = re.compile(r"(?im)^(nt authority|.*\\[a-z0-9_$.\-]{2,32})$")
+# Base64 blobs (php://filter output is base64 of the target file).
+_B64_RE = re.compile(r"[A-Za-z0-9+/=]{40,}")
+
+
+def _b64_decoded(body):
+    """Decode any base64 blob in `body` and return the decoded text.
+
+    The LFI bank sends `php://filter/convert.base64-encode/resource=/etc/passwd`
+    but the marker check could never see the result, so a working payload was
+    scored as a miss. Decoding first is what makes the engine able to read
+    its own successful attacks.
+    """
+    import base64 as _b64
+    for blob in _B64_RE.findall((body or "")[:120_000]):
+        try:
+            raw = _b64.b64decode(blob + "=" * (-len(blob) % 4), validate=False)
+        except Exception:
+            continue
+        text = raw.decode("utf-8", "replace")
+        if any(m in text for m in PASSWD_MARKERS) or UID_RE.search(text) or \
+                UNAME_RE.search(text):
+            return text
+    return ""
 
 
 def motive_xss_factory(nonce):
-    return lambda p, r: bool(nonce) and nonce in getattr(r, "body", "")
+    """XSS motive: the nonce must land somewhere a browser would execute it."""
+    def motive(p, r):
+        if not nonce:
+            return False
+        body = getattr(r, "body", "") or ""
+        idx = body.find(nonce)
+        while idx >= 0:
+            ok, _ = _exec_ctx(body, idx)
+            if ok:
+                return True
+            idx = body.find(nonce, idx + 1)
+        return False
+    return motive
 
 
 def motive_reflect(p, r):
+    """Bare reflection — an echo. NOT XSS: use motive_xss_factory for that."""
     return p in getattr(r, "body", "")
 
 
@@ -545,13 +666,22 @@ def motive_sqli(p, r):
 
 
 def motive_lfi(p, r):
-    body = getattr(r, "body", "")
-    return any(m in body for m in PASSWD_MARKERS)
+    body = getattr(r, "body", "") or ""
+    if any(m in body for m in PASSWD_MARKERS):
+        return True
+    decoded = _b64_decoded(body)
+    return bool(decoded) and any(m in decoded for m in PASSWD_MARKERS)
 
 
 def motive_rce(p, r):
-    return bool(UID_RE.search(getattr(r, "body", ""))) or \
-        bool(re.search(r"(?m)^(NT AUTHORITY|nt authority)", getattr(r, "body", "")))
+    body = getattr(r, "body", "") or ""
+    if UID_RE.search(body) or UNAME_RE.search(body):
+        return True
+    if WIN_RE.search(body):
+        return True
+    decoded = _b64_decoded(body)
+    return bool(decoded) and bool(UID_RE.search(decoded) or
+                                  UNAME_RE.search(decoded))
 
 
 def motive_ssti(marker):

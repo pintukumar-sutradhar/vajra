@@ -16,7 +16,7 @@ import os
 import socket
 import struct
 
-from core.database import Finding
+from core import proof as P
 from core.crypto_mini import (nbss, smb2_header, smb2_negotiate,
                               ntlmssp_negotiate, ntlmssp_auth,
                               parse_ntlm_challenge, SMB_STATUS)
@@ -210,9 +210,10 @@ def _ms17_assessment(engine, host):
     try:
         res = check_ms17_010(host)
     except Exception as e:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, mod, "coverage", "info",
-            "SMBv1 probe interrupted: %r" % e, confidence="possible"))
+            "SMBv1 probe interrupted: %r" % e, cls="ad_misconfig",
+            proof=P.observation("SMBv1 probe failed"))
         return
     if not res["v1"]:
         if res.get("got_smb"):
@@ -223,20 +224,22 @@ def _ms17_assessment(engine, host):
             title = "SMB port did not answer SMBv1 negotiate"
             detail = ("No legacy SMB1 negotiation response on the service — "
                       "non-SMB service or SMB blocked for the probe.")
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, mod, "hardening", "info", title,
-            detail=detail, confidence="firm"))
+            detail=detail, cls="ad_misconfig",
+            proof=P.observation("no SMBv1 dialect negotiated"))
         return
     engine.log.finding("[smb] SMBv1 dialect idx=%s on %s%s" %
                        (res["dialect_idx"], host,
                         (" (%s)" % res["os"]) if res["os"] else ""))
-    engine.db.add_finding(Finding(
+    engine.record(
         t.display, mod, "misconfiguration", "medium",
         "Legacy SMBv1 dialect ENABLED%s" %
         (" (%s)" % res["os"] if res["os"] else ""),
         detail="SMBv1 carries WannaCry/NotPetya-era exposure (MS17-010 "
                "family) and should be removed unless strictly required.",
-        confidence="firm"))
+        cls="ad_misconfig", proof=P.observation(
+            "SMBv1 dialect idx=%s" % res["dialect_idx"]))
     if res["vuln"] is True:
         ev_rel = ""
         try:
@@ -244,7 +247,7 @@ def _ms17_assessment(engine, host):
                 "ms17_010_resource.rc", _msf_resource(t.scan_host()))
         except Exception:
             pass
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, mod, "verified-exposure", "critical",
             "[VERIFIED] MS17-010 ETERNALBLUE — host is exploitable",
             detail=("PeekNamedPipe transaction returned "
@@ -258,23 +261,27 @@ def _ms17_assessment(engine, host):
                       res["status_name"]),
             remediation="Patch MS17-010 immediately or disable SMBv1; "
                         "isolate the host.",
-            confidence="firm"))
+            # MS17-010 proven by the STATUS_INSUFF_SERVER_RESOURCES marker —
+            # "ad" (not ad_misconfig) so the verified critical survives.
+            cls="ad", proof=P.marker(res["status_name"]))
         engine.log.finding("[smb] MS17-010 VERIFIED on %s (%s)" %
                            (host, res["method"]))
     elif res["vuln"] is False:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, mod, "hardening", "info",
             "MS17-010 verified NOT exploitable (%s)" % res["method"],
             detail="Host keeps SMBv1 enabled but is patched against "
                    "EternalBlue; still recommend disabling SMBv1.",
-            confidence="firm"))
+            cls="ad_misconfig", proof=P.observation(
+                "MS17-010 clean (%s)" % res["method"]))
     else:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, mod, "coverage", "info",
             "MS17-010 could not be auto-verified (nmap/impacket missing)",
             detail="SMBv1 is enabled — confirm MS17-010 manually since "
                    "no local verifier was available.",
-            confidence="possible"))
+            cls="ad_misconfig", proof=P.observation(
+                "SMBv1 enabled, no verifier"))
 
 
 class SmbSession:
@@ -398,20 +405,22 @@ def run(engine):
     info = ntlm_fingerprint(host)
     creds = getattr(engine, "ad_creds", {})
     if not info:
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "ad.smb_recon", "coverage", "info",
             "SMB reachable but NTLM handshake not parsed",
-            confidence="possible"))
+            cls="ad_misconfig", proof=P.observation(
+                "SMB 445 reachable, no NTLM challenge"))
         _ms17_assessment(engine, host)
         return
     disp = info.pop("_display", "")
     nice = "\n".join("%-16s %s" % (k, v) for k, v in sorted(info.items()))
-    engine.db.add_finding(Finding(
+    engine.record(
         t.display, "ad.smb_recon", "recon", "info",
         "NTLM fingerprint extracted%s" % (" — " + disp if disp else ""),
         detail="Challenge-response handshake discloses internal naming "
                "without any credentials.",
-        evidence=nice, confidence="firm"))
+        evidence=nice, cls="ad", proof=P.marker(
+            info.get("challenge", "")[:32]))
     if disp:
         dnshost = info.get("dns-domain", "")
         if dnshost and not ad.get("domain"):
@@ -424,7 +433,7 @@ def run(engine):
                                  nthash=creds.get("nthash"),
                                  domain=ad.get("domain", ""))
         valid = "VALID" in st.upper()
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "ad.smb_recon",
             "credentials" if valid else "recon",
             "critical" if valid else "info",
@@ -435,7 +444,9 @@ def run(engine):
             if valid else "Authentication result: " + st,
             evidence="user=%s method=%s" % (
                 user, "nthash" if creds.get("nthash") else "password"),
-            confidence="firm"))
+            cls="ad" if valid else "ad_misconfig",
+            proof=(P.auth("%s@%s" % (user, ad.get("domain", "?")))
+                   if valid else P.observation("creds rejected by SMB")))
         if valid:
             box = engine.state.setdefault("creds", [])
             box.append(("ad/smb", user,

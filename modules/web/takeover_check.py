@@ -10,7 +10,8 @@ answer counts, so flaky DNS never fabricates a takeover."""
 import os
 import socket
 
-from core.database import Finding
+
+from core import proof as P
 from modules.recon.subdomain_enum import _direct_a
 
 # provider CNAME -> (label, provider-verify-pattern)
@@ -174,7 +175,7 @@ def run(engine):
         if cname.endswith(LEGACY_SUFFIX):
             sev = "high"
         found.append((host, cname, label, sev))
-        engine.db.add_finding(Finding(
+        engine.record(
             t.display, "web.takeover", "dangling-cname", sev,
             "Potential subdomain takeover: %s (dangling CNAME → %s)"
             % (host, cname),
@@ -184,7 +185,9 @@ def run(engine):
                    (host, cname, label),
             remediation="Remove obsolete DNS records or claim/own the target "
                         "resource; set up subdomain takeover monitoring.",
-            confidence="possible"))
+            cls="takeover",
+            proof=P.marker("%s -> %s" % (host, cname),
+                           note="dangling CNAME to %s" % label))
         engine.log.finding("[takeover] %s -> %s (dangling %s)"
                            % (host, cname, label))
     if not found and checked:
