@@ -51,10 +51,12 @@ ENGINES = {
     "infrastructure": {
         "label": "Infrastructure",
         "icon": "app-infra",
-        "description": "Network, host and service security assessment.",
+        "description": "Network, host, service and discovered web application assessment.",
         "target_kinds": ["ip", "cidr", "hostname", "domain"],
         "profiles": ["quick", "full"],
         "params_schema": {
+            "webapp_checks": {"label": "Assess discovered web applications",
+                              "type": "bool", "default": True},
             "udp": {"label": "UDP service probes", "type": "bool", "default": False},
             "syn": {"label": "Raw SYN scan (root)", "type": "bool", "default": False},
             "brute": {"label": "Service credential brute force", "type": "bool", "default": False},
@@ -63,7 +65,7 @@ ENGINES = {
         },
         "cfg": {
             "default_profile": "full",
-            "exclude_modules": ["web.", "ad.", "post."],
+            "exclude_modules": ["ad.", "post."],
             "oob": False,
         },
     },

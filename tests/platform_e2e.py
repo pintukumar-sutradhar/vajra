@@ -254,6 +254,41 @@ def t_audit_ledger():
         assert want in actions, (want, actions)
 
 
+# ---------------------------------------------------- engine cross-coverage
+
+
+def t_engine_cross_coverage():
+    from server.worker import engine_defs as edt
+    from server.worker import driver as drv
+
+    infra = edt.get_engine("infrastructure")
+    webapp = edt.get_engine("webapp")
+    # An IP/cidr/hostname put in Infrastructure must still get its discovered
+    # web applications assessed (web modules must not be excluded).
+    assert not any(x.startswith("web") for x in infra["cfg"]["exclude_modules"]), \
+        infra["cfg"]["exclude_modules"]
+    assert infra["params_schema"]["webapp_checks"]["default"] is True
+    # A URL put in Web Application must keep its server-side checks (no
+    # network-phase exclusions).
+    assert not any(x.startswith("net") for x in webapp["cfg"]["exclude_modules"]), \
+        webapp["cfg"]["exclude_modules"]
+
+    class _T:
+        address = "127.0.0.1"
+
+    def argv_for(params):
+        import pathlib
+        return drv.build_argv(_T(), infra["cfg"], "full", params, {},
+                              pathlib.Path("/tmp/run"), pathlib.Path("/tmp/repo"))
+
+    argv = argv_for({})
+    assert not any(t.startswith("web.") for t in argv), argv
+    argv_off = argv_for({"webapp_checks": False})
+    ex = argv_off[argv_off.index("--exclude-modules") + 1].split(",")
+    assert "web.crawl" in ex, ex
+    assert "network.portscan" not in ex, ex
+
+
 OK = (run("bad credentials rejected", t_bad_login)
       and run("seeded admin login forces password change", t_login)
       and run("session round-trip through /me", t_me)
@@ -268,7 +303,8 @@ OK = (run("bad credentials rejected", t_bad_login)
       and run("last-admin demotion/disable refused", t_last_admin_guard)
       and run("API key auth round-trip", t_api_key)
       and run("findings CSV export", t_csv_export)
-      and run("audit ledger records the lifecycle", t_audit_ledger))
+      and run("audit ledger records the lifecycle", t_audit_ledger)
+      and run("engine cross-coverage rules", t_engine_cross_coverage))
 
 print()
 print("platform API: %s" % ("all checks passed" if OK else "FAILURES"))

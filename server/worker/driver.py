@@ -162,6 +162,8 @@ def build_argv(target, engine_cfg, profile, params, creds, run_dir, repo):
     ex = list(engine_cfg.get("exclude_modules") or [])
     if engine_cfg.get("no_brute"):
         ex.append("network.brute")
+    if params.get("webapp_checks", True) is False:
+        ex.append("web.")
     if ex:
         argv += ["--exclude-modules", ",".join(expand_exclusions(ex))]
     # Re-verification runs only the module(s) that produced the finding(s)

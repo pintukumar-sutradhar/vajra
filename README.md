@@ -82,7 +82,7 @@ profiles and can run **credentialed or unauthenticated** (see below).
 |---|---|---|---|
 | **Web Application** | URL | quick · full · deep | Optional (web login: user / pass / OTP / TOTP) |
 | **API & Microservice** | URL | quick · full · deep | Optional (API login: user / pass / OTP / TOTP) |
-| **Infrastructure** | IP · CIDR · hostname · domain | quick · full | Runs unauthenticated; optional UDP / SYN / brute / aggressive toggles |
+| **Infrastructure** | IP · CIDR · hostname · domain | quick · full | Runs unauthenticated; assesses **discovered web applications** (toggleable), optional UDP / SYN / brute / aggressive toggles |
 | **Active Directory** | domain · hostname · IP | full · deep | Optional (domain user / pass / NT hash) — unauthenticated pass always runs |
 | **External Attack Surface** | domain · URL | recon | Unauthenticated recon module |
 
