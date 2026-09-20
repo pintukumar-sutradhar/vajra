@@ -69,6 +69,12 @@ else
   # soft-404/wildcard hosts, the real issues against the vulnerable one, no XSS
   # on an HTML-escaping parameter, and proof/evidence unit behaviour.
   "$PY" tests/run.py || fail "detection-integrity tests failed"
+
+  step "Platform API tests"
+  # Isolated temp database; exercises auth, lockout, user management, roles,
+  # password rotation, API keys, CSV export and the audit trail over the real
+  # HTTP surface (in-process, no ports bound).
+  "$PY" tests/platform_e2e.py || fail "platform API tests failed"
 fi
 
 step "Webapp build"

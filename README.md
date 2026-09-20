@@ -158,7 +158,9 @@ proxy needed. The active port is remembered (`server/var/port`); the launcher
 auto-picks from `8000 / 8130 / 8080 / 9000`.
 
 > Default login: `admin` / `admin` (override with `VAJRA_ADMIN_PASSWORD` before
-> first boot).
+> first boot). The first sign-in **forces a password change** before the
+> workspace unlocks — expand it via `VAJRA_ADMIN_PASSWORD`, or change it at
+> that first prompt.
 
 ### Launcher commands
 
@@ -173,11 +175,20 @@ vajra --version              version + toolchain check
 ```
 
 **End-to-end verification** (release gate — proof-gate audit, engine
-self-test, hostile detection-integrity fixtures, web build, all in one):
+self-test, hostile detection-integrity fixtures, platform API tests, web
+build, all in one):
 
 ```bash
 bash ./verify.sh        # every gate in fastest-fail order; exit 0 when green
 ```
+
+**Docker** (one image for API + worker):
+
+```bash
+docker compose -f deploy/compose.yml up -d --build
+```
+
+Production guidance (TLS, Postgres, backups, hardening): `docs/DEPLOYMENT.md`.
 
 ---
 
@@ -189,7 +200,8 @@ bash ./verify.sh        # every gate in fastest-fail order; exit 0 when green
 | **Targets** | Asset inventory under test |
 | **Engines** | Scan-type catalog; launch any scan with your choice of profile and credentials |
 | **Scans** | Live queue with SSE progress; open any scan to watch events, findings and the report |
-| **Findings** | Cross-scan triage: severity, confidence, status workflow, PoC screenshots |
+| **Findings** | Cross-scan triage: severity, confidence, status workflow, PoC screenshots, CSV export |
+| **Users** | Members, roles (admin / analyst / auditor), disable & reset — admin only |
 | **Audit** | Immutable activity log |
 | **Reports** | Branded HTML (in-app preview) and PDF download from any completed scan |
 
@@ -228,7 +240,10 @@ issue (URL auto-derived from evidence) and embedded in both exports.
   the capture is kept as evidence.
 - **Real PoC screenshots** rendered into HTML and PDF reports.
 - **Live streaming** of scan events over SSE (no page polling).
-- **Findings lifecycle** and triage workflow (table + Kanban views).
+- **Findings lifecycle** and triage workflow (table + Kanban views) with CSV export.
+- **Membership & roles** — admin-provisioned users (admin / analyst / auditor),
+  per-account lockout after repeated failed logins, forced first-login password
+  change, session revocation on disable or reset.
 - **Branded reports** with executive and technical sections.
 - **Audit trail** (`/api/v1/audit`) for governance.
 - **Command palette + hotkeys** (`Ctrl+K`, `g d/t/s/e/f/a`, `n t/s`, `?`, `Esc`).
@@ -241,13 +256,19 @@ The UI speaks to a FastAPI control plane. Quick reference:
 
 | Resource | Method | Purpose |
 |---|---|---|
-| `/api/v1/auth/login` | POST | Bearer token (default `admin` / `admin`) |
+| `/api/v1/auth/login` | POST | Bearer token (first login forces a password change) |
+| `/api/v1/auth/password` | POST | Change own password (also clears forced change) |
+| `/api/v1/auth/users` | GET/POST | List / create members (admin: `?all=1` for the full roster) |
+| `/api/v1/auth/users/{id}` | PATCH | Edit role, disable, reset password (admin) |
+| `/api/v1/auth/keys` | GET/POST | API-key management (admin) |
 | `/api/v1/engines` | GET | Scan-type catalog with profiles + params schema |
 | `/api/v1/targets` | GET/POST | Asset inventory |
 | `/api/v1/scans` | POST | Launch a scan (engine, profile, params/creds) |
 | `/api/v1/scans/{id}` | GET | Status + progress + findings count |
 | `/api/v1/scans/{id}/events` | GET | SSE live event stream |
 | `/api/v1/scans/{id}/findings` | GET | Finding register (evidence + screenshots) |
+| `/api/v1/findings` | GET | Filterable findings list |
+| `/api/v1/findings/export.csv` | GET | Same filters, as a downloadable CSV |
 | `/api/v1/findings/{id}` | PATCH | Triage status transitions |
 | `/api/v1/reports/{id}/html` | GET | HTML report |
 | `/api/v1/reports/{id}/pdf` | GET | PDF report download |
@@ -316,12 +337,17 @@ Environment variables:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `VAJRA_API_HOST` / `VAJRA_API_PORT` | `0.0.0.0` / `8000` | API bind |
-| `VAJRA_ADMIN_PASSWORD` | `admin` | initial admin password |
+| `VAJRA_API_HOST` / `VAJRA_API_PORT` | `127.0.0.1` / `8000` | API bind (loopback by default; `0.0.0.0` only behind a firewall/proxy) |
+| `VAJRA_ADMIN_PASSWORD` | `admin` | initial admin password (first login forces a change) |
 | `VAJRA_DB_URL` | `sqlite:///server/var/platform.db` | platform database |
 | `VAJRA_PLATFORM_VAR` | `server/var` | runtime directory (runs + artifacts) |
 | `VAJRA_TOKEN_TTL_HOURS` | `12` | bearer-token lifetime |
 | `VAJRA_CORS_ORIGINS` | `*` | allowed origins (comma list) |
+| `VAJRA_SESSION_SECURE` | `0` | `1` marks the session cookie `Secure` (use behind TLS) |
+| `VAJRA_LOGIN_MAX_ATTEMPTS` | `5` | failed logins before temporary lockout |
+| `VAJRA_LOGIN_LOCKOUT_SECONDS` | `900` | lockout window |
+| `VAJRA_PASSWORD_MIN_LENGTH` | `10` | minimum password length |
+| `VAJRA_WORKERS` | `3` | concurrent scans per worker |
 | `VITE_API_TARGET` *(webapp)* | `http://127.0.0.1:8000` | dev proxy target for the UI |
 
 ---

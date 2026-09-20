@@ -27,6 +27,19 @@ class Settings:
         self.worker_interval = float(
             os.environ.get("VAJRA_WORKER_INTERVAL", "2.0"))
         self.max_workers = int(os.environ.get("VAJRA_WORKERS", "3"))
+        # Login hardening: per-account brute-force lockout.
+        self.login_max_attempts = int(
+            os.environ.get("VAJRA_LOGIN_MAX_ATTEMPTS", "5"))
+        self.login_lockout_seconds = int(
+            os.environ.get("VAJRA_LOGIN_LOCKOUT_SECONDS", "900"))
+        self.password_min_length = int(
+            os.environ.get("VAJRA_PASSWORD_MIN_LENGTH", "10"))
+        # Session cookie Secure flag (set VAJRA_SESSION_SECURE=1 behind TLS).
+        self.session_cookie_secure = \
+            os.environ.get("VAJRA_SESSION_SECURE", "0") == "1"
+        # API bind address. Defaults to loopback; set VAJRA_API_HOST=0.0.0.0
+        # (or an explicit interface) to expose beyond the local host.
+        self.api_host = os.environ.get("VAJRA_API_HOST", "127.0.0.1")
 
     def db_is_sqlite(self):
         return self.db_url.startswith("sqlite")

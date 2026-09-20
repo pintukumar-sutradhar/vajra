@@ -3,8 +3,9 @@ import { createRoot } from 'react-dom/client'
 import './theme.css'
 import { api, loadBrand, token, getBrand } from './api.js'
 import { ToastHost, useToast, Logo } from './components.jsx'
-import { IcoGauge, IcoTarget, IcoScan, IcoFindings, IcoEngine, IcoOut, IcoDoc, IcoClock } from './icons.jsx'
+import { IcoGauge, IcoTarget, IcoScan, IcoFindings, IcoEngine, IcoOut, IcoDoc, IcoClock, IcoUser } from './icons.jsx'
 import Login from './views/Login.jsx'
+import PasswordChange from './views/PasswordChange.jsx'
 import Dashboard from './views/Dashboard.jsx'
 import Targets from './views/Targets.jsx'
 import Engines from './views/Engines.jsx'
@@ -13,6 +14,7 @@ import ScanDetail from './views/ScanDetail.jsx'
 import Findings from './views/Findings.jsx'
 import Schedules from './views/Schedules.jsx'
 import Audit from './views/Audit.jsx'
+import Users from './views/Users.jsx'
 
 const NAV = [
   { id: 'dashboard', label: 'Dashboard', icon: <IcoGauge /> },
@@ -21,6 +23,7 @@ const NAV = [
   { id: 'engines', label: 'Engines', icon: <IcoEngine /> },
   { id: 'findings', label: 'Findings', icon: <IcoFindings /> },
   { id: 'schedules', label: 'Schedules', icon: <IcoClock /> },
+  { id: 'users', label: 'Users', icon: <IcoUser />, admin: true },
   { id: 'audit', label: 'Audit', icon: <IcoDoc /> },
 ]
 
@@ -137,6 +140,10 @@ function Shell() {
 
   if (!checked) return <div className="login-wrap"><div className="muted">Loading…</div></div>
   if (!user) return <Login onLogin={login} />
+  if (user.must_change_password) {
+    return <PasswordChange user={user}
+      onDone={(u) => { setUser(u) }} />
+  }
 
   async function logout() {
     try { await api('/v1/auth/logout', { method: 'POST' }) } catch (e) {}
@@ -146,7 +153,8 @@ function Shell() {
   }
 
   const page = route.page || 'dashboard'
-  const activeNav = NAV.find((n) => n.id === page)
+  const visibleNav = NAV.filter((n) => !n.admin || user.role === 'admin')
+  const activeNav = visibleNav.find((n) => n.id === page)
 
   return (
     <div className="shell">
@@ -160,7 +168,7 @@ function Shell() {
         </div>
         <nav className="nav">
           <div className="group">Workspace</div>
-          {NAV.map((n) => (
+          {visibleNav.map((n) => (
             <button key={n.id} className={'navitem' + (page === n.id ? ' active' : '')}
               onClick={() => nav(n.id)}>
               {n.icon} {n.label}
@@ -195,6 +203,8 @@ function Shell() {
           {page === 'scans' && (route.param ? <ScanDetail id={route.param} /> : <Scans onOpen={(id) => nav('scans', id)} />)}
           {page === 'findings' && <Findings />}
           {page === 'schedules' && <Schedules />}
+          {page === 'users' && (user.role === 'admin'
+            ? <Users /> : <div className="nothing">Not available for this role.</div>)}
           {page === 'audit' && <Audit />}
         </div>
       </main>

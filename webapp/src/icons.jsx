@@ -37,6 +37,7 @@ export const IcoDoc = () => <S duotone><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0
 export const IcoClose = () => <S><path d="M18 6L6 18M6 6l12 12" /></S>
 export const IcoChev = () => <S><path d="M9 18l6-6-6-6" /></S>
 export const IcoClock = () => <S duotone><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></S>
+export const IcoUser = () => <S duotone><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6" /></S>
 export const IcoLogo = () => (
   <svg width="34" height="34" viewBox="0 0 64 64" aria-hidden="true">
     <defs>

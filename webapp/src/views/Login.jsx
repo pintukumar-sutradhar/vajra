@@ -9,7 +9,7 @@ const FEATURES = [
 ]
 
 export default function Login({ onLogin }) {
-  const [username, setUsername] = useState('admin')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [show, setShow] = useState(false)
   const [error, setError] = useState('')
@@ -82,7 +82,7 @@ export default function Login({ onLogin }) {
                 <span className="inicon">⌁</span>
                 <input id="login-user" value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="admin" autoComplete="username" autoFocus />
+                  placeholder="username" autoComplete="username" autoFocus />
               </div>
             </div>
             <div className="field">
@@ -103,7 +103,8 @@ export default function Login({ onLogin }) {
               {busy ? 'Signing in…' : 'Sign in'}
             </button>
             <div className="login-hint">
-              Evaluation build — default credentials <code>admin / admin</code>
+              Authorized security testing only — every scan records against an
+              authorization proof.
             </div>
           </form>
           <div className="login-foot">

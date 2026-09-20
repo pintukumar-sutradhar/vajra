@@ -27,11 +27,16 @@ def seed(db):
         db.flush()
     if not db.query(models.User).filter(
             models.User.username == "admin").first():
+        # Default-password bootstrap => force a change on first login. A
+        # VAJRA_ADMIN_PASSWORD env override is treated as chosen by the
+        # operator and does not force one.
         db.add(models.User(org_id=org.id, username="admin",
                            display_name="Administrator",
                            password_hash=hash_password(
                                settings.admin_password),
-                           role="admin"))
+                           role="admin",
+                           must_change_password=(
+                               settings.admin_password == "admin")))
     db.commit()
 
 

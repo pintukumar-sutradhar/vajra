@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { api } from '../api.js'
+import { api, apiBlob } from '../api.js'
 import {
   Severity, Confidence, Status, Empty, Spinner, Modal, useToast,
 } from '../components.jsx'
@@ -208,6 +208,28 @@ export default function Findings() {
     )
   }
 
+  async function exportCsv() {
+    try {
+      const p = new URLSearchParams()
+      if (sev) p.set('severity', sev)
+      if (status) p.set('status', status)
+      if (mod) p.set('engine_id', mod)
+      if (q) p.set('q', q)
+      const blob = await apiBlob('/v1/findings/export.csv?' + p.toString())
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'vajra_findings.csv'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      shout.push('CSV download started', 'ok')
+    } catch (e) {
+      shout.push(e.message, 'err', 6000)
+    }
+  }
+
   const queryStatus = status ? '&status=' + encodeURIComponent(status) : ''
 
   return (
@@ -249,6 +271,8 @@ export default function Findings() {
         <a className="btn" title="Consolidated PDF report across every target" target="_blank"
           rel="noreferrer" href={'/api/v1/reports/consolidated/pdf' + queryStatus}>
           <IcoDoc style={{ transform: 'rotate(90deg)' }} /> PDF</a>
+        <button className="btn" title="Download the current filter as CSV" onClick={exportCsv}>
+          CSV</button>
         <span className="chip">found {byCount.total}</span>
         <div style={{ display: 'flex', gap: 6 }}>
           <button className="btn" onClick={() => setView('table')} disabled={view === 'table'}>Table</button>

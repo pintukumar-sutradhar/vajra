@@ -1,0 +1,43 @@
+# VAJRA compose — API + worker running from the same image, sharing one data
+# volume. Tune VAJRA_ADMIN_PASSWORD and VAJRA_WORKERS (the operator must
+# always set the admin password out-of-band for a real deploy).
+#
+#   docker compose -f deploy/compose.yml up -d --build
+#
+services:
+  api:
+    image: vajra
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    environment:
+      VAJRA_MODE: api
+      VAJRA_API_HOST: 0.0.0.0
+      VAJRA_API_PORT: "8000"
+      VAJRA_ADMIN_PASSWORD: "${VAJRA_ADMIN_PASSWORD:-admin}"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - vajra-var:/var/lib/vajra
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import sys, urllib.request; \
+              sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+
+  worker:
+    image: vajra
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      VAJRA_MODE: worker
+      VAJRA_WORKERS: "${VAJRA_WORKERS:-3}"
+    volumes:
+      - vajra-var:/var/lib/vajra
+
+volumes:
+  vajra-var:

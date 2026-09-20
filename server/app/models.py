@@ -37,6 +37,14 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(200), nullable=False)
     role: Mapped[str] = mapped_column(String(20), default="analyst")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # First-login password change (seeded default admin) and password age.
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_password_change_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime, nullable=True)
+    # Brute-force lockout bookkeeping.
+    failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime,
                                                           default=_utcnow)
     last_login_at: Mapped[datetime.datetime | None] = mapped_column(

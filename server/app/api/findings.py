@@ -1,8 +1,11 @@
 """Findings: organization-wide list/filter/export + triage lifecycle."""
 
+import csv
 import datetime
+import io
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -121,6 +124,60 @@ def list_findings(severity: str = "", status: str = "",
     rows = base.order_by(order).limit(min(limit, 500)).all()
     users = _org_users(db, user.org_id)
     return [_finding_out(f, users) for f in rows]
+
+
+@router.get("/export.csv")
+def export_csv(severity: str = "", status: str = "",
+               scan_id: int = 0, engine_id: str = "",
+               target_id: int = 0, q: str = "", module: str = "",
+               assignee_id: int = 0, min_risk: float = 0.0,
+               asset: str = "", overdue: str = "",
+               db: Session = Depends(get_db),
+               user=Depends(current_user)):
+    """Same filtering as the list view, as a downloadable CSV."""
+    base = db.query(models.Finding).filter(
+        models.Finding.org_id == user.org_id)
+    base = _apply_filters(base, {"severity": severity, "status": status,
+                                 "scan_id": scan_id,
+                                 "engine_id": engine_id,
+                                 "target_id": target_id, "q": q,
+                                 "module": module, "assignee_id": assignee_id,
+                                 "min_risk": min_risk, "asset": asset,
+                                 "overdue": overdue})
+    rows = base.order_by(models.Finding.id.asc()).all()
+    users = _org_users(db, user.org_id)
+
+    def assignee(f):
+        a = users.get(f.assignee_id)
+        return a["username"] if a else ""
+
+    cols = ["id", "scan_id", "engine_id", "title", "severity", "confidence",
+            "risk", "status", "category", "asset", "cwe", "cvss",
+            "source_module", "assignee", "due_date", "first_seen",
+            "last_seen", "state_changed_at", "recheck_outcome",
+            "proof", "remediation"]
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(cols)
+    for f in rows:
+        w.writerow([f.id, f.scan_id, f.engine_id, f.title, f.severity,
+                    f.confidence, _finding_out(f, users)["risk"], f.status,
+                    f.category, f.asset, f.cwe, f.cvss, f.source_module,
+                    assignee(f),
+                    str(f.due_date) if f.due_date else "",
+                    str(f.first_seen), str(f.last_seen),
+                    str(f.state_changed_at) if f.state_changed_at else "",
+                    getattr(f, "recheck_outcome", "") or "",
+                    getattr(f, "proof", "") or "",
+                    f.remediation])
+    data = buf.getvalue()
+    fname = "vajra_findings_%s.csv" % (
+        datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S"))
+    return StreamingResponse(
+        iter([data]),
+        media_type="text/csv",
+        headers={"Content-Disposition":
+                 "attachment; filename=%s" % fname})
 
 
 class TriageIn(BaseModel):
