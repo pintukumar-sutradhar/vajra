@@ -42,6 +42,8 @@
 - [Reporting](#reporting)
 - [Capabilities](#capabilities)
 - [API](#api)
+- [API documentation](#api-documentation)
+- [Health & observability](#health--observability)
 - [Architecture](#architecture)
 - [CLI status (deprecated)](#cli-status-deprecated)
 - [Engine capability](#engine-capability)
@@ -273,6 +275,70 @@ The UI speaks to a FastAPI control plane. Quick reference:
 | `/api/v1/reports/{id}/html` | GET | HTML report |
 | `/api/v1/reports/{id}/pdf` | GET | PDF report download |
 | `/api/v1/reports/{id}/static/{path}` | GET | Report + evidence assets (auth-gated) |
+
+---
+
+## API documentation
+
+The control plane ships a full OpenAPI specification served by FastAPI:
+
+- **Swagger UI** — `http://<host>:<port>/docs`
+- **ReDoc** — `http://<host>:<port>/redoc`
+
+Both reflect every endpoint (methods, parameters, response schemas,
+error codes) and are kept in sync with the code automatically.
+
+---
+
+## Health & observability
+
+### Health probe
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+Returns the platform status plus a database reachability check:
+
+```json
+{
+  "ok": true,
+  "product": "VAJRA",
+  "edition": "",
+  "version": "0.1.0",
+  "db": "ok"
+}
+```
+
+If the database is unreachable the endpoint returns **HTTP 503** with
+`"db": "error: …"`, so orchestrators (Docker healthcheck, Kubernetes
+liveness/readiness, load balancers) can detect a broken platform without
+hitting an endpoint that happens to work.
+
+### Structured logs
+
+Every completed request is logged as a single line:
+
+```text
+[request] GET /api/v1/health 200 2ms a3f7c9e1b2d45678
+```
+
+Format: `[request] <method> <path> <status> <elapsed_ms> <request_id>`.
+
+### Request correlation
+
+Each request is assigned a unique `X-Request-ID` (16-hex chars). If a
+client does not supply one, the server generates it and returns it in
+the response header. Use it to correlate a client call with the
+server log line and, when applicable, with worker log entries.
+
+---
+
+## Changelog
+
+| Version | Date | Changes |
+|---|---|---|
+| 0.1.0 | 2026-09-20 | Standardized API error envelope, enhanced health probe with DB check, request ID logging, OpenAPI metadata |
 
 ---
 
