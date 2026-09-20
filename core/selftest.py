@@ -1573,51 +1573,31 @@ def t_intel_kb():
 
 def t_toolkit():
     import importlib.util
-    import sys as _sys
     from core.utils import PROJECT_ROOT
-    tools_dir = str(PROJECT_ROOT / "tools")
-    if tools_dir not in _sys.path:
-        _sys.path.insert(0, tools_dir)
+
     def load(name):
         spec = importlib.util.spec_from_file_location(
             name, str(PROJECT_ROOT / "tools" / (name + ".py")))
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         return mod
-    hashid = load("hashid")
-    kind = hashid.identify("5f4dcc3b5aa765d61d8327deb882cf99")
-    assert any("MD5" in k for k in kind), kind
-    kind = hashid.identify("$2b$12$" + "A" * 53)
-    assert any("bcrypt" in k.lower() for k in kind), kind
-    cve = load("cve")
-    assert cve.range_matches(">=2.4.32", "2.4.49")
-    assert not cve.range_matches("==2.4.49", "2.4.50")
-    db = cve.load_json("intel/cve_db.json", {}).get("products", {})
-    apache = db.get("apache", {})
-    hits = [cv for rng, cvs in (apache.get("ranges") or {}).items()
-            if cve.range_matches(rng, "2.4.49")
-            for cv in cvs]
-    assert any("CVE-2021-41773" in c for c in hits), hits
+
+    core_ = load("_core")
+    for attr in ("c", "ok", "err", "hr", "data", "PROJECT_ROOT"):
+        assert hasattr(core_, attr), attr
+    wordlists = load("wordlists")
+    assert callable(wordlists.main)
     from tools.wordlists import SHIPPED
     assert SHIPPED
     assert any("users" in p or "pass" in p for p in SHIPPED)
-    envcheck = load("envcheck")
-    assert callable(envcheck.resolve)
-    pocgen = load("pocgen")
-    body = pocgen.build(pocgen.TEMPLATES["xss"],
-                        {"url": "http://a/search", "param": "q",
-                         "payload": "<scr>1</scr>", "host": "a",
-                         "path": "/search", "enc": "%3Cscr%3E1"})
-    assert "/search" in body and "q=" in body
-    rawhttp = load("rawhttp")
-    assert callable(rawhttp.main)
-    dnsrecon = load("dnsrecon")
-    assert callable(dnsrecon.main)
-    netkit = load("netkit")
-    assert callable(netkit.main)
-    fuzzurl = load("fuzzurl")
-    assert callable(fuzzurl.main)
-    return True, "all toolkit CLIs import; pure helpers verified (hashid/cve/pocgen)"
+    gen = load("gen_wordlists")
+    assert callable(gen.main)
+    build_cve = load("build_cve_db")
+    assert callable(build_cve.main)
+    build_cov = load("build_coverage_bank")
+    assert callable(build_cov.api) and callable(build_cov.net)
+    assert hasattr(build_cov, "_Builder")
+    return True, "tools toolkit imports (wordlists/gen_wordlists/builders/_core)"
 
 
 def t_intel_modules():

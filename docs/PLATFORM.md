@@ -148,7 +148,8 @@ server/app/        config, db, models, security, audit + api/* routers, main
 server/worker/     headless scan driver + engine templates + queue intake
 server/var/        runtime data (sqlite, encrypted secret key, scan runs) - gitignored
 server/run_api.py / run_worker.py   entry points
-server/smoke.py    end-to-end Phase-1 verification (real engine scan)
+tests/run.py       detection-integrity fixtures (engine-level release gate)
+verify.sh          one-shot release gate (syntax, proof audit, tests, web)
 webapp/            React + Vite SPA            (Phase 2)
 deploy/            compose.db.yml (optional Postgres); app containers (Phase 4)
 docs/PLATFORM.md   this plan
@@ -165,9 +166,9 @@ findings+events+reports persisted; SSE progress; authorization gate.
 **Milestone:** start a web scan via API on a target and read back findings +
 report. selftest stays 56/56.
 
-**STATUS: DONE (2026-09-08)** — verified end-to-end by `server/smoke.py`
-(20 checks, real engine scan of a local target: findings harvested,
-triage transitions, report served). Core selftest still 56/56.
+**STATUS: DONE (2026-09-08)** — verified end-to-end (real engine scan of a
+local target: findings harvested, triage transitions, report served). Gate is
+`verify.sh` + `tests/run.py`; core selftest still 56/56.
 
 Delivered:
 - FastAPI control plane (`server/app/`): org/user/session/API-key auth

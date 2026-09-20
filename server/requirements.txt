@@ -11,9 +11,6 @@ cryptography>=42.0
 fpdf2>=2.8
 pillow>=10.0
 
-# Test client used by server/smoke.py (the harness).
-httpx2>=0.1.0
-
 # PoC screenshots (headless Chromium). Browsers: `.venv/bin/python -m playwright install chromium`
 playwright>=1.40
 

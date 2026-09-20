@@ -172,13 +172,11 @@ vajra --check                print status / exit code
 vajra --version              version + toolchain check
 ```
 
-**End-to-end verification** (standalone harness — spins up a local web app and
-runs a real engine scan through the full API → queue → worker → harvest →
-report path):
+**End-to-end verification** (release gate — proof-gate audit, engine
+self-test, hostile detection-integrity fixtures, web build, all in one):
 
 ```bash
-cd server
-.venv/bin/python smoke.py        # 34 checks, green exit 0
+bash ./verify.sh        # every gate in fastest-fail order; exit 0 when green
 ```
 
 ---
