@@ -85,6 +85,40 @@ def claim_one(db, worker_name):
     return job
 
 
+def scheduler_tick():
+    """Fires any schedules whose next_run is due: enqueues a Scan exactly like
+    a manual one, then advances next_run by the interval. Cheap enough to run
+    on every worker poll — an empty check is a single indexed query."""
+    db = SessionLocal()
+    try:
+        now = _utcnow()
+        due = db.query(models.Schedule).filter(
+            models.Schedule.enabled.is_(True),
+            models.Schedule.next_run.is_not(None),
+            models.Schedule.next_run <= now).all()
+        if not due:
+            return
+        for s in due:
+            target = db.get(models.Target, s.target_id)
+            if target is None or target.archived:
+                s.enabled = False
+                continue
+            scan = models.Scan(org_id=s.org_id, target_id=s.target_id,
+                               engine_id=s.engine_id, profile=s.profile,
+                               params=dict(s.params or {}),
+                               started_by=s.created_by, status="pending")
+            db.add(scan)
+            db.flush()
+            db.add(models.JobItem(scan_id=scan.id, status="queued"))
+            s.last_run_at = now
+            s.last_scan_id = scan.id
+            s.next_run = now + datetime.timedelta(
+                hours=max(0.25, float(s.interval_hours or 24.0)))
+        _commit_retry_commit(db)
+    finally:
+        db.close()
+
+
 def tick(worker_name=None):
     """Process one queued job if any; returns the scan id or None."""
     from .driver import run_scan
@@ -142,6 +176,10 @@ def worker_main():
     while True:
         try:
             reclaim_orphans(name)
+            scheduler_tick()
+        except Exception as exc:
+            print("[worker] scheduler error: %s" % exc)
+        try:
             started = tick(name)
             if started:
                 print("[worker] scan %s finished" % started)

@@ -14,6 +14,7 @@ import os
 from fpdf import FPDF
 
 from .config import BRAND
+from .models import compute_risk
 
 SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"]
 SEVERITY_COLOR = {
@@ -123,6 +124,20 @@ def _ranked(findings):
 def _module_label(f):
     return (getattr(f, "module_label", None)
             or (f.source_module or ""))
+
+
+def _risk_of(f):
+    return round(float(getattr(f, "risk", 0.0) or 0.0), 1) or compute_risk(
+        f.severity, f.confidence, f.cap)
+
+
+def _status_filtered(findings, status_filter):
+    if not status_filter:
+        return [f for f in findings if f.status != "fixed"]
+    wanted = set(s.strip().lower() for s in status_filter.split(",") if s.strip())
+    if not wanted:
+        return [f for f in findings if f.status != "fixed"]
+    return [f for f in findings if (f.status or "").lower() in wanted]
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +285,12 @@ def _pdf_finding(pdf, i, total, f, bundle):
     if f.confidence:
         meta.append(("Confidence", CONFIDENCE_LABEL.get(
             f.confidence, f.confidence.title())))
+    meta.append(("Risk", "%.1f / 10" % _risk_of(f)))
+    if getattr(f, "recheck_outcome", ""):
+        meta.append(("Re-check", ("Reproduced" if f.recheck_outcome ==
+                                  "reproduced" else "Not reproduced")))
+    if getattr(f, "due_date", None):
+        meta.append(("Due", _fmt(f.due_date)))
     if f.cvss:
         meta.append(("CVSS", f.cvss))
     if f.cwe:
@@ -691,7 +712,13 @@ def _html_finding(f, fnum, bundle):
                                             (f.confidence or "-").title())),
         ("CVSS", f.cvss or "-"),
         ("CWE", f.cwe or "-"),
+        ("Risk", "%.1f / 10" % _risk_of(f)),
     ]
+    if getattr(f, "recheck_outcome", ""):
+        meta.append(("Re-check", ("Reproduced" if f.recheck_outcome ==
+                                  "reproduced" else "Not reproduced")))
+    if getattr(f, "due_date", None):
+        meta.append(("Due", _fmt(f.due_date)))
     meta_rows = "\n".join(
         "<li><span class='k'>%s</span><span>%s</span></li>"
         % (_esc(k), _esc(v)) for k, v in meta)
@@ -818,3 +845,266 @@ def build_html(scan, target, findings, engine_label, user):
                toc, findings_html, obs_html or "<div class='empty'>No "
                "informational observations were recorded.</div>",
                _esc(brand["product"]))).encode("utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Consolidated organization-wide report (all targets, one artifact)
+# ---------------------------------------------------------------------------
+
+def _org_totals(entries):
+    by_sev = {}
+    by_status = {}
+    by_target = {}
+    total = 0
+    for e in entries:
+        n = 0
+        for f in _status_filtered(e["findings"], e.get("status_filter", "")):
+            sev = (f.severity or "info").lower()
+            by_sev[sev] = by_sev.get(sev, 0) + 1
+            by_status[f.status or "open"] = by_status.get(
+                f.status or "open", 0) + 1
+            n += 1
+            total += 1
+        by_target[e["target"].id] = n
+    return total, by_sev, by_status, by_target
+
+
+def _org_score(by_sev):
+    weights = {"critical": 9.0, "high": 7.5, "medium": 5.0,
+               "low": 2.5, "info": 0.5}
+    total = sum(by_sev.values())
+    if not total:
+        return 0.0, "No issues"
+    score = round(sum(weights.get(k, 0) * v for k, v in by_sev.items())
+                  / total, 1)
+    label = ("Critical" if score >= 8 else "High" if score >= 6
+             else "Medium" if score >= 4 else "Low")
+    return score, label
+
+
+def _org_html_bars(by_sev, dropped=0):
+    bars = ""
+    nb = max(1, sum(by_sev.values()) + dropped)
+    for sev in SEVERITY_ORDER:
+        n = by_sev.get(sev, 0)
+        if not n:
+            continue
+        pct = 100.0 * n / nb
+        bars += ("<div class='sevrow'><span class='lbl' style='color:%s'>%s"
+                 "</span><div class='track'><i style='width:%.1f%%;background:"
+                 "%s'></i></div><span class='cnt'>%d</span></div>"
+                 % (_sev_hex(sev), sev.title(), min(100.0, pct),
+                    _sev_hex(sev), n))
+    return bars or "<div class='empty'>No recorded findings.</div>"
+
+
+def build_org_html(org_name, entries, user, status_filter=""):
+    brand = BRAND
+    total, by_sev, by_status, by_target = _org_totals(entries)
+    score, label = _org_score(by_sev)
+    pkey = brand["colors"]["primary"]
+    pacc = brand["colors"]["accent"]
+    risk_color = _sev_hex("critical" if label == "Critical" else
+                          "high" if label == "High" else
+                          "medium" if label == "Medium" else
+                          "low" if label != "No issues" else "info")
+    when = _fmt(datetime.datetime.now(datetime.timezone.utc))
+
+    inv = ""
+    for e in entries:
+        tgt = e["target"]
+        cnt = by_target.get(tgt.id, 0)
+        inv += ("<div class='tgtrow'><strong>%s</strong>"
+                "<span class='muted'>%s</span><span class='cnt'>%d</span>"
+                "</div>" % (_esc(tgt.address), _esc(tgt.kind), cnt))
+
+    sections = ""
+    for e in entries:
+        tgt = e["target"]
+        fs = _status_filtered(e["findings"], e.get("status_filter",
+                                                   status_filter))
+        ranked = _ranked(fs)
+        if not ranked:
+            continue
+        ct = _counts(fs)
+        sc, sc_label = _org_score(ct)
+        bundle = (e["scan"].stats or {}).get("bundle_dir", "") \
+            if e.get("scan") else ""
+        find_html = "".join(_html_finding(f, i, bundle)
+                            for i, f in enumerate(ranked, 1))
+        bars = _org_html_bars(ct)
+        sections += (
+            "<div class='panel'><h2 class='sec' id='t%s'>%s</h2>"
+            "<table class='meta'><tr><th>Kind</th><td>%s</td></tr>"
+            "<tr><th>Engine</th><td>%s</td></tr>"
+            "<tr><th>Profile</th><td>%s</td></tr>"
+            "<tr><th>Last scan</th><td>%s</td></tr>"
+            "<tr><th>Status</th><td>%s</td></tr>"
+            "<tr><th>Issue risk</th><td><b>%s / 10 (%s)</b></td></tr>"
+            "</table><div style='margin-top:10px'>%s</div></div>%s"
+            % (_esc(tgt.address), _esc(tgt.address or "-"), _esc(tgt.kind),
+               _esc(e.get("engine_label") or "-"),
+               _esc(e["scan"].profile if e.get("scan") else "-"),
+               _fmt(e["scan"].finished_at if e.get("scan") else None),
+               _esc(("Completed" if e.get("scan") and e["scan"].status ==
+                     "completed" else (e["scan"].status if e.get("scan")
+                                       else "-"))),
+               sc, _esc(sc_label), bars, find_html))
+    if not sections:
+        sections = "<div class='empty'>No findings match the current filter."
+        sections += "</div>"
+
+    css = _style_css(pkey, pacc) + (
+        ".tgtrow{display:flex;gap:12px;align-items:center;padding:8px 2px;"
+        "border-bottom:1px solid var(--line);}"
+        ".tgtrow .muted{color:var(--muted);font-size:12px;}"
+        ".tgtrow .cnt{margin-left:auto;font-weight:800;}")
+    return ("<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>%s - Consolidated Report</title><style>%s</style>"
+            "</head><body><div class='page'>"
+            "<div class='cover'><div class='tag'>%s</div>"
+            "<h1>Consolidated Security Report</h1>"
+            "<div class='tag'>%s &middot; generated %s</div>"
+            "<div class='risk'><div><div class='score' style='color:%s'>%s"
+            "</div><div class='rlabel' style='color:%s'>%s organization risk"
+            "</div></div></div></div>"
+            "<div class='panel'><h2 class='sec'>Executive summary</h2>"
+            "<p>Consolidated assessment of <b>%s</b>: %d recorded finding%s "
+            "across %d assessed target%s, rated <b>%s / 10 (%s)</b> overall. "
+            "Each issue is backed by evidence captured during its scan and "
+            "ranked by severity; findings movement (re-verified, fixed, "
+            "false-positive) is tracked in the platform's triage lifecycle. "
+            "</p>"
+            "<div style='margin-top:14px'>%s</div></div>"
+            "<div class='panel'><h2 class='sec'>Target inventory</h2>%s</div>"
+            "<h2 class='sec'>Posture</h2>%s"
+            "</body></html>"
+            % (_esc(brand["product"]), css, _esc(brand["tagline"]),
+               _esc(org_name), when, risk_color, score, risk_color,
+               _esc(label), _esc(org_name), total,
+               "" if total == 1 else "s", len(entries),
+               "" if len(entries) == 1 else "s", score, _esc(label),
+               _org_html_bars(by_sev), inv, sections)).encode("utf-8")
+
+
+def _org_pdf_cover(pdf, brand, org_name, when, score, label, rows):
+    pdf.set_fill_color(*PRIMARY)
+    pdf.rect(0, 0, 210, 42, style="F")
+    pdf.set_fill_color(*ACCENT)
+    pdf.rect(0, 42, 210, 1.5, style="F")
+    pdf.set_xy(16, 12)
+    pdf.set_font("helvetica", "B", 24)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(0, 12, _clean(brand["product"]))
+    pdf.set_font("helvetica", "", 11)
+    pdf.set_text_color(203, 213, 225)
+    pdf.ln(12)
+    pdf.cell(0, 6, _clean(brand["tagline"]))
+    pdf.set_xy(16, 56)
+    pdf.set_font("helvetica", "B", 19)
+    pdf.set_text_color(*INK)
+    pdf.cell(0, 10, "Consolidated Security Report")
+    pdf.set_font("helvetica", "", 9.5)
+    pdf.set_text_color(*MUTE)
+    pdf.ln(10)
+    pdf.cell(0, 6, "%s  |  %s" % (_clean(org_name), _clean(when)))
+    pdf.ln(8)
+    pdf.set_font("helvetica", "B", 10)
+    pdf.set_text_color(*INK)
+    pdf.cell(0, 7, "Organization posture")
+    pdf.ln(2)
+    _draw_meta(pdf, rows)
+    pdf.ln(2)
+    pdf.set_font("helvetica", "B", 10)
+    pdf.set_text_color(*INK)
+    pdf.cell(0, 7, "Overall risk")
+    pdf.ln(7)
+    boxcol = _sev_pdf("critical" if label == "Critical" else
+                      "high" if label == "High" else
+                      "medium" if label == "Medium" else
+                      "low" if label != "No issues" else "info")
+    pdf.set_fill_color(*boxcol)
+    pdf.set_draw_color(255, 255, 255)
+    pdf.rect(16, pdf.get_y(), 58, 14, style="F")
+    pdf.set_xy(16, pdf.get_y() + 3)
+    pdf.set_font("helvetica", "B", 12)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(58, 8, _clean("%s / 10   %s" % (score, label)), align="C")
+
+
+def build_org_pdf(org_name, entries, user, status_filter=""):
+    pdf = Report()
+    pdf.alias_nb_pages()
+    brand = pdf.brand
+    total, by_sev, by_status, by_target = _org_totals(entries)
+    score, label = _org_score(by_sev)
+    when = _fmt(datetime.datetime.now(datetime.timezone.utc))
+    rows = [
+        ("Organization", org_name or "-"),
+        ("Targets assessed", str(len(entries))),
+        ("Recorded findings", str(total)),
+        ("Fixed", str(by_status.get("fixed", 0))),
+        ("False positives", str(by_status.get("false-positive", 0))),
+        ("Accepted risk", str(by_status.get("accepted-risk", 0))),
+        ("Generated", when),
+    ]
+
+    pdf.add_page()
+    _org_pdf_cover(pdf, brand, org_name, when, score, label, rows)
+    if total:
+        pdf.ln(2)
+        _severity_chart(pdf, by_sev)
+    else:
+        pdf.ln(2)
+        pdf.set_font("helvetica", "I", 9)
+        pdf.set_text_color(*MUTE)
+        pdf.cell(0, 6, "No findings match the current filter.")
+
+    pdf.add_page()
+    pdf.set_font("helvetica", "B", 14)
+    pdf.set_text_color(*INK)
+    pdf.cell(0, 8, "Table of contents")
+    pdf.ln(10)
+    for e in entries:
+        _maybe_page(pdf)
+        pdf.set_font("helvetica", "", 9)
+        pdf.set_text_color(*INK)
+        pdf.cell(0, 6, _clean(e["target"].address))
+        pdf.ln(6)
+
+    pdf.body = True
+    for e in entries:
+        tgt = e["target"]
+        fs = _status_filtered(e["findings"], e.get("status_filter",
+                                                   status_filter))
+        ranked = _ranked(fs)
+        if not ranked:
+            continue
+        ct = _counts(fs)
+        sc, sc_label = _org_score(ct)
+        bundle = (e["scan"].stats or {}).get("bundle_dir", "") \
+            if e.get("scan") else ""
+        pdf.add_page()
+        pdf.set_font("helvetica", "B", 15)
+        pdf.set_text_color(*PRIMARY)
+        pdf.cell(0, 8, _clean(tgt.address))
+        pdf.ln(9)
+        _draw_meta(pdf, [
+            ("Kind", tgt.kind),
+            ("Engine", e.get("engine_label") or "-"),
+            ("Profile", e["scan"].profile if e.get("scan") else "-"),
+            ("Last scan", _fmt(e["scan"].finished_at
+                               if e.get("scan") else None)),
+            ("Issue risk", "%s / 10 (%s)" % (sc, sc_label)),
+        ])
+        pdf.ln(1)
+        _severity_chart(pdf, ct)
+        for i, f in enumerate(ranked, 1):
+            _pdf_finding(pdf, i, len(ranked), f, bundle)
+    if not total:
+        pdf.add_page()
+        pdf.set_font("helvetica", "I", 9)
+        pdf.set_text_color(*MUTE)
+        pdf.cell(0, 6, "No findings match the current filter.")
+    return bytes(pdf.output())

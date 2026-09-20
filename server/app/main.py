@@ -6,7 +6,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import models
-from .api import auth, dashboard, engines, findings, reports, scans, targets
+from .api import (auth, dashboard, engines, findings, reports, schedules,
+                  scans, targets)
 from .config import BRAND, settings, REPO
 from .db import SessionLocal, init_db
 from .security import hash_password
@@ -51,7 +52,8 @@ def make_app():
         allow_methods=["*"],
         allow_headers=["*"])
     for r in (auth.router, targets.router, engines.router, scans.router,
-              findings.router, reports.router, dashboard.router):
+              findings.router, reports.router, dashboard.router,
+              schedules.router):
         app.include_router(r)
 
     @app.get("/health")

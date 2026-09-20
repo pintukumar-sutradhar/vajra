@@ -164,6 +164,13 @@ def build_argv(target, engine_cfg, profile, params, creds, run_dir, repo):
         ex.append("network.brute")
     if ex:
         argv += ["--exclude-modules", ",".join(expand_exclusions(ex))]
+    # Re-verification runs only the module(s) that produced the finding(s)
+    # under test, so a re-probe re-checks exactly the vector that was claimed.
+    only = params.get("modules") or params.get("only_modules")
+    if only:
+        if isinstance(only, str):
+            only = [m for m in only.split(",") if m]
+        argv += ["--modules", ",".join(expand_exclusions(list(only)))]
     if engine_cfg.get("ad"):
         argv += ["--ad"]
     if params.get("aggressive"):
@@ -306,6 +313,8 @@ def _harvest(scan, run_dir):
         n_suppressed = 0
         by_sev = {}
         rows_by_bundle = []
+        recheck = bool((scan.params or {}).get("recheck"))
+        now = _utcnow()
         for bundle in bundles:
             rows_by_bundle.append((bundle,) + _read_bundle(bundle))
         for bundle, findings, report, suppressed in rows_by_bundle:
@@ -317,6 +326,36 @@ def _harvest(scan, run_dir):
                 if key in existing:
                     continue
                 existing.add(key)
+                conf = f.get("confidence") or "tentative"
+                cap = str(f.get("cap") or "")
+                risk = models.compute_risk(sev, conf, cap)
+                # A re-probe for an issue that is already open refreshes the
+                # live record in place — proof, evidence, risk, last_seen —
+                # instead of importing a duplicate: one open row per issue per
+                # target. A re-verify run additionally stamps the recheck
+                # fields so the outcome is visible in the UI.
+                prior = session.query(models.Finding).filter(
+                    models.Finding.target_id == scan.target_id,
+                    models.Finding.engine_id == scan.engine_id,
+                    models.Finding.dedup_key == key,
+                    models.Finding.status.in_(("open", "triaged")))\
+                    .order_by(models.Finding.last_seen.desc()).first()
+                if prior is not None:
+                    prior.last_seen = now
+                    prior.proof = f.get("proof") or prior.proof
+                    prior.evidence = {
+                        "text": f.get("evidence") or "",
+                        "screenshots": _screenshots_for(
+                            bundle, f.get("title") or "")}
+                    prior.remediation = f.get("remediation") or \
+                        prior.remediation
+                    prior.detail = f.get("detail") or prior.detail
+                    prior.risk = risk
+                    if recheck:
+                        prior.rechecked_at = now
+                        prior.recheck_outcome = "reproduced"
+                        prior.rechecked_by_scan_id = scan.id
+                    continue
                 ref += 1
                 session.add(models.Finding(
                     org_id=scan.org_id, scan_id=scan.id,
@@ -331,10 +370,10 @@ def _harvest(scan, run_dir):
                               "screenshots": _screenshots_for(
                                   bundle, f.get("title") or "")},
                     remediation=f.get("remediation") or "",
-                    confidence=f.get("confidence") or "tentative",
+                    confidence=conf,
                     proof=f.get("proof") or "",
-                    cap=str(f.get("cap") or ""),
-                    dedup_key=key))
+                    cap=cap,
+                    dedup_key=key, risk=risk))
                 total += 1
                 by_sev[sev] = by_sev.get(sev, 0) + 1
             for s in suppressed:
@@ -368,6 +407,70 @@ def _harvest(scan, run_dir):
         return ref, bool(rows_by_bundle and rows_by_bundle[0][2])
     finally:
         session.close()
+
+
+def _resolve_recheck(scan):
+    """Close the loop on a re-verify scan.
+
+    A re-verify run re-probes exactly the module(s) that produced the finding
+    being checked. Findings of those modules that were open when the re-probe
+    ran and that the run did NOT reproduce are real — the dedicated probe
+    exercised their vector and it did not come back — so they are moved to
+    fixed rather than lingering as open forever. Reproduced ones already got
+    their recheck stamp during harvest.
+    """
+    from ..app import models
+    from ..app.db import SessionLocal
+    params = scan.params or {}
+    if not params.get("recheck") or scan.status != "completed":
+        return
+    db = SessionLocal()
+    try:
+        mods = params.get("modules") or params.get("only_modules") or []
+        if isinstance(mods, str):
+            mods = [m for m in mods.split(",") if m]
+        expanded = set(expand_exclusions(list(mods))) if mods else None
+        q = db.query(models.Finding).filter(
+            models.Finding.org_id == scan.org_id,
+            models.Finding.target_id == scan.target_id,
+            models.Finding.engine_id == scan.engine_id,
+            models.Finding.status.in_(("open", "triaged")))
+        if expanded:
+            from sqlalchemy import or_
+            q = q.filter(or_(
+                models.Finding.source_module.in_(expanded),
+                *[models.Finding.source_module.startswith(m)
+                  for m in expanded]))
+        reproduced = {k for (k,) in db.query(models.Finding.dedup_key)
+                      .filter(models.Finding.scan_id == scan.id).all()}
+        reproduced |= {k for (k,) in db.query(models.Finding.dedup_key)
+                       .filter(models.Finding.rechecked_by_scan_id ==
+                               scan.id).all()}
+        rows = q.all()
+        now = _utcnow()
+        changed = False
+        for f in rows:
+            if f.scan_id == scan.id:
+                continue
+            f.rechecked_at = now
+            f.rechecked_by_scan_id = scan.id
+            if f.dedup_key in reproduced:
+                f.recheck_outcome = "reproduced"
+                continue
+            f.recheck_outcome = "fixed"
+            if f.status != "fixed":
+                f.status = "fixed"
+                f.resolved_by_scan_id = scan.id
+                note = f.state_note or ""
+                f.state_note = "%s | fixed by re-verify scan #%d" % (
+                    note, scan.id)
+                changed = True
+        if changed:
+            _commit_retry(db)
+    except Exception as exc:
+        _log(scan.id, "re-verify resolution skipped: %r" % (exc,), "warning")
+    finally:
+        db.close()
 
 
 def run_scan(scan_id):
@@ -619,6 +722,11 @@ def run_scan(scan_id):
             _log(scan_id, scan.error, "error")
         scan.finished_at = _utcnow()
         _commit_retry(db)
+        if scan.status == "completed":
+            try:
+                _resolve_recheck(scan)
+            except Exception as exc:
+                _log(scan_id, "resolve-cleared skipped: %r" % (exc,), "warning")
     except Exception as exc:
         # The engine must never be orphaned when the driver dies: kill the
         # child so a crawl can't keep hammering a target for 20+ minutes.

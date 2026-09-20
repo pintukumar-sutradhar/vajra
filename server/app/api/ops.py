@@ -57,5 +57,8 @@ def delete_target(db, target):
     db.query(models.Finding).filter(
         models.Finding.target_id == target.id).delete(
         synchronize_session=False)
+    db.query(models.Schedule).filter(
+        models.Schedule.target_id == target.id).delete(
+        synchronize_session=False)
     db.delete(target)
     return True, None

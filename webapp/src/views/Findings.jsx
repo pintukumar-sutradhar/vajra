@@ -3,10 +3,11 @@ import { api } from '../api.js'
 import {
   Severity, Confidence, Status, Empty, Spinner, Modal, useToast,
 } from '../components.jsx'
-import { IcoShield } from '../icons.jsx'
+import { IcoShield, IcoDoc } from '../icons.jsx'
 
 const COLUMNS = ['new', 'triaged', 'confirmed', 'remediated', 'wont_fix']
 const SEV_ORDER = ['critical', 'high', 'medium', 'low', 'info']
+const STATUSES = ['open', 'triaged', 'false-positive', 'accepted-risk', 'fixed']
 
 export default function Findings() {
   const [rows, setRows] = useState(null)
@@ -15,9 +16,12 @@ export default function Findings() {
   const [q, setQ] = useState('')
   const [mod, setMod] = useState('')
   const [conf, setConf] = useState('')
+  const [sort, setSort] = useState('risk')
   const [hideInfo, setHideInfo] = useState(true)
   const [view, setView] = useState('table')
   const [sel, setSel] = useState(null)
+  const [picked, setPicked] = useState(new Set())
+  const [users, setUsers] = useState([])
   const shout = useToast()
 
   function load() {
@@ -26,9 +30,11 @@ export default function Findings() {
     if (status) p.set('status', status)
     if (mod) p.set('engine_id', mod)
     if (q) p.set('q', q)
+    if (sort) p.set('sort', sort)
     api('/v1/findings?' + p.toString()).then(setRows).catch(() => setRows([]))
   }
-  useEffect(load, [sev, status, mod, q])
+  useEffect(load, [sev, status, mod, q, sort])
+  useEffect(() => { api('/v1/auth/users').then(setUsers).catch(() => setUsers([])) }, [])
 
   const filtered = useMemo(() => {
     if (!rows) return null
@@ -68,6 +74,50 @@ export default function Findings() {
     } catch (e) { /* toast shows error */ }
   }
 
+  async function recheck(f) {
+    try {
+      const r = await shout.api(() => api('/v1/findings/' + f.id + '/recheck', { method: 'POST', body: {} }))
+      shout.push('Re-verify scan #' + r.scan_id + ' queued — it re-probes only ' + r.module, 'ok')
+      load()
+    } catch (e) { /* toast */ }
+  }
+
+  function togglePick(id) {
+    setPicked((prev) => {
+      const n = new Set(prev)
+      if (n.has(id)) n.delete(id)
+      else n.add(id)
+      return n
+    })
+  }
+
+  async function bulkSet(nextStatus) {
+    if (picked.size === 0) return
+    try {
+      const r = await shout.api(() => api('/v1/findings/bulk', {
+        method: 'POST', body: { ids: [...picked], status: nextStatus } }))
+      shout.push(r.changed + ' finding(s) updated', 'ok')
+      setPicked(new Set())
+      load()
+    } catch (e) { /* toast */ }
+  }
+
+  const selAll = !!filtered && filtered.length > 0
+    && filtered.every((f) => picked.has(f.id))
+
+  function RiskBar({ value }) {
+    const v = Math.max(0, Math.min(10, value || 0))
+    const color = v >= 8 ? '#be183c' : v >= 6 ? '#d97706' : v >= 4 ? '#ca8a04' : v >= 2 ? '#2563eb' : '#475569'
+    return (
+      <span className="riskchip" style={{ color }}>
+        <i style={{ width: 44, height: 5, background: 'color-mix(in srgb, ' + color + ' 22%, transparent)', borderRadius: 3, display: 'inline-block', position: 'relative', top: -1 }}>
+          <b style={{ display: 'block', width: (v / 10) * 44, height: 5, background: color, borderRadius: 3 }} />
+        </i>
+        <b style={{ width: 26, textAlign: 'right' }}>{v.toFixed(1)}</b>
+      </span>
+    )
+  }
+
   function renderTable() {
     if (!filtered) return <div className="muted"><Spinner /> loading…</div>
     if (filtered.length === 0) return <Empty text="No findings match your filters." />
@@ -75,21 +125,40 @@ export default function Findings() {
       <div className="card">
         <table className="vt">
           <thead>
-            <tr><th>Severity</th><th>Title</th><th>Asset</th><th>Status</th><th>Confidence</th><th>Last seen</th><th></th></tr>
+            <tr>
+              <th style={{ width: 30 }}><input type="checkbox" checked={selAll}
+                onChange={(e) => setPicked(e.target.checked
+                  ? new Set(filtered.map((f) => f.id)) : new Set())} /></th>
+              <th>Severity</th><th>Title</th><th>Asset</th><th>Status</th><th>Risk</th>
+              <th>Due</th><th>Re-check</th><th></th>
+            </tr>
           </thead>
           <tbody>
             {filtered.map((f) => (
               <tr key={f.id} style={{ cursor: 'pointer' }} onClick={() => setSel(f)}>
+                <td onClick={(e) => e.stopPropagation()}>
+                  <input type="checkbox" checked={picked.has(f.id)}
+                    onChange={() => togglePick(f.id)} />
+                </td>
                 <td><Severity value={f.severity} /></td>
-                <td style={{ maxWidth: 420 }}>
+                <td style={{ maxWidth: 380 }}>
                   <div style={{ fontWeight: 600 }}>{f.title}</div>
                   <div className="muted mono" style={{ fontSize: 11.5 }}>{f.ref} · {f.source_module}</div>
                 </td>
                 <td className="mono">{f.asset}</td>
                 <td><Status value={f.status} /></td>
-                <td><Confidence value={f.confidence} /></td>
-                <td className="muted">{new Date(f.last_seen).toLocaleDateString()}</td>
-                <td>
+                <td><RiskBar value={f.risk} /></td>
+                <td className="muted" style={{ fontSize: 12 }}>
+                  {f.due_date ? new Date(f.due_date).toLocaleDateString() : '—'}
+                </td>
+                <td onClick={(e) => e.stopPropagation()}>
+                  <button className="btn sm"
+                    title="Re-probe this exact vector and auto-fix if it no longer reproduces"
+                    onClick={(e) => { e.stopPropagation(); recheck(f) }}>
+                    Re-verify
+                  </button>
+                </td>
+                <td onClick={(e) => e.stopPropagation()}>
                   {f.status !== 'false-positive' && (
                     <button className="btn sm"
                       title="Mark as false positive"
@@ -127,6 +196,7 @@ export default function Findings() {
                         <div style={{ fontWeight: 600, fontSize: 13 }}>{f.title}</div>
                         <div className="muted mono" style={{ fontSize: 11 }}>{f.ref} · {f.source_module}</div>
                       </div>
+                      <b className="muted" style={{ fontSize: 11 }}>{(f.risk || 0).toFixed(1)}</b>
                     </div>
                     <div className="muted mono" style={{ fontSize: 11 }}>{f.asset}</div>
                   </div>
@@ -138,10 +208,12 @@ export default function Findings() {
     )
   }
 
+  const queryStatus = status ? '&status=' + encodeURIComponent(status) : ''
+
   return (
     <>
       <div className="toolbar">
-        <input style={{ maxWidth: 260 }} placeholder="Search title / asset…"
+        <input style={{ maxWidth: 220 }} placeholder="Search title / asset / detail…"
           value={q} onChange={(e) => setQ(e.target.value)} />
         <select value={sev} onChange={(e) => setSev(e.target.value)} style={{ width: 130 }}>
           <option value="">All severities</option>
@@ -149,15 +221,21 @@ export default function Findings() {
         </select>
         <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ width: 150 }}>
           <option value="">All statuses</option>
-          {['open', 'triaged', 'false-positive', 'accepted-risk', 'fixed'].map((s) => <option key={s}>{s}</option>)}
+          {STATUSES.map((s) => <option key={s}>{s}</option>)}
         </select>
         <select value={conf} onChange={(e) => setConf(e.target.value)} style={{ width: 130 }}>
           <option value="">All confidence</option>
           {['certain', 'firm', 'tentative'].map((s) => <option key={s}>{s}</option>)}
         </select>
         <select value={mod} onChange={(e) => setMod(e.target.value)} style={{ width: 130 }}>
-          <option value="">All modules</option>
-          {['webapp', 'api', 'infrastructure', 'active_directory', 'external'].map((m) => <option key={m}>{m}</option>)}
+          <option value="">All engines</option>
+          {['webapp', 'infrastructure', 'api', 'external'].map((m) => <option key={m}>{m}</option>)}
+        </select>
+        <select value={sort} onChange={(e) => setSort(e.target.value)} style={{ width: 130 }}>
+          <option value="risk">Sort by risk</option>
+          <option value="severity">Sort by severity</option>
+          <option value="newest">Newest first</option>
+          <option value="last_seen">Last seen</option>
         </select>
         <label className="switch" title="Hide informational observations from the list">
           <input type="checkbox" checked={hideInfo} onChange={(e) => setHideInfo(e.target.checked)} />
@@ -165,6 +243,12 @@ export default function Findings() {
           <span className="switch-label">Hide info</span>
         </label>
         <div className="spacer" />
+        <a className="btn" title="Consolidated HTML report across every target" target="_blank"
+          rel="noreferrer" href={'/api/v1/reports/consolidated/html?download=1' + queryStatus}>
+          <IcoDoc /> HTML</a>
+        <a className="btn" title="Consolidated PDF report across every target" target="_blank"
+          rel="noreferrer" href={'/api/v1/reports/consolidated/pdf' + queryStatus}>
+          <IcoDoc style={{ transform: 'rotate(90deg)' }} /> PDF</a>
         <span className="chip">found {byCount.total}</span>
         <div style={{ display: 'flex', gap: 6 }}>
           <button className="btn" onClick={() => setView('table')} disabled={view === 'table'}>Table</button>
@@ -181,17 +265,32 @@ export default function Findings() {
         ))}
       </div>
 
+      {picked.size > 0 && (
+        <div className="bulkbar">
+          <b>{picked.size} selected</b>
+          <select value="" onChange={(e) => { if (e.target.value) bulkSet(e.target.value); e.target.value = '' }} style={{ width: 180 }}>
+            <option value="">Move to…</option>
+            {STATUSES.map((s) => <option key={s}>{s}</option>)}
+          </select>
+          <button className="btn sm" onClick={() => setPicked(new Set())}>Clear</button>
+        </div>
+      )}
+
       {view === 'table' ? renderTable() : renderKanban()}
 
-      {sel && <TriageModal finding={sel} onClose={() => setSel(null)}
-        onChanged={(f) => { setSel(f); load() }} />}
+      {sel && <TriageModal finding={sel} users={users}
+        onClose={() => setSel(null)}
+        onChanged={(f) => { setSel(f); load() }}
+        onRecheck={(f) => { setSel(null); recheck(f) }} />}
     </>
   )
 }
 
-function TriageModal({ finding: f, onClose, onChanged }) {
+function TriageModal({ finding: f, users, onClose, onChanged, onRecheck }) {
   const [note, setNote] = useState(f.state_note || '')
   const [status, setStatus] = useState(f.status)
+  const [assigneeId, setAssigneeId] = useState(f.assignee_id || 0)
+  const [dueDate, setDueDate] = useState(f.due_date ? f.due_date.slice(0, 10) : '')
   const [busy, setBusy] = useState(false)
   const [detail, setDetail] = useState(f)
   const shout = useToast()
@@ -211,7 +310,11 @@ function TriageModal({ finding: f, onClose, onChanged }) {
     setBusy(true)
     try {
       const r = await shout.api(() => api('/v1/findings/' + f.id, {
-        method: 'PATCH', body: { status, note },
+        method: 'PATCH', body: {
+          status, note,
+          assignee_id: assigneeId ? assigneeId : null,
+          due_date: dueDate || undefined,
+        },
       }))
       onChanged(r)
     } catch (e) { setBusy(false) }
@@ -220,9 +323,12 @@ function TriageModal({ finding: f, onClose, onChanged }) {
   return (
     <Modal title={`${detail.ref} — ${(detail.severity || 'info').toUpperCase()}`} onClose={onClose} wide
       foot={<>
+        <button className="btn" onClick={() => onRecheck(detail)}
+          title="Re-probe this exact vector; auto-fixes if it no longer reproduces">
+          Re-verify</button>
         <button className="btn" onClick={() => setStatus(detail.status)} disabled={status === detail.status}>Reset</button>
         <button className="btn" onClick={onClose}>Close</button>
-        <button className="btn primary" onClick={save} disabled={busy || (status === detail.status && note === (detail.state_note || ''))}>
+        <button className="btn primary" onClick={save} disabled={busy}>
           {busy ? 'Saving…' : 'Save'}
         </button>
       </>}>
@@ -233,6 +339,9 @@ function TriageModal({ finding: f, onClose, onChanged }) {
         <span className="muted">Category</span><span>{detail.category || '—'}</span>
         <span className="muted">CWE</span><span className="mono">{detail.cwe || '—'}</span>
         <span className="muted">Module</span><span className="mono">{detail.source_module}</span>
+        <span className="muted">Evidence risk</span>
+        <span><b>{(detail.risk || 0).toFixed(1)} / 10</b>
+          <span className="muted" style={{ fontSize: 11.5 }}>  (severity × confidence, lifted by proof ceiling)</span></span>
       </div>
 
       {/* Lead with the proof. Everything below it is context; this is the
@@ -243,6 +352,19 @@ function TriageModal({ finding: f, onClose, onChanged }) {
           <div>
             <div className="proof-lbl">What proves this</div>
             <div className="proof-txt mono">{detail.proof}</div>
+          </div>
+        </div>
+      )}
+
+      {detail.recheck_outcome && (
+        <div className="proofbox" style={{ borderColor: detail.recheck_outcome === 'fixed' ? 'var(--sev-low, #2563eb)' : 'var(--sev-high, #d97706)' }}>
+          <IcoShield />
+          <div>
+            <div className="proof-lbl">Last re-verification</div>
+            <div className="proof-txt mono">
+              {detail.recheck_outcome === 'reproduced' ? 'Still reproducible' : 'No longer reproduced — fixed'}
+              {detail.rechecked_at ? ' · ' + new Date(detail.rechecked_at).toLocaleString() : ''}
+            </div>
           </div>
         </div>
       )}
@@ -280,6 +402,21 @@ function TriageModal({ finding: f, onClose, onChanged }) {
           {transitions().map((s) => <option key={s}>{s}</option>)}
         </select>
         <div className="hint">Allowed from current state: {transitions().join(', ') || 'none'}</div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div className="field">
+          <label>Assignee</label>
+          <select value={assigneeId} onChange={(e) => setAssigneeId(Number(e.target.value) || 0)}>
+            <option value={0}>Unassigned</option>
+            {users.map((u) => <option key={u.id} value={u.id}>{u.display_name || u.username}</option>)}
+          </select>
+        </div>
+        <div className="field">
+          <label>Fix due by (SLA)</label>
+          <input type="date" value={dueDate}
+            onChange={(e) => setDueDate(e.target.value)} />
+        </div>
       </div>
 
       <div className="field">

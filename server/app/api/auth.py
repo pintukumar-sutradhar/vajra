@@ -53,6 +53,17 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
     return resp
 
 
+@router.get("/users")
+def list_users(db: Session = Depends(get_db),
+               user=Depends(current_user)):
+    """Org members, for assignee selection in the triage workflow."""
+    rows = db.query(models.User).filter(
+        models.User.org_id == user.org_id,
+        models.User.is_active.is_(True)).order_by(
+            models.User.username).all()
+    return [_user_schema(u) for u in rows]
+
+
 @router.post("/logout")
 def logout(response: Response, db: Session = Depends(get_db),
            user=Depends(current_user)):

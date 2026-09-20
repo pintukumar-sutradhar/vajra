@@ -206,6 +206,74 @@ class Finding(Base):
                                                           default=_utcnow)
     last_seen: Mapped[datetime.datetime] = mapped_column(DateTime,
                                                          default=_utcnow)
+    # Vuln-management workflow: who owns this finding and when it must be
+    # remediated. SLA-able in the UI and, together with `risk`, lets the
+    # dashboard rank work instead of just inventories.
+    assignee_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"),
+                                                    nullable=True)
+    due_date: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True)
+    # Evidence-backed risk weight for this finding (see findings.set_risk).
+    # Distinct from severity: two "high" findings with different reachability
+    # should not read as equal in the executive view.
+    risk: Mapped[float] = mapped_column(Float, default=0.0)
+    # Re-verification bookkeeping: the last re-probe and what it concluded, so
+    # the operator sees at a glance whether a finding was still reproducible
+    # the last time it was checked rather than assuming it is.
+    rechecked_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime, nullable=True)
+    recheck_outcome: Mapped[str] = mapped_column(String(20), default="")
+    rechecked_by_scan_id: Mapped[int | None] = mapped_column(
+        ForeignKey("scans.id"), nullable=True)
+
+
+# Evidence-backed risk weighting: two "high" findings are not equal when one
+# is reachable, certain and yields RCE and the other is theoretical. The
+# severity ceiling is scaled by the proof's confidence and lifted by what the
+# proof actually allows, so risk is computed from what was demonstrated.
+_SEV_W = {"critical": 10.0, "high": 7.5, "medium": 5.0, "low": 2.5,
+          "info": 0.5}
+_CAP_BONUS = {"rce": 1.5, "unauth": 1.0, "auth": 0.4,
+              "denial-of-service": 0.5, "info": 0.0}
+_CONF_MULT = {"certain": 1.0, "firm": 0.9, "high": 0.9, "medium": 0.8,
+              "tentative": 0.7, "low": 0.6}
+
+
+def compute_risk(severity, confidence, cap):
+    base = _SEV_W.get((severity or "info").lower(), 1.0)
+    base *= _CONF_MULT.get((confidence or "").lower(), 0.8)
+    bonus = _CAP_BONUS.get((cap or "").lower(), 0.3)
+    return round(min(10.0, base + bonus), 1)
+
+
+class Schedule(Base):
+    """Recurring scan plan: when due, the worker enqueues a Scan just like a
+    manual one (same engine contract, same queue, same lifecycle)."""
+
+    __tablename__ = "schedules"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    org_id: Mapped[int] = mapped_column(ForeignKey("orgs.id"), index=True)
+    target_id: Mapped[int] = mapped_column(ForeignKey("targets.id"),
+                                           index=True)
+    engine_id: Mapped[str] = mapped_column(String(40), index=True)
+    profile: Mapped[str] = mapped_column(String(20), default="full")
+    params: Mapped[dict] = mapped_column(JSON, default=dict)
+    label: Mapped[str] = mapped_column(String(200), default="")
+    # Hours between runs (0.5 = every 30 minutes). next_run is computed on
+    # create/update and advanced by interval when a run is fired.
+    interval_hours: Mapped[float] = mapped_column(Float, default=24.0)
+    next_run: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    last_run_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime, nullable=True)
+    last_scan_id: Mapped[int | None] = mapped_column(Integer, default=0)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"),
+                                                   nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime,
+                                                          default=_utcnow)
+
+    target = relationship("Target")
 
 
 class ScanEvent(Base):

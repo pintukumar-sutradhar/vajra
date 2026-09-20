@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import './theme.css'
 import { api, loadBrand, token, getBrand } from './api.js'
 import { ToastHost, useToast, Logo } from './components.jsx'
-import { IcoGauge, IcoTarget, IcoScan, IcoFindings, IcoEngine, IcoOut, IcoDoc } from './icons.jsx'
+import { IcoGauge, IcoTarget, IcoScan, IcoFindings, IcoEngine, IcoOut, IcoDoc, IcoClock } from './icons.jsx'
 import Login from './views/Login.jsx'
 import Dashboard from './views/Dashboard.jsx'
 import Targets from './views/Targets.jsx'
@@ -11,6 +11,7 @@ import Engines from './views/Engines.jsx'
 import Scans from './views/Scans.jsx'
 import ScanDetail from './views/ScanDetail.jsx'
 import Findings from './views/Findings.jsx'
+import Schedules from './views/Schedules.jsx'
 import Audit from './views/Audit.jsx'
 
 const NAV = [
@@ -19,6 +20,7 @@ const NAV = [
   { id: 'scans', label: 'Scans', icon: <IcoScan /> },
   { id: 'engines', label: 'Engines', icon: <IcoEngine /> },
   { id: 'findings', label: 'Findings', icon: <IcoFindings /> },
+  { id: 'schedules', label: 'Schedules', icon: <IcoClock /> },
   { id: 'audit', label: 'Audit', icon: <IcoDoc /> },
 ]
 
@@ -29,6 +31,7 @@ const HOTKEYS = [
   ['G → S', 'Go to Scans'],
   ['G → E', 'Go to Engines'],
   ['G → F', 'Go to Findings'],
+  ['G → C', 'Go to Schedules'],
   ['N → T', 'New target'],
   ['N → S', 'Launch scan'],
   ['?', 'Show key reference'],
@@ -98,7 +101,7 @@ function Shell() {
   }
 
   function pressSeq(key) {
-    const map = { d: 'dashboard', t: 'targets', s: 'scans', e: 'engines', f: 'findings', a: 'audit' }
+    const map = { d: 'dashboard', t: 'targets', s: 'scans', e: 'engines', f: 'findings', c: 'schedules', a: 'audit' }
     if (seqKey.current === 'g' && map[key]) {
       nav(map[key])
     }
@@ -191,6 +194,7 @@ function Shell() {
           {page === 'engines' && <Engines onScanStart={(id) => nav('scans', id)} />}
           {page === 'scans' && (route.param ? <ScanDetail id={route.param} /> : <Scans onOpen={(id) => nav('scans', id)} />)}
           {page === 'findings' && <Findings />}
+          {page === 'schedules' && <Schedules />}
           {page === 'audit' && <Audit />}
         </div>
       </main>
@@ -211,6 +215,7 @@ function Palette({ onClose, onPick }) {
     { k: 'scans', label: 'Scans — queue & history', hint: 'g s', act: () => onPick('scans') },
     { k: 'engines', label: 'Engines — launch a scan', hint: 'n s', act: () => onPick('engines') },
     { k: 'findings', label: 'Findings — triage & evidence', hint: 'g f', act: () => onPick('findings') },
+    { k: 'schedules', label: 'Schedules — recurring scans', hint: 'g c', act: () => onPick('schedules') },
     { k: 'audit', label: 'Audit — immutable activity log', hint: 'g a', act: () => onPick('audit') },
     { k: 'new target', label: 'New target → Targets', hint: 'n t', act: () => onPick('targets') },
     { k: 'launch scan', label: 'Launch scan → Engines', hint: 'n s', act: () => onPick('engines') },

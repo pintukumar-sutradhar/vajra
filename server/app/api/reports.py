@@ -13,7 +13,8 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..db import get_db
-from ..reporting import build_html, build_pdf
+from ..reporting import (build_html, build_org_html, build_org_pdf,
+                         build_pdf)
 from .deps import current_user
 
 router = APIRouter(prefix="/api/v1/reports", tags=["reports"])
@@ -43,6 +44,66 @@ def _safe_join(root, rel):
     if not (target == root or target.startswith(root + os.sep)):
         raise HTTPException(403, "forbidden path")
     return target
+
+
+def _org_entries(db, user, status_filter=""):
+    """The latest completed scan per target, with its live findings, grouped
+    for the consolidated organization-wide report."""
+    org = db.get(models.Org, user.org_id)
+    targets = (db.query(models.Target).filter(
+        models.Target.org_id == user.org_id,
+        models.Target.archived.is_(False)).order_by(
+            models.Target.address).all())
+    entries = []
+    for tgt in targets:
+        scan = (db.query(models.Scan).filter(
+            models.Scan.target_id == tgt.id,
+            models.Scan.status.in_(("completed", "failed"))).order_by(
+                models.Scan.id.desc()).first())
+        findings = (db.query(models.Finding).filter(
+            models.Finding.target_id == tgt.id).order_by(
+                models.Finding.id).all()) if scan else []
+        edef = (db.query(models.EngineDef).filter(
+            models.EngineDef.engine_id == scan.engine_id).first()) \
+            if scan else None
+        entries.append({
+            "target": tgt,
+            "scan": scan,
+            "findings": findings,
+            "engine_label": (edef.label if edef else
+                             (scan.engine_id if scan else "-")),
+            "status_filter": status_filter,
+        })
+    return org, entries
+
+
+@router.get("/consolidated/html")
+def consolidated_html(status: str = "", download: int = 0,
+                      db: Session = Depends(get_db),
+                      user=Depends(current_user)):
+    """Organization-wide report: latest posture per target across the org."""
+    org, entries = _org_entries(db, user, status)
+    who = db.get(models.User, user.id)
+    data = build_org_html(org.name if org else "Organization",
+                          entries, who, status)
+    headers = {}
+    if download:
+        headers["Content-Disposition"] = (
+            'attachment; filename="vajra-consolidated-report.html"')
+    return Response(content=data, media_type="text/html", headers=headers)
+
+
+@router.get("/consolidated/pdf")
+def consolidated_pdf(status: str = "", db: Session = Depends(get_db),
+                     user=Depends(current_user)):
+    org, entries = _org_entries(db, user, status)
+    who = db.get(models.User, user.id)
+    data = build_org_pdf(org.name if org else "Organization",
+                         entries, who, status)
+    return Response(
+        content=data, media_type="application/pdf",
+        headers={"Content-Disposition":
+                 'attachment; filename="vajra-consolidated-report.pdf"'})
 
 
 @router.get("/{scan_id}/html")
