@@ -26,7 +26,7 @@ class Settings:
                                             "*").split(",")]
         self.worker_interval = float(
             os.environ.get("VAJRA_WORKER_INTERVAL", "2.0"))
-        self.max_workers = int(os.environ.get("VAJRA_WORKERS", "1"))
+        self.max_workers = int(os.environ.get("VAJRA_WORKERS", "3"))
 
     def db_is_sqlite(self):
         return self.db_url.startswith("sqlite")

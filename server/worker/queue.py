@@ -1,11 +1,19 @@
 """Job queue: claim queued scan jobs and run them via driver.run_scan."""
 
+import builtins
 import datetime
 import socket
 import time
 
 from ..app import models
 from ..app.db import SessionLocal
+
+# Worker output lands in a log file under nohup, where python block-buffers
+# stdout; flush every line so operation logs stay live instead of draining at
+# exit (or never, when the worker is SIGTERM'd).
+def print(*args, **kwargs):
+    kwargs.setdefault("flush", True)
+    builtins.print(*args, **kwargs)
 
 CLAIM_STALE_S = 60
 
@@ -119,19 +127,8 @@ def scheduler_tick():
         db.close()
 
 
-def tick(worker_name=None):
-    """Process one queued job if any; returns the scan id or None."""
-    from .driver import run_scan
-    db = SessionLocal()
-    try:
-        job = claim_one(db, worker_name or socket.gethostname())
-        if not job:
-            return None
-        job_id = job.id
-        scan_id = job.scan_id
-    finally:
-        db.close()
-    run_scan(scan_id)
+def _finalize(job_id, scan_id):
+    """Close out a JobItem once its scan reached a terminal state."""
     db = SessionLocal()
     try:
         job = db.get(models.JobItem, job_id)
@@ -143,15 +140,61 @@ def tick(worker_name=None):
             _commit_retry_commit(db)
     finally:
         db.close()
+
+
+def _claim(worker_name):
+    """Claim one queued job for this worker; returns (job_id, scan_id) or
+    None when the queue is empty. Transactional and safe to call from several
+    threads — each claim is its own session and retried on SQLite locks."""
+    db = SessionLocal()
+    try:
+        job = claim_one(db, worker_name)
+        if not job:
+            return None
+        return job.id, job.scan_id
+    finally:
+        db.close()
+
+
+def _run_job(job_id, scan_id, worker_name, active):
+    """Run one claimed scan to completion, then finalize its job. Runs inside
+    a pool thread, so concurrent scans each own their subprocess and run dir;
+    the driver keeps every piece of state keyed by scan_id, which is all the
+    isolation the engine needs (its own workspace, outputs, heartbeat)."""
+    from .driver import run_scan
+    print("[worker] scan %s started (%d active)" % (scan_id, active))
+    try:
+        run_scan(scan_id)
+    except KeyboardInterrupt:
+        raise
+    except Exception as exc:
+        print("[worker] scan %s driver error: %s" % (scan_id, exc))
+    _finalize(job_id, scan_id)
+    print("[worker] scan %s finished" % scan_id)
+
+
+def tick(worker_name=None):
+    """Synchronously claim and run one queued job; the scan id (or None).
+    Single-slot helper for embedders and dev scripts; the real worker runs
+    scans concurrently via worker_main."""
+    from .driver import run_scan
+    claimed = _claim(worker_name or socket.gethostname())
+    if not claimed:
+        return None
+    job_id, scan_id = claimed
+    run_scan(scan_id)
+    _finalize(job_id, scan_id)
     return scan_id
 
 
 def worker_main():
     import os as _os
     import signal as _signal
+    from concurrent.futures import ThreadPoolExecutor
     from ..app.config import settings
     from .driver import ACTIVE
     name = "%s/%d" % (socket.gethostname(), _os.getpid())
+    concurrent = max(1, int(getattr(settings, "max_workers", 1) or 1))
 
     def _shutdown(signum, _frame):
         print("[worker] shutting down (%s)..." % signum)
@@ -166,26 +209,49 @@ def worker_main():
         _os._exit(0)
 
     _signal.signal(_signal.SIGTERM, _shutdown)
-    print("[worker] %s starting (poll %.1fs)" % (name,
-                                                 settings.worker_interval))
+    print("[worker] %s starting (poll %.1fs, %d concurrent)" % (
+        name, settings.worker_interval, concurrent))
     print("[worker] reclaiming orphans...")
     try:
         reclaim_orphans(name)
     except Exception as exc:
         print("[worker] reclaim error: %s" % exc)
-    while True:
-        try:
-            reclaim_orphans(name)
-            scheduler_tick()
-        except Exception as exc:
-            print("[worker] scheduler error: %s" % exc)
-        try:
-            started = tick(name)
-            if started:
-                print("[worker] scan %s finished" % started)
-        except KeyboardInterrupt:
-            print("[worker] stopped")
-            return
-        except Exception as exc:
-            print("[worker] tick error: %s" % exc)
-        time.sleep(settings.worker_interval)
+    executor = ThreadPoolExecutor(
+        max_workers=concurrent, thread_name_prefix="scan")
+    inflight = {}
+    try:
+        while True:
+            try:
+                reclaim_orphans(name)
+                scheduler_tick()
+            except Exception as exc:
+                print("[worker] scheduler error: %s" % exc)
+            for fut in [f for f in inflight if f.done()]:
+                try:
+                    fut.result()
+                except Exception as exc:
+                    print("[worker] pool error: %s" % exc)
+                del inflight[fut]
+            try:
+                # Fill all free slots now; a claim that finds nothing stops
+                # the tight loop. Polls keep refilling slots as scans finish.
+                while len(inflight) < concurrent:
+                    claimed = _claim(name)
+                    if claimed is None:
+                        break
+                    job_id, scan_id = claimed
+                    inflight[executor.submit(
+                        _run_job, job_id, scan_id, name,
+                        len(inflight) + 1)] = scan_id
+            except KeyboardInterrupt:
+                raise
+            except Exception as exc:
+                print("[worker] claim error: %s" % exc)
+            time.sleep(settings.worker_interval)
+    finally:
+        for proc in list(ACTIVE.values()):
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        executor.shutdown(wait=False)
