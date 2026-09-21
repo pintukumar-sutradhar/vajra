@@ -1108,3 +1108,251 @@ def build_org_pdf(org_name, entries, user, status_filter=""):
         pdf.set_text_color(*MUTE)
         pdf.cell(0, 6, "No findings match the current filter.")
     return bytes(pdf.output())
+
+def _hex_to_rgb(value, fallback=(31, 41, 55)):
+    """'#rrggbb' -> (r, g, b) ints for python-docx RGBColor."""
+    try:
+        h = value.lstrip("#")
+        if len(h) != 6:
+            return fallback
+        return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+    except Exception:
+        return fallback
+
+
+def _docx_finding_doc(doc, f, i, engine_label):
+    """Ruffa finding into a python-docx Document: metadata grid, description,
+    evidence text, raw request/response + evidence metadata, and remediation.
+    Screenshots are only linked (via their database path) once we have a
+    concrete bundle dir; we pass it through `bundle` below."""
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Pt, RGBColor
+
+    brand = BRAND
+    pkey = RGBColor(*_hex_to_rgb(brand["colors"]["primary"]))
+    accent = RGBColor(*_hex_to_rgb(brand["colors"]["accent"]))
+    ink = RGBColor(*_hex_to_rgb(brand["colors"].get("ink", "#ffffff")))
+    sev = (f.severity or "info").lower()
+    sev_hex = RGBColor(*_hex_to_rgb(SEVERITY_HEX.get(sev, SEVERITY_HEX["info"])))
+
+    heading = doc.add_heading("", level=2)
+    run = heading.add_run("F%d%s" % (i, (" [%s]" % f.ref) if f.ref else ""))
+    run.font.color.rgb = sev_hex
+
+    title = doc.add_paragraph()
+    t = title.add_run(f.title or "(untitled finding)")
+    t.bold = True
+    t.font.color.rgb = ink
+
+    meta = _docx_find_fmeta(f, engine_label)
+    rows = doc.add_table(rows=0, cols=2)
+    rows.style = "Light Grid Accent 1"
+    for label, value in meta:
+        row = rows.add_row().cells
+        row[0].text = label
+        cell = row[1]
+        cell.text = value or ""
+        for p in (row[0].paragraphs[0], cell.paragraphs[0]):
+            for r in p.runs:
+                r.font.size = Pt(9)
+
+    if f.detail:
+        h = doc.add_heading("Description", level=3)
+        h.runs[0].font.color.rgb = pkey
+        p = doc.add_paragraph(f.detail)
+        p.runs[0].font.color.rgb = ink
+
+    ev = f.evidence if isinstance(f.evidence, dict) else {}
+    if ev.get("found_at"):
+        pass
+    if ev.get("text"):
+        h = doc.add_heading("Evidence / proof of concept", level=3)
+        h.runs[0].font.color.rgb = pkey
+        p = doc.add_paragraph(ev.get("text"))
+        p.runs[0].font.name = "Consolas"
+        p.runs[0].font.color.rgb = ink
+
+    req = ev.get("request") or ""
+    res = ev.get("response") or ""
+    if req or res:
+        h = doc.add_heading("Raw HTTP exchange", level=3)
+        h.runs[0].font.color.rgb = pkey
+        for label, body in (("Request", req), ("Response", res)):
+            if not body:
+                continue
+            sh = doc.add_heading(label, level=4)
+            sh.runs[0].font.size = Pt(10)
+            p = doc.add_paragraph(body)
+            p.runs[0].font.name = "Consolas"
+            p.runs[0].font.color.rgb = ink
+            p.runs[0].font.size = Pt(8)
+
+    evmeta = ev.get("meta") if isinstance(ev.get("meta"), dict) else {}
+    em_bits = []
+    for k in ("found_at", "host", "module", "category", "method", "path"):
+        if evmeta.get(k):
+            em_bits.append("%s: %s" % (k.replace("_", " ").title(),
+                                       evmeta.get(k)))
+    if em_bits:
+        h = doc.add_heading("Evidence metadata", level=3)
+        h.runs[0].font.color.rgb = pkey
+        for bit in em_bits:
+            doc.add_paragraph(bit)
+
+    if f.remediation:
+        h = doc.add_heading("Remediation", level=3)
+        h.runs[0].font.color.rgb = pkey
+        doc.add_paragraph(f.remediation)
+
+    for rel in ev.get("screenshots") or []:
+        pass  # linked by path; not embedded to keep export self-contained
+
+
+def _docx_find_fmeta(f, engine_label):
+    rows = [
+        ("Asset", f.asset or "-"),
+        ("Module", _module_label(f) or "-"),
+        ("Category", f.category or "-"),
+        ("Status", STATUS_LABEL.get(f.status, f.status or "-")),
+        ("Confidence", CONFIDENCE_LABEL.get(f.confidence,
+                                            (f.confidence or "-").title())),
+        ("CVSS", f.cvss or "-"),
+        ("CWE", f.cwe or "-"),
+        ("Risk", "%.1f / 10" % _risk_of(f)),
+    ]
+    if getattr(f, "recheck_outcome", ""):
+        rows.append(("Re-check", ("Reproduced" if f.recheck_outcome ==
+                                  "reproduced" else "Not reproduced")))
+    return rows
+
+
+def build_docx(scan, target, findings, engine_label, user):
+    """Self-contained .docx evidence export: metadata + every finding with its
+    description, evidence text, raw request/response, evidence metadata and
+    remediation. Generated on demand from the database - no scan bundle dir is
+    required, so the engine's Outputs/ folder is never touched."""
+    try:
+        import docx
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.shared import Pt, RGBColor
+    except Exception as exc:
+        raise RuntimeError("python-docx is required for DOCX export: %r" % exc)
+
+    doc = docx.Document()
+    brand = BRAND
+    pkey = RGBColor(*_hex_to_rgb(brand["colors"]["primary"]))
+    ink = RGBColor(*_hex_to_rgb(brand["colors"].get("ink", "#1f2937")))
+
+    h = doc.add_heading("Vajra Security Assessment Report", 0)
+    h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    sub = doc.add_paragraph()
+    sr = sub.add_run("Evidence export - %s" % (engine_label or scan.engine_id))
+    sr.font.color.rgb = pkey
+    sr.font.size = Pt(10)
+    sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    doc.add_heading("Overview", level=1)
+    meta = [
+        ("Target", (target.address if target else "-")),
+        ("Target kind", (target.kind if target else "-")),
+        ("Engine", engine_label or scan.engine_id),
+        ("Profile", scan.profile or "-"),
+        ("Scan ID", "#%s" % scan.id),
+        ("Status", (scan.status or "-").title()),
+        ("Generated", _fmt(datetime.datetime.now(datetime.timezone.utc))),
+    ]
+    for label, value in meta:
+        p = doc.add_paragraph()
+        r = p.add_run("%s: " % label)
+        r.bold = True
+        r.font.color.rgb = ink
+        p.add_run(value or "")
+
+    ranked = _ranked(findings)
+    by_sev = {}
+    for f in ranked:
+        s = (f.severity or "info").lower()
+        by_sev.setdefault(s, []).append(f)
+    for sev_label in SEVERITY_ORDER:
+        items = by_sev.get(sev_label) or []
+        if not items:
+            continue
+        doc.add_heading("%s (%d)" % (sev_label.title(), len(items)), level=1)
+        for i, f in enumerate(items, 1):
+            _docx_finding_doc(doc, f, i, engine_label)
+
+    h = doc.add_heading("Methodology & scope", level=1)
+    doc.add_paragraph(
+        "This report was produced by the Vajra security assessment engine. "
+        "Severity is bounded by the proof of concept actually observed: "
+        "critical / high impact only ever reflect a working exploit, and "
+        "heuristic differentials can never surface as critical. Every finding "
+        "carries its raw request/response when one was captured, so evidence "
+        "is independently verifiable rather than a restatement of the "
+        "scanner's opinion.")
+    return doc
+
+
+def build_json(scan, target, findings, engine_label, user):
+    """Structured JSON export - the same data the HTML/PDF/DOCX reports render,
+    including raw request/response and evidence metadata when captured. A
+    machine-friendly artifact for import into ticket trackers / GRC tools."""
+    import json as _j
+
+    ranked = _ranked(findings)
+    counts = _counts(findings)
+    total = sum(counts.values())
+    score, label = _risk_score(counts)
+    root = {
+        "format_version": 1,
+        "report_type": "vajra-scan",
+        "engine": engine_label or scan.engine_id,
+        "scan": {
+            "id": scan.id,
+            "profile": scan.profile or "",
+            "status": scan.status or "",
+            "created_at": _fmt(scan.created_at) if scan.created_at else "",
+            "target": scan.target_id,
+        },
+        "target": {
+            "address": (target.address if target else ""),
+            "kind": (target.kind if target else ""),
+        },
+        "stats": {
+            "findings": total,
+            "by_severity": counts,
+            "risk_score": score,
+            "risk_label": label,
+            "severity_percent": {},
+        },
+        "findings": [],
+    }
+    for i, f in enumerate(ranked, 1):
+        ev = f.evidence if isinstance(f.evidence, dict) else {}
+        root["findings"].append({
+            "ref": "VULN-%02d" % i,
+            "title": f.title or "",
+            "severity": (f.severity or "info").lower(),
+            "category": f.category or "",
+            "asset": f.asset or "",
+            "module": _module_label(f) or "",
+            "status": f.status or "",
+            "confidence": f.confidence or "",
+            "cvss": f.cvss or "",
+            "cwe": f.cwe or "",
+            "risk": "%.1f" % _risk_of(f),
+            "detail": f.detail or "",
+            "remediation": f.remediation or "",
+            "evidence": {
+                "text": ev.get("text") or "",
+                "request": ev.get("request") or "",
+                "response": ev.get("response") or "",
+                "meta": ev.get("meta") if isinstance(ev.get("meta"), dict)
+                else {},
+            },
+            "screenshots": ev.get("screenshots") or [],
+        })
+    nb = max(1, total)
+    root["stats"]["severity_percent"] = {
+        s: round(100.0 * counts.get(s, 0) / nb, 1) for s in SEVERITY_ORDER}
+    return _j.dumps(root, indent=2, sort_keys=False)

@@ -173,7 +173,7 @@ register("web.saml", "web", "modules.web.saml_audit",
 register("web.cloud", "web", "modules.web.cloud_check",
          "Public bucket exposure scan (S3 / GCS / Azure Blob) via read-only "
          "listing probes",
-         cond=["has_cloud"], profile_skip=[])
+         cond=["has_cloud_tech"], profile_skip=[])
 
 register("exploit.creds", "exploit", "modules.exploit.default_creds",
          "Default credentials and unauth admin panels",

@@ -348,7 +348,11 @@ def _harvest(scan, run_dir):
                     prior.evidence = {
                         "text": f.get("evidence") or "",
                         "screenshots": _screenshots_for(
-                            bundle, f.get("title") or "")}
+                            bundle, f.get("title") or ""),
+                        "request": f.get("request") or "",
+                        "response": f.get("response") or "",
+                        "meta": f.get("meta") or {},
+                    }
                     prior.remediation = f.get("remediation") or \
                         prior.remediation
                     prior.detail = f.get("detail") or prior.detail
@@ -370,7 +374,10 @@ def _harvest(scan, run_dir):
                     detail=f.get("detail") or "",
                     evidence={"text": f.get("evidence") or "",
                               "screenshots": _screenshots_for(
-                                  bundle, f.get("title") or "")},
+                                  bundle, f.get("title") or ""),
+                              "request": f.get("request") or "",
+                              "response": f.get("response") or "",
+                              "meta": f.get("meta") or {}},
                     remediation=f.get("remediation") or "",
                     confidence=conf,
                     proof=f.get("proof") or "",

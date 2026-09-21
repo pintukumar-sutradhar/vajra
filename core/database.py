@@ -4,6 +4,7 @@ import re
 import sqlite3
 import threading
 import datetime
+import json as _json
 from collections import Counter
 
 from core import mitre as _mitre
@@ -112,7 +113,7 @@ def evidence_cap(evidence="", category=""):
 class Finding:
     def __init__(self, target, module, category, severity, title, detail="",
                  evidence="", remediation="", confidence="firm", mitre=None,
-                 cap=None, proof=""):
+                 cap=None, proof="", request="", response="", meta=None):
         if mitre is None:
             tid, tname = _mitre.lookup(module, category, title)
             mitre = "%s %s" % (tid, tname)
@@ -152,6 +153,9 @@ class Finding:
         self.evidence = evidence[:20000]
         self.remediation = remediation
         self.mitre = mitre
+        self.request = request or ""
+        self.response = response or ""
+        self.meta = meta if isinstance(meta, dict) else {}
         self.created_at = datetime.datetime.now().isoformat(timespec="seconds")
 
     def to_dict(self):
@@ -169,7 +173,12 @@ CREATE TABLE IF NOT EXISTS findings (
     -- What proved this finding, and the severity ceiling that evidence
     -- supports. Both are computed by the proof gate; storing them is what
     -- lets a reviewer see the demonstration instead of only the claim.
-    proof TEXT DEFAULT '', cap TEXT DEFAULT ''
+    proof TEXT DEFAULT '', cap TEXT DEFAULT '',
+    -- The raw HTTP request and response that proved this finding (web
+    -- findings only), plus a small metadata blob (found-at, host:port,
+    -- method+path, module). Empty for findings that never touched HTTP.
+    request TEXT DEFAULT '', response TEXT DEFAULT '',
+    meta TEXT DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS services (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -212,7 +221,10 @@ class Database:
         defaults a missing value.
         """
         wanted = (("findings", "proof", "TEXT DEFAULT ''"),
-                  ("findings", "cap", "TEXT DEFAULT ''"))
+                  ("findings", "cap", "TEXT DEFAULT ''"),
+                  ("findings", "request", "TEXT DEFAULT ''"),
+                  ("findings", "response", "TEXT DEFAULT ''"),
+                  ("findings", "meta", "TEXT DEFAULT ''"))
         for table, col, decl in wanted:
             try:
                 cols = {r[1] for r in
@@ -237,12 +249,16 @@ class Database:
                 return False
             self.conn.execute(
                 "INSERT INTO findings (target,module,category,severity,title,detail,"
-                "evidence,remediation,confidence,created_at,mitre,proof,cap)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "evidence,remediation,confidence,created_at,mitre,proof,cap,"
+                "request,response,meta)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (f.target, f.module, f.category, f.severity, f.title, f.detail,
                  f.evidence, f.remediation, f.confidence, f.created_at,
                  getattr(f, "mitre", ""), getattr(f, "proof", "") or "",
-                 str(getattr(f, "cap", "") or "")))
+                 str(getattr(f, "cap", "") or ""),
+                 getattr(f, "request", "") or "",
+                 getattr(f, "response", "") or "",
+                 _json.dumps(getattr(f, "meta", {}) or {})))
             self.conn.commit()
         return True
 
@@ -309,7 +325,8 @@ class Database:
     def findings(self, target=None):
         q = "SELECT target,module,category,severity,title,detail,evidence," \
             "remediation,confidence,created_at,IFNULL(mitre,'')," \
-            "IFNULL(proof,''),IFNULL(cap,'') FROM findings"
+            "IFNULL(proof,''),IFNULL(cap,''),IFNULL(request,'')," \
+            "IFNULL(response,''),IFNULL(meta,'') FROM findings"
         args = ()
         if target:
             q += " WHERE target=?"
@@ -325,7 +342,10 @@ class Database:
                     "evidence": r[6], "remediation": r[7], "confidence": r[8],
                     "created_at": r[9], "mitre": r[10] if len(r) > 10 else "",
                     "proof": r[11] if len(r) > 11 else "",
-                    "cap": r[12] if len(r) > 12 else ""})
+                    "cap": r[12] if len(r) > 12 else "",
+                    "request": r[13] if len(r) > 13 else "",
+                    "response": r[14] if len(r) > 14 else "",
+                    "meta": _json.loads(r[15]) if len(r) > 15 and r[15] else {}})
         return rows
 
     def services(self, target=None):

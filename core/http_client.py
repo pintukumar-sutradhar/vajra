@@ -344,6 +344,11 @@ class HttpClient:
         self._cookie = ""
         self._ua_i = 0
         self._lock = threading.Lock()
+        # Per-host ring buffer of recent HTTP exchanges (raw request/response
+        # text). Lets engine.record() attach the exact request/response that
+        # proved a finding, even when a module files it right after the probe.
+        self._exchanges = {}
+        self._exchange_max = 8
         # Global request-rate governor (token bucket). rps<=0 means unlimited,
         # preserving prior behaviour unless an ops governor explicitly caps it.
         self._rps = 0.0
@@ -440,6 +445,63 @@ class HttpClient:
             if wait > 0:
                 time.sleep(wait)
 
+    def _raw_req_text(self, method, url, hdrs, payload):
+        """Build a raw HTTP request text string from the components that were
+        actually sent. No network access — pure text assembly."""
+        try:
+            from urllib.parse import urlparse
+            host = urlparse(url).hostname or ""
+        except Exception:
+            host = ""
+        header_lines = "\r\n".join("%s: %s" % (k, v) for k, v in hdrs.items())
+        body = ""
+        if payload:
+            body = payload.decode("utf-8", "replace") if isinstance(payload, (bytes, bytearray)) else str(payload)
+        return "%s %s HTTP/1.1\r\nHost: %s\r\n%s\r\n\r\n%s" % (
+            method.upper(), url, host, header_lines, body)
+
+    def _raw_res_text(self, status, headers, content):
+        """Build a raw HTTP response text string."""
+        try:
+            status_line = "HTTP/1.1 %d %s" % (status, http.client.HTTPStatus(status).phrase)
+        except Exception:
+            status_line = "HTTP/1.1 %d" % status
+        header_lines = "\r\n".join("%s: %s" % (k, v) for k, v in headers.items())
+        body = ""
+        if content:
+            body = content.decode("utf-8", "replace")[:12000] if isinstance(content, (bytes, bytearray)) else str(content)[:12000]
+        return "%s\r\n%s\r\n\r\n%s" % (status_line, header_lines, body)
+
+    def _record_exchange(self, method, url, hdrs, payload, status, headers, content):
+        """Store the raw request/response pair for this host so the engine
+        can attach it to findings filed right after the probe."""
+        try:
+            from urllib.parse import urlparse
+            host = urlparse(url).hostname or ""
+            port = urlparse(url).port or (443 if url.startswith("https") else 80)
+        except Exception:
+            host, port = "", 0
+        if not host:
+            return
+        key = "%s:%d" % (host, port)
+        req = self._raw_req_text(method, url, hdrs, payload)
+        res = self._raw_res_text(status, headers, content)
+        ring = self._exchanges.setdefault(key, [])
+        ring.append((req, res))
+        if len(ring) > self._exchange_max:
+            del ring[:len(ring) - self._exchange_max]
+
+    def last_exchange(self, host, port=None):
+        """Return the most recent raw (request, response) pair for a host."""
+        if not host:
+            return None
+        for key in self._exchanges:
+            if key.split(":")[0] == host and (port is None or key.split(":")[1] == str(port)):
+                ring = self._exchanges[key]
+                if ring:
+                    return ring[-1]
+        return None
+
     def request(self, method, url, params=None, data=None, json_body=None,
                 headers=None, auth=None, allow_redirects=None, timeout=None):
         self._pacethrottle()
@@ -482,6 +544,8 @@ class HttpClient:
                     all_headers = dict(r.headers.items())
                     if len(r.history) > 0:
                         pass
+                    self._record_exchange(method, url, hdrs, data or json_body or b"",
+                                          r.status_code, all_headers, r.content)
                     result = HttpResult(r.url, r.status_code, all_headers,
                                         r.content, time.time() - t0)
                 else:
@@ -497,6 +561,8 @@ class HttpClient:
                 except Exception:
                     pass
                 hdrs_resp = {k: v for k, v in (e.headers or {}).items()}
+                self._record_exchange(method, url, hdrs, data or json_body or b"",
+                                      e.code, hdrs_resp, body)
                 res = HttpResult(getattr(e, "url", url), e.code, hdrs_resp, body, time.time() - t0)
                 if self.delay:
                     time.sleep(self.delay)
@@ -549,6 +615,7 @@ class HttpClient:
             raise
         finally:
             pass
+        self._record_exchange(method, url, h, payload, status, rh, content)
         return HttpResult(final_url, status, rh, content, 0)
 
     def get(self, url, **kw):
