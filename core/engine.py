@@ -1069,8 +1069,11 @@ class Engine:
         conf = _proof.confidence_for(proof)
         cap = _proof.cap_for(canon, proof)
         if request is None or response is None or meta is None:
-            auto_req, auto_res, auto_meta = self._auto_http_exchange(
-                target, module, category, evidence, detail)
+            try:
+                auto_req, auto_res, auto_meta = self._auto_http_exchange(
+                    target, module, category, evidence, detail)
+            except Exception:
+                auto_req, auto_res, auto_meta = None, None, {}
             if request is None:
                 request = auto_req
             if response is None:
