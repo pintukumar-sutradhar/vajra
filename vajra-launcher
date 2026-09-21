@@ -39,7 +39,7 @@ API_PID = VAR / "api.pid"
 WORKER_PID = VAR / "worker.pid"
 PORT_FILE = VAR / "port"
 VERSION = "1.4.0"
-CANDIDATE_PORTS = (8000, 8130, 8080, 9000, 51730)
+CANDIDATE_PORTS = (8130, 8000, 8080, 9000, 51730)
 DEFAULT_CREDS = ("admin", "admin")
 
 
@@ -149,16 +149,16 @@ def choose_port(explicit: str | None) -> int:
         except Exception:
             pass
     # default port free -> use the default without asking
-    if is_vajra_health(8000) or free_port(8000):
-        _write_port(8000)
-        return 8000
+    if is_vajra_health(8130) or free_port(8130):
+        _write_port(8130)
+        return 8130
     # default port is in conflict -> let the user pick (fall back silently
     # when there is no terminal, e.g. cron/CI)
-    hint = next((p for p in CANDIDATE_PORTS if p != 8000 and free_port(p)),
-                None) or 8130
+    hint = next((p for p in CANDIDATE_PORTS if p != 8130 and free_port(p)),
+                None) or 8000
     p = None
     if sys.stdin.isatty():
-        _w("default port 8000 is already in use by another service")
+        _w("default port 8130 is already in use by another service")
         p = _ask_port(hint)
     if p is None:
         p = hint
