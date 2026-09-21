@@ -1017,76 +1017,76 @@ class Engine:
     # ---------- the proof gate ----------
 
     def record(self, target, module, category, severity, title, detail="",
-                   evidence="", remediation="", proof=None, cls=None, mitre=None,
-                   request=None, response=None, meta=None):
-            """Record a finding — but only when the supplied proof validates.
+               evidence="", remediation="", proof=None, cls=None, mitre=None,
+               request=None, response=None, meta=None):
+        """Record a finding — but only when the supplied proof validates.
 
-            This is the supported way for a module to file a finding, and the
-            signature deliberately mirrors `Finding(...)` so migrating a call site
-            is mechanical. What changes is that a module supplies *what it
-            observed* (a `core.proof.Proof`, built with the helpers there) instead
-            of how confident it feels:
+        This is the supported way for a module to file a finding, and the
+        signature deliberately mirrors `Finding(...)` so migrating a call site
+        is mechanical. What changes is that a module supplies *what it
+        observed* (a `core.proof.Proof`, built with the helpers there) instead
+        of how confident it feels:
 
-              * the proof is validated against the per-class rule in
-                core.proof.PROOF_RULES;
-              * confidence is *derived* from the proof kind, never declared;
-              * severity is capped by the proof kind, so a heuristic differential
-                * can never present as critical;
-              * a candidate whose proof does not validate is written to the
-                suppressed ledger with the reason, not to findings.
+          * the proof is validated against the per-class rule in
+            core.proof.PROOF_RULES;
+          * confidence is *derived* from the proof kind, never declared;
+          * severity is capped by the proof kind, so a heuristic differential
+            can never present as critical;
+          * a candidate whose proof does not validate is written to the
+            suppressed ledger with the reason, not to findings.
 
-            Optional `request`/`response`/`meta` carry the raw HTTP exchange and
-            a small metadata blob (found-at, host:port, method+path). When a web
-            module omits them, the engine auto-attaches the most recent exchange
-            from the HTTP client for the finding's host — the probe that produced
-            the finding is almost always the last request made.
+        Optional `request`/`response`/`meta` carry the raw HTTP exchange and
+        a small metadata blob (found-at, host:port, method+path). When a web
+        module omits them, the engine auto-attaches the most recent exchange
+        from the HTTP client for the finding's host — the probe that produced
+        the finding is almost always the last request made.
 
-            Returns True when a finding was written.
-            """
-            if self.db is None:
-                return False
-            key = cls or category
-            ok, canon, reason = _proof.validate(key, proof)
-            if not ok:
-                if canon is None:
-                    # An unregistered class is a gap in the engine, not a bad
-                    # module: make it loud so it gets a rule rather than being
-                    # silently dropped.
-                    self.log.error("[SUPPRESS] %s filed an unclassified finding "
-                                   "(%r) — no proof rule exists; add one in "
-                                   "core/proof.py. Dropped: %s"
-                                   % (module, key, title[:120]))
-                self.log.debug("[SUPPRESS] %s | %s | %s" %
-                               (module, title[:110], reason))
-                try:
-                    self.db.add_suppressed(target, module, str(key), severity,
-                                           title, reason,
-                                           detail=(evidence or detail))
-                except Exception as e:
-                    self.log.debug("suppressed-ledger write failed: %r" % e)
-                self._suppressed_count = getattr(self, "_suppressed_count", 0) + 1
-                return False
-            conf = _proof.confidence_for(proof)
-            cap = _proof.cap_for(canon, proof)
-            if request is None or response is None or meta is None:
-                auto_req, auto_res, auto_meta = self._auto_http_exchange(
-                    target, module, category, evidence, detail)
-                if request is None:
-                    request = auto_req
-                if response is None:
-                    response = auto_res
-                if meta is None:
-                    meta = auto_meta
-            f = Finding(target, module, category, severity, title, detail=detail,
-                        evidence=evidence, remediation=remediation,
-                        confidence=conf, mitre=mitre, cap=cap,
-                        proof="%s [%s]" % (canon, proof.summary()),
-                        request=request, response=response, meta=meta)
-            added = self.db.add_finding(f)
-            if added:
-                self.log.debug("[PROOF:%s] %s | %s" %
-                               (canon, title[:110], proof.summary()))
-            return added
+        Returns True when a finding was written.
+        """
+        if self.db is None:
+            return False
+        key = cls or category
+        ok, canon, reason = _proof.validate(key, proof)
+        if not ok:
+            if canon is None:
+                # An unregistered class is a gap in the engine, not a bad
+                # module: make it loud so it gets a rule rather than being
+                # silently dropped.
+                self.log.error("[SUPPRESS] %s filed an unclassified finding "
+                               "(%r) — no proof rule exists; add one in "
+                               "core/proof.py. Dropped: %s"
+                               % (module, key, title[:120]))
+            self.log.debug("[SUPPRESS] %s | %s | %s" %
+                           (module, title[:110], reason))
+            try:
+                self.db.add_suppressed(target, module, str(key), severity,
+                                       title, reason,
+                                       detail=(evidence or detail))
+            except Exception as e:
+                self.log.debug("suppressed-ledger write failed: %r" % e)
+            self._suppressed_count = getattr(self, "_suppressed_count", 0) + 1
+            return False
+        conf = _proof.confidence_for(proof)
+        cap = _proof.cap_for(canon, proof)
+        if request is None or response is None or meta is None:
+            auto_req, auto_res, auto_meta = self._auto_http_exchange(
+                target, module, category, evidence, detail)
+            if request is None:
+                request = auto_req
+            if response is None:
+                response = auto_res
+            if meta is None:
+                meta = auto_meta
+        f = Finding(target, module, category, severity, title, detail=detail,
+                    evidence=evidence, remediation=remediation,
+                    confidence=conf, mitre=mitre, cap=cap,
+                    proof="%s [%s]" % (canon, proof.summary()),
+                    request=request, response=response, meta=meta)
+        added = self.db.add_finding(f)
+        if added:
+            self.log.debug("[PROOF:%s] %s | %s" %
+                           (canon, title[:110], proof.summary()))
+        return added
 
     def _auto_http_exchange(self, target, module, category, evidence, detail):
         """Best-effort attach of the raw request/response that proved a web
