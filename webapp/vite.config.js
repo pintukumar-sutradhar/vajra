@@ -2,8 +2,8 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import http from 'node:http'
 
-const DEFAULT_TARGET = 'http://127.0.0.1:8000'
-const CANDIDATE_PORTS = [8000, 8130, 8080]
+const DEFAULT_TARGET = 'http://127.0.0.1:8130'
+const CANDIDATE_PORTS = [8130, 8000, 8080]
 
 function httpGetJson(url, timeout = 300) {
   return new Promise((resolve) => {

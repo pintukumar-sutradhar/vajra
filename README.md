@@ -140,11 +140,11 @@ vajra --stop      # stop the api + worker
 vajra --check     # prints the port if the platform is already running
 ```
 
-If the default port (8000) is already in use by another service, VAJRA asks
+If the default port (8130) is already in use by another service, VAJRA asks
 which port you want to use and remembers it:
 
 ```text
-[VAJRA] default port 8000 is already in use by another service
+[VAJRA] default port 8130 is already in use by another service
   Which port should the UI use? (default 8130) → 9123
 ```
 
@@ -152,12 +152,12 @@ For development (hot-reload UI against a running API):
 
 ```bash
 # API + worker as above; then, in another terminal:
-cd webapp && VITE_API_TARGET=http://127.0.0.1:8000 npm run dev   # UI on :5173
+cd webapp && VITE_API_TARGET=http://127.0.0.1:8130 npm run dev   # UI on :5173
 ```
 
 The UI is served by the API on a single origin — one process, one URL, no
 proxy needed. The active port is remembered (`server/var/port`); the launcher
-auto-picks from `8000 / 8130 / 8080 / 9000`.
+auto-picks from `8130 / 8000 / 8080 / 9000`.
 
 > Default login: `admin` / `admin` (override with `VAJRA_ADMIN_PASSWORD` before
 > first boot). The first sign-in **forces a password change** before the
@@ -295,7 +295,7 @@ error codes) and are kept in sync with the code automatically.
 ### Health probe
 
 ```bash
-curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8130/health
 ```
 
 Returns the platform status plus a database reachability check:
@@ -414,7 +414,7 @@ Environment variables:
 | `VAJRA_LOGIN_LOCKOUT_SECONDS` | `900` | lockout window |
 | `VAJRA_PASSWORD_MIN_LENGTH` | `10` | minimum password length |
 | `VAJRA_WORKERS` | `3` | concurrent scans per worker |
-| `VITE_API_TARGET` *(webapp)* | `http://127.0.0.1:8000` | dev proxy target for the UI |
+| `VITE_API_TARGET` *(webapp)* | `http://127.0.0.1:8130` | dev proxy target for the UI |
 
 ---
 

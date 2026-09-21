@@ -26,13 +26,13 @@ VAJRA_ADMIN_PASSWORD='…' .venv/bin/python server/run_worker.py &
 docker compose -f deploy/compose.yml up -d --build
 ```
 
-The API is published on `127.0.0.1:8000`; the webapp is served from the same
+The API is published on `127.0.0.1:8130`; the webapp is served from the same
 origin, so no CORS configuration is needed in the default single-origin
 layout.
 
 ## First login & initial hardening
 
-1. Open `http://127.0.0.1:8000/`.
+1. Open `http://127.0.0.1:8130/`.
 2. Sign in as **admin** with the password from `VAJRA_ADMIN_PASSWORD`
    (or the default `admin` when unset). Because the default build boots with a
    known password, **the first sign-in forces a password change** before the
@@ -72,7 +72,7 @@ server {
   ssl_certificate_key /etc/ssl/vajra/privkey.pem;
 
   location / {
-    proxy_pass http://127.0.0.1:8000;
+    proxy_pass http://127.0.0.1:8130;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

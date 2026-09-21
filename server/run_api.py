@@ -1,6 +1,6 @@
 """Run the VAJRA platform API server.
 
-Usage:  python server/run_api.py  (defaults to http://127.0.0.1:8000)
+Usage:  python server/run_api.py  (defaults to http://127.0.0.1:8130)
 
 The bind address is loopback by default; set VAJRA_API_HOST=0.0.0.0 (or an
 explicit interface) to expose the API beyond the local host.
@@ -17,7 +17,7 @@ import uvicorn  # noqa: E402
 
 def main():
     host = os.environ.get("VAJRA_API_HOST", "127.0.0.1")
-    port = int(os.environ.get("VAJRA_API_PORT", "8000"))
+    port = int(os.environ.get("VAJRA_API_PORT", "8130"))
     uvicorn.run("server.app.main:app", host=host, port=port,
                 reload=False, log_level="info")
 
