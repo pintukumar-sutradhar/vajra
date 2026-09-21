@@ -230,8 +230,12 @@ def verdict(resp, baseline, path=""):
             return ABSENT, "matches not-found baseline (%d)" % fp.status
         return WILDCARD, ("catch-all: same %d/%db response as a known-absent "
                           "path" % (fp.status, fp.length))
-    if fp.status in NOT_FOUND_STATUSES and \
-            baseline.statuses & NOT_FOUND_STATUSES:
+    if fp.status in NOT_FOUND_STATUSES:
+        # A server-certified 404/410 is the strongest absence signal a host
+        # can send. It must never be promoted to a "found" positive merely
+        # because the not-found baseline happened to use a different status
+        # (soft-404 catch-alls answer 200 for absent paths, so a later 404
+        # would otherwise "differ from baseline" and get reported as real).
         return ABSENT, "status %d" % fp.status
     return REAL, "differs from baseline (%d/%db vs %s)" % (
         fp.status, fp.length, "/".join(str(s) for s in sorted(baseline.statuses)))

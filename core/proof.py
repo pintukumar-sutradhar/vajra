@@ -550,7 +550,13 @@ def validate(cls, proof):
         return False, canon, (
             "proof kind %s is not acceptable for %s (expected %s)"
             % (proof.kind, canon, "/".join(rule.kinds)))
-    if not proof.artifact and proof.kind != OBSERVATION:
+    if not proof.artifact:
+        # Every proof must tie the response to the payload. A bare status
+        # ("got HTTP 200") with no artifact is not evidence that the *payload*
+        # caused the outcome — that is precisely the 200-only false positive.
+        # OBSERVATION is no longer exempt: the observed fact must itself be
+        # recorded as the artifact (a header value, a marker, an extraction),
+        # never an empty string that lets a later note carry the "proof".
         return False, canon, "proof artifact is empty"
     if rule.requires_control:
         if proof.control_clean is None:

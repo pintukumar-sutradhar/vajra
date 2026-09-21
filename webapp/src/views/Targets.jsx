@@ -10,6 +10,7 @@ export default function Targets() {
   const [open, setOpen] = useState(false)
   const [bulkOpen, setBulkOpen] = useState(false)
   const [toDelete, setToDelete] = useState(null)
+  const [toEdit, setToEdit] = useState(null)
   const shout = useToast()
 
   function load() {
@@ -48,6 +49,7 @@ export default function Targets() {
                       <td className="muted">{(t.tags && Object.keys(t.tags).join(', ')) || '—'}</td>
                       <td className="muted">{new Date(t.created_at).toLocaleDateString()}</td>
                       <td style={{ textAlign: 'right' }}>
+                        <button className="btn sm" onClick={() => setToEdit(t)}>Edit</button>
                         <button className="btn danger sm" onClick={() => setToDelete(t)}>Delete</button>
                       </td>
                     </tr>
@@ -59,6 +61,10 @@ export default function Targets() {
 
       {open && <NewTarget onClose={() => setOpen(false)} onDone={() => { setOpen(false); load() }} />}
       {bulkOpen && <BulkImport onClose={() => setBulkOpen(false)} onDone={() => { setBulkOpen(false); load() }} />}
+      {toEdit && <EditTarget
+        target={toEdit}
+        onClose={() => setToEdit(null)}
+        onDone={() => { setToEdit(null); load() }} />}
       {toDelete && <DeleteTarget
         target={toDelete}
         onClose={() => setToDelete(null)}
@@ -93,6 +99,85 @@ function DeleteTarget({ target, onClose, onDone }) {
         from it — its scans, findings and run history are removed permanently.
       </p>
       <p className="muted" style={{ marginTop: 4 }}>This cannot be undone.</p>
+    </Modal>
+  )
+}
+
+/**
+ * EditTarget — re-open an existing target with its current fields prefilled
+ * and save via PATCH /v1/targets/:id. Mirrors NewTarget so the two dialogs
+ * behave identically.
+ */
+function EditTarget({ target, onClose, onDone }) {
+  const shout = useToast()
+  const [form, setForm] = useState({
+    kind: target.kind,
+    address: target.address,
+    name: target.name || '',
+    tags: (target.tags && Object.entries(target.tags)
+      .map(([k, v]) => (v ? `${k}=${v}` : k)).join(', ')) || '',
+    authorization_proof: target.authorization_proof || '',
+  })
+  const [busy, setBusy] = useState(false)
+
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
+
+  async function submit(e) {
+    e.preventDefault()
+    if (!form.address.trim()) return shout.push('address is required', 'err')
+    setBusy(true)
+    try {
+      const tags = {}
+      if (form.tags) {
+        for (const kv of form.tags.split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)) {
+          const [k, ...rest] = kv.split('=')
+          tags[k] = rest.join('=') || ''
+        }
+      }
+      const body = {
+        kind: form.kind, address: form.address.trim(),
+        name: form.name, tags,
+        authorization_proof: form.authorization_proof.trim(),
+      }
+      await shout.api(() =>
+        api(`/v1/targets/${target.id}`, { method: 'PATCH', body }))
+      shout.push(`Target #${target.id} updated`)
+      onDone()
+    } catch (e) { setBusy(false) }
+  }
+
+  return (
+    <Modal title="Edit target" onClose={onClose}
+      foot={<>
+        <button className="btn" onClick={onClose}>Cancel</button>
+        <button className="btn primary" onClick={submit} disabled={busy}>{busy ? 'Saving…' : 'Save changes'}</button>
+      </>}>
+      <form onSubmit={submit}>
+        <div className="field">
+          <label>Kind</label>
+          <select value={form.kind} onChange={set('kind')}>
+            {KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
+          </select>
+        </div>
+        <div className="field">
+          <label>Address / target</label>
+          <input value={form.address} onChange={set('address')} />
+        </div>
+        <div className="field">
+          <label>Name (optional)</label>
+          <input value={form.name} onChange={set('name')} placeholder="Friendly label" />
+        </div>
+        <div className="field">
+          <label>Tags (optional, comma-separated key=value)</label>
+          <input value={form.tags} onChange={set('tags')} placeholder="env=prod,owner=payments" />
+        </div>
+        <div className="field">
+          <label>Authorization proof (optional)</label>
+          <input value={form.authorization_proof} onChange={set('authorization_proof')} />
+        </div>
+      </form>
     </Modal>
   )
 }
