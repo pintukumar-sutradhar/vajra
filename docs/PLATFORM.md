@@ -153,7 +153,6 @@ tests/platform_e2e.py  platform API release gate (auth/users/roles/lockout/expor
 verify.sh          one-shot release gate (syntax, proof audit, tests, web)
 scripts/           backup.sh + restore.sh (database + runs + secret key)
 deploy/            Dockerfile + compose.yml (API+worker image) + compose.db.yml (Postgres)
-.github/workflows/ ci.yml — runs verify.sh on push/PR
 webapp/            React + Vite SPA            (Phase 2)
 deploy/            compose.db.yml (optional Postgres); app containers (Phase 4)
 docs/PLATFORM.md   this plan
