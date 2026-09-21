@@ -523,6 +523,50 @@ def t_report():
     return True, "all three report formats render (incl. PoC fallback)"
 
 
+def t_cond_gating():
+    """Engine module-gating conditions: has_ad / has_ad_creds / has_cloud_tech /
+    has_channels must return False when the supporting evidence is absent."""
+    import types as T
+    import core.engine as CE
+
+    class A:
+        pass
+
+    base = dict(cloud_indicators=None, cloud_tech=None, open_ports={},
+                web_targets=[], ad=None, channels=None)
+
+    def make(state, args=None):
+        eng = A.__new__(A)
+        eng.state = state
+        eng.args = args or T.SimpleNamespace(ad_user=None, ad_pass=None,
+                                             nthash=None)
+        eng.target = T.SimpleNamespace(is_domain=False)
+        eng._warned_conds = set()
+        eng._cond_ok = CE.Engine._cond_ok.__get__(eng, CE.Engine)
+        return eng
+
+    S = lambda **k: dict(base, **k)
+    # Cloud: never enabled without concrete evidence.
+    assert make(S())._cond_ok(["has_cloud_tech"]) is False
+    assert make(S(cloud_indicators=True))._cond_ok(["has_cloud_tech"]) is True
+    assert make(S(cloud_tech=["Cloudflare"]))._cond_ok(
+        ["has_cloud_tech"]) is True
+    # AD: detect + creds are separate gates.
+    assert make(S())._cond_ok(["has_ad"]) is False
+    assert make(S())._cond_ok(["has_ad_creds"]) is False
+    assert make(S(ad={"dcs": ["dc1.local"]}))._cond_ok(["has_ad"]) is True
+    assert make(S(ad={"dcs": ["dc1.local"]}))._cond_ok(
+        ["has_ad_creds"]) is False
+    creds = T.SimpleNamespace(ad_user="u", ad_pass="p", nthash=None)
+    assert make(S(ad={"ad_ports": [389]}), creds)._cond_ok(
+        ["has_ad", "has_ad_creds"]) is True
+    # Channels: post tradecraft requires an established session.
+    assert make(S())._cond_ok(["has_channels"]) is False
+    assert make(S(channels=[{"type": "ssh"}]))._cond_ok(
+        ["has_channels"]) is True
+    return True, "engine condition gating (ad/ad_creds/cloud_tech/channels) OK"
+
+
 def t_resume_persistence_cloud_xlsx():
     """Proof-of-compromise objectives + XLSX export + masscan delegation +
     persistence/cloud module gating (no live target required)."""
@@ -2397,6 +2441,7 @@ def run_all():
     check("form-login confirmation (confirmed/likely/none)", t_authcheck)
     check("report rendering (html/md/json)", t_report)
     check("objectives + XLSX + post-module gating", t_resume_persistence_cloud_xlsx)
+    check("engine condition gating (ad/cloud/channels)", t_cond_gating)
     check("http result model", t_http_result)
     check("payload engine + adaptive evasion", t_payloads)
     check("massive wordlist tiers", t_wordlists)

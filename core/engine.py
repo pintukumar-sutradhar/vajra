@@ -1226,19 +1226,15 @@ class Engine:
             elif c == "has_ad":
                 ok = bool(st.get("ad") and (
                     st["ad"].get("dcs") or st["ad"].get("ad_ports")))
-                continue
             elif c == "has_ad_creds":
                 ok = bool(getattr(self.args, "ad_user", None) or
                           getattr(self.args, "ad_pass", None) or
                           getattr(self.args, "nthash", None))
-                continue
             elif c == "has_cloud_tech":
                 ok = bool(st.get("cloud_indicators") or
                           st.get("cloud_tech"))
-                continue
             elif c == "has_channels":
                 ok = bool(st.get("channels"))
-                continue
             elif c == "has_web_or_services":
                 ok = bool(st.get("web_targets")) or bool(st.get("open_ports"))
             elif c == "has_forms":

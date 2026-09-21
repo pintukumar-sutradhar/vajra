@@ -19,4 +19,5 @@ playwright>=1.40
 
 # Platform DB is SQLite by default. For the production Postgres path install:
 #   psycopg2-binary>=2.9
-# and set VAJRA_DB_URL=postgresql+psycopg2://user:pass@localhost/vajrapython-docx>=1.1
+# and set VAJRA_DB_URL=postgresql+psycopg2://user:pass@localhost/vajra
+python-docx>=1.1
