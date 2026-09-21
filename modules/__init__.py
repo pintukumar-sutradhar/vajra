@@ -227,12 +227,12 @@ register("ad.ldap_enum", "ad", "modules.ad.ldap_enum",
 
 register("ad.spray", "ad", "modules.ad.spray",
          "Lockout-aware AD password spraying over SMB NTLMv2",
-         cond=["has_ad"], profile_skip=["webonly", "quick", "stealth"])
+         cond=["has_ad", "has_ad_creds"], profile_skip=["webonly", "quick", "stealth"])
 
 register("ad.movement", "ad", "modules.ad.movement",
-          "Lateral movement: validated creds -> psexec/wmiexec/smbexec/atexec "
-          "command channel (unlocks post.recon); NTLM-relay + potato guidance",
-          cond=["has_ad"], profile_skip=["webonly"])
+         "Lateral movement: validated creds -> psexec/wmiexec/smbexec/atexec "
+         "command channel (unlocks post.recon); NTLM-relay + potato guidance",
+         cond=["has_ad", "has_ad_creds"], profile_skip=["webonly"])
 
 register("ad.ntlm_relay", "ad", "modules.ad.ntlm_relay",
           "NTLM-relay surface detection: SMB signing not-required (via nmap "
@@ -242,31 +242,31 @@ register("ad.ntlm_relay", "ad", "modules.ad.ntlm_relay",
 register("ad.privesc_ops", "ad", "modules.ad.privesc_ops",
          "Privilege-scalation ops: SYSVOL/GPP cred theft, ZeroLogon probe, "
          "DC-Sync NTDS dump, bounded offline hashcat crack",
-         cond=["has_ad"], profile_skip=["webonly"])
+         cond=["has_ad", "has_ad_creds"], profile_skip=["webonly"])
 
 register("ad.power", "ad", "modules.ad.power",
          "Attack-depth beyond hashes: authenticated LDAP DACL risk analysis "
          "(BloodHound-lite) + golden/silver ticket forgery playbook + "
          "cross-realm trust-jump notes",
-         cond=["has_ad"], profile_skip=["webonly"])
+         cond=["has_ad", "has_ad_creds"], profile_skip=["webonly"])
 
 register("ad.escalation", "ad", "modules.ad.escalation",
-          "ADCS ESC1-8 + forest-trust escalation chain: active certipy find "
-          "if installed (else ready-to-run playbook), cross-forest jump map",
-          cond=["has_ad"], profile_skip=["webonly"])
+         "ADCS ESC1-8 + forest-trust escalation chain: active certipy find "
+         "if installed (else ready-to-run playbook), cross-forest jump map",
+         cond=["has_ad", "has_ad_creds"], profile_skip=["webonly"])
 
 register("ad.rbcd_exploit", "ad", "modules.ad.rbcd_exploit",
           "Active RBCD/s4u2self delegation abuse: write msDS-AllowedToActOnBehalfOfOtherIdentity "
           "or exploit existing unconstrained delegation to impersonate any user "
-          "(requires --aggressive + valid domain creds)",
-          cond=["has_ad"], profile_skip=["webonly", "quick", "stealth", "recon"])
+"(requires --aggressive + valid domain creds)",
+         cond=["has_ad", "has_ad_creds"], profile_skip=["webonly", "quick", "stealth", "recon"])
 
 register("ad.adcs", "ad", "modules.ad.adcs_exploit",
          "ADCS/PKI escalation: ESC1 template misconfig, ESC3 enrollment-agent "
          "chain, and ESC8 NTLM-relayable web-enrollment surface (requires "
          "--aggressive + certipy + valid domain creds). Any mutation is "
          "reversible/evidence-gated",
-         cond=["has_ad"], profile_skip=["webonly", "quick", "stealth", "recon"])
+         cond=["has_ad", "has_ad_creds"], profile_skip=["webonly", "quick", "stealth", "recon"])
 
 register("post.loot", "post", "modules.post.loot",
          "Post-compromise loot survey: high-value secret file check over "
@@ -293,7 +293,7 @@ register("post.cloud", "post", "modules.post.cloud_postex",
          "ACTIVE cloud post-exploitation: validates on-host cloud creds "
          "(STS/IAM), enumerates public buckets + flags secrets (only when the "
          "target is cloud-backed)",
-         cond=["has_cloud"], profile_skip=[])
+         cond=["has_cloud_tech"], profile_skip=[])
 
 register("post.lateral", "post", "modules.post.lateral",
          "ACTIVE cross-host lateral movement: map the internal network "

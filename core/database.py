@@ -251,7 +251,7 @@ class Database:
                 "INSERT INTO findings (target,module,category,severity,title,detail,"
                 "evidence,remediation,confidence,created_at,mitre,proof,cap,"
                 "request,response,meta)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (f.target, f.module, f.category, f.severity, f.title, f.detail,
                  f.evidence, f.remediation, f.confidence, f.created_at,
                  getattr(f, "mitre", ""), getattr(f, "proof", "") or "",

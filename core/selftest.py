@@ -575,7 +575,7 @@ def t_resume_persistence_cloud_xlsx():
     p = next(m for m in M.MODULES if m["name"] == "post.persistence")
     assert p["phase"] == "post" and "has_channels" in p["cond"]
     c = next(m for m in M.MODULES if m["name"] == "post.cloud")
-    assert c["phase"] == "post" and "has_cloud" in c["cond"]
+    assert c["phase"] == "post" and "has_cloud_tech" in c["cond"]
     lat = next(m for m in M.MODULES if m["name"] == "post.lateral")
     assert lat["phase"] == "post" and "has_channels" in lat["cond"]
     ex = next(m for m in M.MODULES if m["name"] == "post.exfil")
